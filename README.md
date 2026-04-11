@@ -18,7 +18,14 @@ npm run build
 ## Initial exports
 
 - `shellDevnet`
+- `ShellProvider`
+- `createShellProvider`
 - `createShellPublicClient`
+- `createShellWsClient`
 - `bytesToPqAddress`
 - `pqAddressToBytes`
 - `isPqAddress`
+- `derivePqAddressFromPublicKey`
+- `buildTransferTransaction`
+- `buildRotateKeyTransaction`
+- `buildSignedTransaction`

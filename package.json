@@ -36,6 +36,7 @@
   },
   "homepage": "https://github.com/ShellDAO/shell-sdk#readme",
   "dependencies": {
+    "@noble/hashes": "^1.8.0",
     "@scure/base": "^1.2.6",
     "viem": "^2.39.0"
   },
