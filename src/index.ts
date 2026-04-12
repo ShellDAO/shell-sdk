@@ -46,6 +46,8 @@ export {
   DEFAULT_SYSTEM_GAS_LIMIT,
   DEFAULT_TRANSFER_GAS_LIMIT,
   DEFAULT_TX_TYPE,
+  hashTransaction,
+  hexBytes,
 } from "./transactions.js";
 export {
   assertSignerMatchesKeystore,
