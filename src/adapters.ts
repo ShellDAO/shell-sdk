@@ -101,7 +101,7 @@ export class MlDsa65Adapter implements SignerAdapter {
    * @param message - The bytes to sign (typically an RLP-encoded tx hash).
    */
   async sign(message: Uint8Array): Promise<Uint8Array> {
-    return ml_dsa65.sign(this._secretKey, message);
+    return ml_dsa65.sign(message, this._secretKey);
   }
 }
 
@@ -152,7 +152,7 @@ export class SlhDsaAdapter implements SignerAdapter {
    * @param message - The bytes to sign (typically an RLP-encoded tx hash).
    */
   async sign(message: Uint8Array): Promise<Uint8Array> {
-    return slh_dsa_sha2_256f.sign(this._secretKey, message);
+    return slh_dsa_sha2_256f.sign(message, this._secretKey);
   }
 }
 
