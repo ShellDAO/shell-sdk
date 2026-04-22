@@ -1,6 +1,6 @@
 {
   "name": "shell-sdk",
-  "version": "0.17.0",
+  "version": "0.3.0",
   "description": "TypeScript SDK for Shell Chain — build quantum-safe dApps before Q-Day.",
   "license": "MIT",
   "type": "module",
@@ -53,7 +53,7 @@
     "build": "tsc -p tsconfig.json",
     "clean": "rm -rf dist",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --test tests/**/*.test.mjs"
+    "test": "npm run build && node --test tests/*.test.mjs"
   },
   "keywords": [
     "shell-chain",

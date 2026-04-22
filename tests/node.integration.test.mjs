@@ -68,7 +68,7 @@ test('node integration: tampered keystore address is rejected', async () => {
 
   const tampered = {
     ...keystore,
-    address: `0x${signer.getHexAddress().slice(2, -1)}0`,
+    address: `0x${signer.getHexAddress().slice(2, -1)}${signer.getHexAddress().endsWith('0') ? '1' : '0'}`,
   };
   await assert.rejects(
     () => decryptKeystore(tampered, 'correct horse battery'),

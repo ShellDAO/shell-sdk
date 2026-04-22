@@ -104,7 +104,7 @@ export type ShellStorageProfile = "archive" | "full" | "light";
  * Contains runtime metadata about the connected Shell Chain node.
  */
 export interface ShellNodeInfo {
-  /** Node software version string, e.g. `"shell-node/0.17.0"`. */
+  /** Node software version string, e.g. `"shell-node/0.17.0"`, independent of the SDK package version. */
   version: string;
   /** Chain ID as a decimal string. */
   chain_id: string;
