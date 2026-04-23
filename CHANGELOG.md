@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.1] — 2026-04-23
+
+### Changed
+- Publish a patch release to carry forward the current `shell-chain v0.17.0` compatibility surface.
+- Keep sdk and chain versioning independent: the SDK now advances to `0.3.1` while remaining aligned with the chain's `0.17.0` RPC and signature behavior.
+
 ## [0.3.0] — 2026-04-22
 
 ### Added
