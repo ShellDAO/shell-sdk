@@ -25,7 +25,11 @@ import {
 } from "viem";
 
 import type {
+  ShellEstimateBatchRequest,
+  ShellEstimateBatchResult,
+  ShellIsSponsoredResult,
   ShellNodeInfo,
+  ShellPaymasterPolicy,
   ShellStorageProfile,
   ShellWitnessBundle,
   SignedShellTransaction,
@@ -235,6 +239,74 @@ export class ShellProvider {
   async getStorageProfile(): Promise<ShellStorageProfile | undefined> {
     const info = await this.getNodeInfo();
     return info.storage_profile;
+  }
+
+  // ── AA methods (v0.18.0) ──────────────────────────────────────────────────
+
+  /**
+   * Estimate gas for a native AA batch transaction.
+   *
+   * Calls `shell_estimateBatch`.
+   *
+   * @param request - Batch estimate request with inner calls and optional paymaster.
+   * @returns Gas estimates including `totalGas`, `perInner`, and breakdown fields.
+   *
+   * @example
+   * ```typescript
+   * const estimate = await provider.estimateBatch({
+   *   inner_calls: [{ to: "pq1…", value: "0x0", gas_limit: "0x5208" }],
+   * });
+   * const totalGas = parseInt(estimate.totalGas, 16);
+   * ```
+   */
+  async estimateBatch(request: ShellEstimateBatchRequest): Promise<ShellEstimateBatchResult> {
+    return this.request("shell_estimateBatch", [request]);
+  }
+
+  /**
+   * Fetch the paymaster policy for an address.
+   *
+   * Calls `shell_getPaymasterPolicy`. Any address returns a default `eoa-open`
+   * policy even if not explicitly registered as a paymaster.
+   *
+   * @param address - Paymaster address to query.
+   * @returns Paymaster policy object.
+   */
+  async getPaymasterPolicy(address: string): Promise<ShellPaymasterPolicy> {
+    return this.request("shell_getPaymasterPolicy", [address]);
+  }
+
+  /**
+   * Check whether a transaction is sponsored by a paymaster.
+   *
+   * Calls `shell_isSponsored`. Returns `{ found: false, … }` for unknown hashes
+   * without throwing.
+   *
+   * @param txHash - Transaction hash to query (`0x`-prefixed).
+   * @returns Sponsorship details including found status, paymaster address, and inner call count.
+   *
+   * @example
+   * ```typescript
+   * const result = await provider.isSponsored("0xabcd…");
+   * if (result.found && result.sponsored) {
+   *   console.log("gas paid by", result.paymaster);
+   * }
+   * ```
+   */
+  async isSponsored(txHash: string): Promise<ShellIsSponsoredResult> {
+    return this.request("shell_isSponsored", [txHash]);
+  }
+
+  /**
+   * Verify the witness root stored in a block header against the bundle.
+   *
+   * Calls `shell_verifyWitnessRoot`.
+   *
+   * @param blockNumberOrTag - Hex block number or `"latest"`.
+   * @returns Verification result object `{ block, witnessRoot, bundleRoot, match }`.
+   */
+  async verifyWitnessRoot(blockNumberOrTag: string): Promise<unknown> {
+    return this.request("shell_verifyWitnessRoot", [blockNumberOrTag]);
   }
 }
 

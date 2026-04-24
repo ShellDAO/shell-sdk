@@ -3,13 +3,15 @@
  *
  * Provides typed helpers for constructing `ShellTransactionRequest` objects
  * for common operations: token transfers, system contract calls, key rotation,
- * and custom validation code management.
+ * custom validation code management, and AA batch/sponsored transactions.
  *
  * @module transactions
  */
 import { bytesToHex, keccak256, toRlp, hexToBytes } from "viem";
 
 import type {
+  AaBundle,
+  AaInnerCall,
   AddressLike,
   HexString,
   ShellSignature,
@@ -17,6 +19,8 @@ import type {
   SignedShellTransaction,
   SignatureTypeName,
 } from "./types.js";
+import { AA_BUNDLE_TX_TYPE, AA_MAX_INNER_CALLS } from "./types.js";
+export { AA_BUNDLE_TX_TYPE, AA_MAX_INNER_CALLS };
 import {
   accountManagerAddress,
   encodeClearValidationCodeCalldata,
@@ -366,3 +370,239 @@ export function hashTransaction(tx: ShellTransactionRequest): Uint8Array {
   const hash = hexToBytes(keccak256(rlpEncoded));
   return hash;
 }
+
+// ---------------------------------------------------------------------------
+// AA batch & sponsored transaction builders (v0.18.0)
+// ---------------------------------------------------------------------------
+
+/** `keccak256` domain prefix byte for the batch signing hash (must match chain). */
+const BATCH_SIGNING_HASH_DOMAIN = 0x42;
+
+/**
+ * Options for {@link buildBatchTransaction}.
+ */
+export interface BuildBatchTransactionOptions {
+  /** EIP-155 chain ID. */
+  chainId: number;
+  /** Sender account nonce. */
+  nonce: number;
+  /** Inner calls to include in the batch. Max {@link AA_MAX_INNER_CALLS}. */
+  innerCalls: AaInnerCall[];
+  /**
+   * Total gas budget for the outer transaction.
+   * Should be ≥ sum(innerCalls[i].gas_limit) + 21 000 + overhead.
+   * Defaults to `200_000`.
+   */
+  gasLimit?: number;
+  /** EIP-1559 max fee per gas. Defaults to {@link DEFAULT_MAX_FEE_PER_GAS}. */
+  maxFeePerGas?: number;
+  /** EIP-1559 priority fee. Defaults to {@link DEFAULT_MAX_PRIORITY_FEE_PER_GAS}. */
+  maxPriorityFeePerGas?: number;
+}
+
+/**
+ * Options for {@link buildSponsoredTransaction}.
+ *
+ * Extends {@link BuildBatchTransactionOptions} with paymaster fields.
+ */
+export interface BuildSponsoredTransactionOptions extends BuildBatchTransactionOptions {
+  /** Paymaster address that will pay the gas cost. */
+  paymaster: AddressLike;
+  /**
+   * Paymaster's PQ signature over the `paymaster_signing_hash`.
+   * Obtain this from the paymaster service before building the transaction.
+   */
+  paymasterSignature: Uint8Array | number[];
+}
+
+/** Default outer gas budget for AA batch transactions. */
+export const DEFAULT_AA_GAS_LIMIT = 200_000;
+
+/**
+ * Build a native AA batch transaction (`tx_type = 0x7E`).
+ *
+ * The resulting `SignedShellTransaction` will have `aa_bundle` set.
+ * The caller is responsible for signing the `batch_signing_hash` (use
+ * {@link hashBatchTransaction}) rather than the plain `tx.hash()`.
+ *
+ * @param options - Batch transaction options including inner calls.
+ * @returns An unsigned `SignedShellTransaction` skeleton (no `signature` yet) plus the bundle.
+ *
+ * @example
+ * ```typescript
+ * import { buildBatchTransaction, hashBatchTransaction } from "shell-sdk/transactions";
+ *
+ * const { tx, aa_bundle } = buildBatchTransaction({
+ *   chainId: 424242,
+ *   nonce: 0,
+ *   innerCalls: [{ to: "pq1recipient…", value: 1_000n, data: "0x", gas_limit: 21_000 }],
+ * });
+ * const signingHash = hashBatchTransaction(tx, aa_bundle);
+ * const signed = await signer.buildSignedTransaction({ tx, txHash: signingHash, aa_bundle });
+ * ```
+ */
+export function buildBatchTransaction(options: BuildBatchTransactionOptions): {
+  tx: ShellTransactionRequest;
+  aa_bundle: AaBundle;
+} {
+  if (options.innerCalls.length === 0) {
+    throw new Error("buildBatchTransaction: innerCalls must not be empty");
+  }
+  if (options.innerCalls.length > AA_MAX_INNER_CALLS) {
+    throw new Error(
+      `buildBatchTransaction: innerCalls length ${options.innerCalls.length} exceeds AA_MAX_INNER_CALLS (${AA_MAX_INNER_CALLS})`,
+    );
+  }
+
+  const tx = buildTransaction({
+    chainId: options.chainId,
+    nonce: options.nonce,
+    to: null,
+    value: 0n,
+    data: "0x",
+    gasLimit: options.gasLimit ?? DEFAULT_AA_GAS_LIMIT,
+    maxFeePerGas: options.maxFeePerGas ?? DEFAULT_MAX_FEE_PER_GAS,
+    maxPriorityFeePerGas: options.maxPriorityFeePerGas ?? DEFAULT_MAX_PRIORITY_FEE_PER_GAS,
+    txType: AA_BUNDLE_TX_TYPE,
+  });
+
+  const aa_bundle: AaBundle = {
+    inner_calls: options.innerCalls,
+    paymaster: null,
+    paymaster_signature: null,
+  };
+
+  return { tx, aa_bundle };
+}
+
+/**
+ * Build a sponsored AA batch transaction (`tx_type = 0x7E`) with a paymaster.
+ *
+ * Identical to {@link buildBatchTransaction} but also sets `paymaster` and
+ * `paymaster_signature` in the bundle.
+ *
+ * @param options - Sponsored transaction options including paymaster address and signature.
+ * @returns An unsigned `SignedShellTransaction` skeleton plus the bundle.
+ *
+ * @example
+ * ```typescript
+ * const { tx, aa_bundle } = buildSponsoredTransaction({
+ *   chainId: 424242,
+ *   nonce: 0,
+ *   innerCalls: [...],
+ *   paymaster: "pq1paymaster…",
+ *   paymasterSignature: pmSigBytes,
+ * });
+ * const signingHash = hashBatchTransaction(tx, aa_bundle);
+ * const signed = await signer.buildSignedTransaction({ tx, txHash: signingHash, aa_bundle });
+ * ```
+ */
+export function buildSponsoredTransaction(options: BuildSponsoredTransactionOptions): {
+  tx: ShellTransactionRequest;
+  aa_bundle: AaBundle;
+} {
+  const { tx, aa_bundle } = buildBatchTransaction(options);
+  aa_bundle.paymaster = options.paymaster;
+  aa_bundle.paymaster_signature = Array.from(options.paymasterSignature);
+  return { tx, aa_bundle };
+}
+
+/**
+ * Compute the `batch_signing_hash` for an AA bundle transaction.
+ *
+ * This is the hash that the **sender** must sign (not the plain `tx.hash()`).
+ * The domain separation prevents replay attacks across tx types.
+ *
+ * Domain: `keccak256( 0x42 || RLP(tx) || RLP(aa_bundle_signing_fields) )`
+ *
+ * @param tx - The outer unsigned transaction (must have `tx_type = 0x7E`).
+ * @param bundle - The AA bundle that will be attached.
+ * @returns 32-byte keccak256 hash as a `Uint8Array`.
+ */
+export function hashBatchTransaction(
+  tx: ShellTransactionRequest,
+  bundle: AaBundle,
+): Uint8Array {
+  if (tx.tx_type !== AA_BUNDLE_TX_TYPE) {
+    throw new Error(
+      `hashBatchTransaction: tx.tx_type must be AA_BUNDLE_TX_TYPE (0x7E), got ${tx.tx_type}`,
+    );
+  }
+
+  // Encode inner calls for signing (matches chain's encode_for_signing).
+  const innerCallsRlp = bundle.inner_calls.map((call) => [
+    call.to ? normalizeHexAddress(call.to) : "0x",
+    toRlpUint(call.value),
+    call.data,
+    toRlpUint(call.gas_limit),
+  ]);
+
+  // Paymaster: 20-byte address or empty bytes.
+  const paymasterField = bundle.paymaster
+    ? (normalizeHexAddress(bundle.paymaster) as HexString)
+    : ("0x" as HexString);
+
+  const txFields = [
+    toRlpUint(tx.chain_id),
+    toRlpUint(tx.nonce),
+    tx.to ? normalizeHexAddress(tx.to) : "0x",
+    toRlpUint(tx.value),
+    tx.data,
+    toRlpUint(tx.gas_limit),
+    toRlpUint(tx.max_fee_per_gas),
+    toRlpUint(tx.max_priority_fee_per_gas),
+    toRlpAccessList(tx.access_list),
+    toRlpUint(tx.tx_type ?? AA_BUNDLE_TX_TYPE),
+    toRlpUint(tx.max_fee_per_blob_gas != null ? 1 : 0),
+    toRlpUint(tx.max_fee_per_blob_gas ?? 0),
+    (tx.blob_versioned_hashes ?? []).map((hash) => hash as HexString),
+  ] as const;
+
+  const bundleSigningFields = [innerCallsRlp, paymasterField] as const;
+
+  const domainBuf = new Uint8Array([BATCH_SIGNING_HASH_DOMAIN]);
+  const txRlp = hexToBytes(toRlp(txFields));
+  const bundleRlp = hexToBytes(toRlp(bundleSigningFields));
+
+  const combined = new Uint8Array(domainBuf.length + txRlp.length + bundleRlp.length);
+  combined.set(domainBuf, 0);
+  combined.set(txRlp, domainBuf.length);
+  combined.set(bundleRlp, domainBuf.length + txRlp.length);
+
+  return hexToBytes(keccak256(bytesToHex(combined)));
+}
+
+/**
+ * Convenience helper: build a minimal `AaInnerCall` for a SHELL token transfer.
+ *
+ * @param to - Recipient address.
+ * @param value - Amount in wei to send.
+ * @param gasLimit - Gas limit for this inner call. Defaults to `21_000`.
+ * @returns An `AaInnerCall` ready for use in {@link buildBatchTransaction}.
+ */
+export function buildInnerTransfer(
+  to: AddressLike,
+  value: bigint,
+  gasLimit = 21_000,
+): AaInnerCall {
+  return { to, value, data: "0x", gas_limit: gasLimit };
+}
+
+/**
+ * Convenience helper: build a contract-call `AaInnerCall`.
+ *
+ * @param to - Target contract address.
+ * @param data - ABI-encoded calldata.
+ * @param gasLimit - Gas limit for this inner call.
+ * @param value - Optional ETH value. Defaults to `0n`.
+ * @returns An `AaInnerCall` ready for use in {@link buildBatchTransaction}.
+ */
+export function buildInnerCall(
+  to: AddressLike,
+  data: HexString,
+  gasLimit: number,
+  value = 0n,
+): AaInnerCall {
+  return { to, value, data, gas_limit: gasLimit };
+}
+

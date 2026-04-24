@@ -35,7 +35,7 @@ export interface ShellTransactionRequest {
   max_priority_fee_per_gas: number;
   /** Optional EIP-2930 access list. */
   access_list?: ShellAccessListItem[] | null;
-  /** Transaction type; defaults to `2` (EIP-1559). */
+  /** Transaction type; defaults to `2` (EIP-1559). AA bundle uses `0x7E`. */
   tx_type?: number;
   /** EIP-4844 max fee per blob gas unit. */
   max_fee_per_blob_gas?: number | null;
@@ -46,11 +46,12 @@ export interface ShellTransactionRequest {
 /**
  * The name of a supported post-quantum signature algorithm.
  *
- * - `"Dilithium3"` — Round-3 Dilithium (algorithm ID 0); uses the ML-DSA-65 implementation as a stand-in.
- * - `"MlDsa65"` — NIST FIPS 204 ML-DSA-65 (algorithm ID 1).
+ * - `"ML-DSA-65"` — NIST FIPS 204 ML-DSA-65 (canonical name, algorithm ID 0); preferred.
+ * - `"Dilithium3"` — Compatibility alias for `"ML-DSA-65"` (same wire format, algorithm ID 0).
+ * - `"MlDsa65"` — Legacy camelCase alias for `"ML-DSA-65"` (algorithm ID 0); still accepted.
  * - `"SphincsSha2256f"` — NIST FIPS 205 SLH-DSA-SHA2-256f (algorithm ID 2).
  */
-export type SignatureTypeName = "Dilithium3" | "MlDsa65" | "SphincsSha2256f";
+export type SignatureTypeName = "ML-DSA-65" | "Dilithium3" | "MlDsa65" | "SphincsSha2256f";
 
 /**
  * A post-quantum signature attached to a transaction.
@@ -63,6 +64,59 @@ export interface ShellSignature {
   sig_type: SignatureTypeName;
   /** Raw signature bytes as a JS number array. */
   data: number[];
+}
+
+// ---------------------------------------------------------------------------
+// Native AA types (v0.18.0)
+// ---------------------------------------------------------------------------
+
+/**
+ * Transaction type byte for AA bundle transactions.
+ *
+ * `0x7E` — carries a {@link AaBundle} with N inner calls and an optional paymaster.
+ */
+export const AA_BUNDLE_TX_TYPE = 0x7e;
+
+/**
+ * Maximum number of inner calls per AA bundle.
+ */
+export const AA_MAX_INNER_CALLS = 16;
+
+/**
+ * A single call within an AA batch bundle.
+ *
+ * Mirrors `InnerCall` on the chain side.
+ */
+export interface AaInnerCall {
+  /** Recipient address, or `null` for contract creation. */
+  to: AddressLike | null;
+  /** Value in wei to transfer with this inner call. */
+  value: bigint;
+  /** ABI-encoded calldata. */
+  data: HexString;
+  /** Gas limit for this inner call. */
+  gas_limit: number;
+}
+
+/**
+ * The AA bundle payload attached to a `tx_type = 0x7E` transaction.
+ *
+ * All inner calls execute atomically under a single PQ signature covering
+ * the outer envelope + bundle (via `batch_signing_hash`).
+ */
+export interface AaBundle {
+  /** Ordered list of inner calls to execute. Max {@link AA_MAX_INNER_CALLS}. */
+  inner_calls: AaInnerCall[];
+  /**
+   * Optional paymaster address paying the gas cost.
+   * When set, `paymaster_signature` must also be provided.
+   */
+  paymaster?: AddressLike | null;
+  /**
+   * Paymaster's PQ signature over the `paymaster_signing_hash`.
+   * Required when `paymaster` is set.
+   */
+  paymaster_signature?: number[] | null;
 }
 
 /**
@@ -87,7 +141,111 @@ export interface SignedShellTransaction {
    * verify the address derivation. Pass `null` for subsequent transactions.
    */
   sender_pubkey?: number[] | null;
+  /**
+   * AA bundle payload. Present only when `tx.tx_type === AA_BUNDLE_TX_TYPE`.
+   */
+  aa_bundle?: AaBundle | null;
 }
+
+// ---------------------------------------------------------------------------
+// AA RPC types (v0.18.0)
+// ---------------------------------------------------------------------------
+
+/**
+ * A single inner call entry in a `shell_estimateBatch` request.
+ */
+export interface ShellBatchInnerCallRequest {
+  /** Recipient address, or `null`. */
+  to?: AddressLike | null;
+  /** Value as hex string (e.g. `"0x0"`). */
+  value?: string | null;
+  /** ABI-encoded calldata. */
+  data?: HexString | null;
+  /** Gas limit as hex string. If absent, the node simulates to estimate. */
+  gas_limit?: string | null;
+}
+
+/**
+ * Request body for `shell_estimateBatch`.
+ */
+export interface ShellEstimateBatchRequest {
+  /** Nominal sender address for simulation. Defaults to zero address. */
+  from?: AddressLike | null;
+  /** Optional paymaster (informational; does not affect gas estimate). */
+  paymaster?: AddressLike | null;
+  /** Inner calls to estimate. */
+  inner_calls: ShellBatchInnerCallRequest[];
+}
+
+/**
+ * Per-inner-call estimate entry returned by `shell_estimateBatch`.
+ */
+export interface ShellBatchInnerGas {
+  /** Gas limit as hex string. */
+  gasLimit: string;
+  /** `true` if the node simulated this call (no `gas_limit` was provided). */
+  simulated: boolean;
+}
+
+/**
+ * Response from `shell_estimateBatch`.
+ */
+export interface ShellEstimateBatchResult {
+  /** Total gas (outer intrinsic + inner sum + surcharge) as hex string. */
+  totalGas: string;
+  /** Outer transaction intrinsic gas (always `"0x5208"` = 21 000). */
+  outerIntrinsic: string;
+  /** Sum of all inner gas limits as hex string. */
+  innerSum: string;
+  /** Per-extra-inner-call intrinsic surcharge as hex string. */
+  intrinsicSurcharge: string;
+  /** Per-inner gas estimates. */
+  perInner: ShellBatchInnerGas[];
+  /** Paymaster echoed back (if supplied in request). */
+  paymaster?: AddressLike | null;
+}
+
+/**
+ * Paymaster policy returned by `shell_getPaymasterPolicy`.
+ */
+export interface ShellPaymasterPolicy {
+  /** Paymaster address (pq1… form). */
+  address: AddressLike;
+  /** `true` if a PQ pubkey has been registered on-chain for this address. */
+  hasPqPubkey: boolean;
+  /** Pubkey byte length (if present). */
+  pubkeyBytes?: number | null;
+  /** SHELL balance of the paymaster as hex string. */
+  balance: string;
+  /** Policy type; currently always `"eoa-open"`. */
+  policy: string;
+  /** Maximum gas sponsorship cap (null = uncapped). */
+  maxGasSponsorship?: string | null;
+}
+
+/**
+ * Response from `shell_isSponsored`.
+ */
+export interface ShellIsSponsoredResult {
+  /** `true` if the transaction was found (mempool or chain). */
+  found: boolean;
+  /** `true` if the transaction is sponsored by a paymaster. */
+  sponsored: boolean;
+  /** Where the transaction was found: `"mempool"`, `"chain"`, or `null`. */
+  location: "mempool" | "chain" | null;
+  /** `true` if the transaction is a native AA bundle. */
+  isAaBundle: boolean;
+  /** Paymaster address, or `null` if not sponsored. */
+  paymaster: AddressLike | null;
+  /** Sender address. */
+  sender: AddressLike | null;
+  /** Number of inner calls in the bundle, or `null` for non-AA txs. */
+  innerCallCount: number | null;
+}
+
+// ---------------------------------------------------------------------------
+// Node / storage types (carried over from 0.3.x, updated)
+// ---------------------------------------------------------------------------
 
 /**
  * Node storage profile as advertised via the `StorageCapability` P2P message.
@@ -104,7 +262,7 @@ export type ShellStorageProfile = "archive" | "full" | "light";
  * Contains runtime metadata about the connected Shell Chain node.
  */
 export interface ShellNodeInfo {
-  /** Node software version string, e.g. `"shell-node/0.17.0"`, independent of the SDK package version. */
+  /** Node software version string, e.g. `"shell-node/0.18.0"`. */
   version: string;
   /** Chain ID as a decimal string. */
   chain_id: string;
@@ -146,6 +304,11 @@ export interface ShellWitnessBundle {
   witness_count: number;
   /** Individual transaction witnesses. */
   witnesses: ShellTxWitness[];
+  /**
+   * Merkle root of the witness bundle (stored in the block header).
+   * Present on archive/full nodes.
+   */
+  witness_root?: string;
 }
 
 /** Paginated response from `shell_getTransactionsByAddress`. */
@@ -208,3 +371,4 @@ export interface ShellEncryptedKey {
   /** Hex-encoded raw public key bytes. */
   public_key: string;
 }
+

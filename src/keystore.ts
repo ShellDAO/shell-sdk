@@ -41,7 +41,7 @@ export interface ParsedShellKeystore {
   hexAddress: string;
 }
 
-const SIG_IDS: Record<SignatureTypeName, number> = { Dilithium3: 0, MlDsa65: 1, SphincsSha2256f: 2 };
+const SIG_IDS: Record<SignatureTypeName, number> = { "ML-DSA-65": 0, Dilithium3: 0, MlDsa65: 0, SphincsSha2256f: 2 };
 
 /**
  * Parse a Shell keystore file (string or object) and extract public metadata.

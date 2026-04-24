@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.4.0] — 2026-05-16
+
+### Added
+- **Native AA batch transactions** (`tx_type = 0x7E`): `buildBatchTransaction`, `buildSponsoredTransaction`, `buildInnerTransfer`, `buildInnerCall`, `hashBatchTransaction` in `transactions.ts`.
+  - `hashBatchTransaction` computes the `batch_signing_hash` (domain `0x42 || RLP(tx) || RLP(bundle)`), required for signing AA bundle txs.
+- **AA types** (`types.ts`): `AaInnerCall`, `AaBundle`, `ShellBatchInnerCallRequest`, `ShellEstimateBatchRequest`, `ShellEstimateBatchResult`, `ShellBatchInnerGas`, `ShellPaymasterPolicy`, `ShellIsSponsoredResult`.
+  - Constants: `AA_BUNDLE_TX_TYPE = 0x7e`, `AA_MAX_INNER_CALLS = 16`.
+  - `SignedShellTransaction` now has optional `aa_bundle?: AaBundle` field.
+- **AA provider methods** (`provider.ts`): `estimateBatch`, `getPaymasterPolicy`, `isSponsored`, `verifyWitnessRoot`.
+- **ML-DSA-65 canonical naming** (`signer.ts`): `"ML-DSA-65"` is now the first-class `SignatureTypeName` (FIPS 204). `"Dilithium3"` and `"MlDsa65"` remain as compatibility aliases, all mapping to algorithm ID `0`.
+  - `KEY_TYPE_TO_SIGNATURE_TYPE` now maps all ML-DSA-65 variants (including `"dilithium3"`) to `"ML-DSA-65"`.
+- **New exports** (`index.ts`): `SIGNATURE_TYPE_IDS`, `KEY_TYPE_TO_SIGNATURE_TYPE`, all new AA builders and types.
+
+### Changed
+- `SIGNATURE_TYPE_IDS`: `"MlDsa65"` now maps to `0` (was `1`) — aligns with chain algorithm ID; no wire-format change.
+
+### Compatibility
+- Fully backwards-compatible with `shell-chain v0.17.0` and prior SDK `0.3.x` usage.
+- AA fields (`aa_bundle`, new RPC methods) are only active on `shell-chain v0.18.0+`.
+
 ## [0.3.1] — 2026-04-23
 
 ### Changed
