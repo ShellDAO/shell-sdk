@@ -250,14 +250,14 @@ export class ShellProvider {
    * Calls `shell_estimateBatch`.
    *
    * @param request - Batch estimate request with inner calls and optional paymaster.
-   * @returns Gas estimates including `totalGas`, `perInner`, and breakdown fields.
+   * @returns Gas estimates including `total_gas`, `per_inner`, and breakdown fields.
    *
    * @example
    * ```typescript
    * const estimate = await provider.estimateBatch({
    *   inner_calls: [{ to: "pq1…", value: "0x0", gas_limit: "0x5208" }],
    * });
-   * const totalGas = parseInt(estimate.totalGas, 16);
+   * const totalGas = parseInt(estimate.total_gas, 16);
    * ```
    */
   async estimateBatch(request: ShellEstimateBatchRequest): Promise<ShellEstimateBatchResult> {
