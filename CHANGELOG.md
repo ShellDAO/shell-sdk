@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.4.1] — 2026-04-25
+
+### Changed
+- `estimateBatch` JSDoc updated to reflect snake_case field names (`total_gas`, `inner_gas`) aligning with `shell-chain v0.18.1` wire format.
+
 ## [0.4.0] — 2026-05-16
 
 ### Added
