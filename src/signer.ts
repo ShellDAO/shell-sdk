@@ -172,6 +172,7 @@ export class ShellSigner {
     options: Omit<BuildSignedTransactionOptions, "from" | "signature" | "signatureType"> & {
       txHash: Uint8Array;
       includePublicKey?: boolean;
+      aaBundle?: import("./types.js").AaBundle;
     },
   ): Promise<SignedShellTransaction> {
     const signature = await this.sign(options.txHash);
@@ -182,6 +183,7 @@ export class ShellSigner {
       signature,
       signatureType: this.signatureType,
       senderPubkey: options.includePublicKey ? this.getPublicKey() : undefined,
+      aaBbundle: options.aaBundle,
     });
   }
 }

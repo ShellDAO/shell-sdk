@@ -32,6 +32,7 @@ import type {
   ShellPaymasterPolicy,
   ShellStorageProfile,
   ShellWitnessBundle,
+  ShellWitnessRootResult,
   SignedShellTransaction,
 } from "./types.js";
 
@@ -305,7 +306,7 @@ export class ShellProvider {
    * @param blockNumberOrTag - Hex block number or `"latest"`.
    * @returns Verification result object `{ block, witnessRoot, bundleRoot, match }`.
    */
-  async verifyWitnessRoot(blockNumberOrTag: string): Promise<unknown> {
+  async verifyWitnessRoot(blockNumberOrTag: string): Promise<ShellWitnessRootResult> {
     return this.request("shell_verifyWitnessRoot", [blockNumberOrTag]);
   }
 }

@@ -90,8 +90,8 @@ export const AA_MAX_INNER_CALLS = 16;
 export interface AaInnerCall {
   /** Recipient address, or `null` for contract creation. */
   to: AddressLike | null;
-  /** Value in wei to transfer with this inner call. */
-  value: bigint;
+  /** Value in wei as a hex string (e.g. `"0x0"`, `"0xde0b6b3a7640000"`). JSON-safe. */
+  value: HexString;
   /** ABI-encoded calldata. */
   data: HexString;
   /** Gas limit for this inner call. */
@@ -182,7 +182,7 @@ export interface ShellEstimateBatchRequest {
  */
 export interface ShellBatchInnerGas {
   /** Gas limit as hex string. */
-  gasLimit: string;
+  gas_limit: string;
   /** `true` if the node simulated this call (no `gas_limit` was provided). */
   simulated: boolean;
 }
@@ -192,15 +192,15 @@ export interface ShellBatchInnerGas {
  */
 export interface ShellEstimateBatchResult {
   /** Total gas (outer intrinsic + inner sum + surcharge) as hex string. */
-  totalGas: string;
+  total_gas: string;
   /** Outer transaction intrinsic gas (always `"0x5208"` = 21 000). */
-  outerIntrinsic: string;
+  outer_intrinsic: string;
   /** Sum of all inner gas limits as hex string. */
-  innerSum: string;
+  inner_sum: string;
   /** Per-extra-inner-call intrinsic surcharge as hex string. */
-  intrinsicSurcharge: string;
+  intrinsic_surcharge: string;
   /** Per-inner gas estimates. */
-  perInner: ShellBatchInnerGas[];
+  per_inner: ShellBatchInnerGas[];
   /** Paymaster echoed back (if supplied in request). */
   paymaster?: AddressLike | null;
 }
@@ -212,15 +212,15 @@ export interface ShellPaymasterPolicy {
   /** Paymaster address (pq1… form). */
   address: AddressLike;
   /** `true` if a PQ pubkey has been registered on-chain for this address. */
-  hasPqPubkey: boolean;
+  has_pq_pubkey: boolean;
   /** Pubkey byte length (if present). */
-  pubkeyBytes?: number | null;
+  pubkey_bytes?: number | null;
   /** SHELL balance of the paymaster as hex string. */
   balance: string;
   /** Policy type; currently always `"eoa-open"`. */
   policy: string;
   /** Maximum gas sponsorship cap (null = uncapped). */
-  maxGasSponsorship?: string | null;
+  max_gas_sponsorship?: string | null;
 }
 
 /**
@@ -234,13 +234,27 @@ export interface ShellIsSponsoredResult {
   /** Where the transaction was found: `"mempool"`, `"chain"`, or `null`. */
   location: "mempool" | "chain" | null;
   /** `true` if the transaction is a native AA bundle. */
-  isAaBundle: boolean;
+  is_aa_bundle: boolean;
   /** Paymaster address, or `null` if not sponsored. */
   paymaster: AddressLike | null;
   /** Sender address. */
   sender: AddressLike | null;
   /** Number of inner calls in the bundle, or `null` for non-AA txs. */
-  innerCallCount: number | null;
+  inner_call_count: number | null;
+}
+
+/**
+ * Result returned by `shell_verifyWitnessRoot`.
+ */
+export interface ShellWitnessRootResult {
+  /** The block number that was verified (as hex string). */
+  block: string;
+  /** The witness root stored in the block header (hex). */
+  witness_root: string;
+  /** The recomputed root from the bundle signatures (hex). */
+  bundle_root: string;
+  /** `true` if `witness_root === bundle_root`. */
+  match: boolean;
 }
 
 // ---------------------------------------------------------------------------

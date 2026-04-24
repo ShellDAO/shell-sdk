@@ -183,6 +183,7 @@ export class SlhDsaAdapter implements SignerAdapter {
  */
 export function generateAdapter(algorithm: SignatureTypeName, seed?: Uint8Array): SignerAdapter {
   switch (algorithm) {
+    case "ML-DSA-65":
     case "Dilithium3":
     case "MlDsa65":
       return MlDsa65Adapter.generate(seed);
@@ -213,6 +214,7 @@ export function adapterFromKeyPair(
   secretKey: Uint8Array,
 ): SignerAdapter {
   switch (algorithm) {
+    case "ML-DSA-65":
     case "Dilithium3":
     case "MlDsa65":
       return MlDsa65Adapter.fromKeyPair(publicKey, secretKey);

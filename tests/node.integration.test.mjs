@@ -46,7 +46,7 @@ test('node integration: parse/decrypt keystore and sign transaction', async () =
   });
 
   assert.equal(signed.from, signer.getAddress());
-  assert.equal(signed.signature.sig_type, 'MlDsa65');
+  assert.equal(signed.signature.sig_type, 'ML-DSA-65');
   assert.equal(signed.sender_pubkey.length, publicKey.length);
   assert.ok(Array.isArray(signed.signature.data));
   assert.ok(signed.signature.data.length > 0);

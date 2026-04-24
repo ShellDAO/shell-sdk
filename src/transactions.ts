@@ -84,6 +84,8 @@ export interface BuildSignedTransactionOptions {
   signatureType: SignatureTypeName;
   /** Optional public key bytes to embed as `sender_pubkey`. */
   senderPubkey?: Uint8Array | number[];
+  /** AA bundle to attach when `tx.tx_type === AA_BUNDLE_TX_TYPE`. */
+  aaBbundle?: AaBundle;
 }
 
 function toByteArray(bytes: Uint8Array | number[]): number[] {
@@ -313,6 +315,7 @@ export function buildSignedTransaction(
     tx: options.tx,
     signature: buildSignature(options.signatureType, options.signature),
     sender_pubkey: options.senderPubkey ? toByteArray(options.senderPubkey) : null,
+    aa_bundle: options.aaBbundle ?? null,
   };
 }
 
@@ -426,7 +429,9 @@ export const DEFAULT_AA_GAS_LIMIT = 200_000;
  * {@link hashBatchTransaction}) rather than the plain `tx.hash()`.
  *
  * @param options - Batch transaction options including inner calls.
- * @returns An unsigned `SignedShellTransaction` skeleton (no `signature` yet) plus the bundle.
+ * @returns `{ tx: ShellTransactionRequest; aa_bundle: AaBundle }` — an unsigned transaction
+ *   skeleton plus bundle. Pass `txHash: hashBatchTransaction(tx, aa_bundle)` and `aa_bundle`
+ *   into `signer.buildSignedTransaction(...)` to produce the final signed transaction.
  *
  * @example
  * ```typescript
@@ -435,10 +440,10 @@ export const DEFAULT_AA_GAS_LIMIT = 200_000;
  * const { tx, aa_bundle } = buildBatchTransaction({
  *   chainId: 424242,
  *   nonce: 0,
- *   innerCalls: [{ to: "pq1recipient…", value: 1_000n, data: "0x", gas_limit: 21_000 }],
+ *   innerCalls: [{ to: "pq1recipient…", value: "0x3e8", data: "0x", gas_limit: 21_000 }],
  * });
  * const signingHash = hashBatchTransaction(tx, aa_bundle);
- * const signed = await signer.buildSignedTransaction({ tx, txHash: signingHash, aa_bundle });
+ * const signed = await signer.buildSignedTransaction({ tx, txHash: signingHash, aaBundle: aa_bundle });
  * ```
  */
 export function buildBatchTransaction(options: BuildBatchTransactionOptions): {
@@ -494,7 +499,7 @@ export function buildBatchTransaction(options: BuildBatchTransactionOptions): {
  *   paymasterSignature: pmSigBytes,
  * });
  * const signingHash = hashBatchTransaction(tx, aa_bundle);
- * const signed = await signer.buildSignedTransaction({ tx, txHash: signingHash, aa_bundle });
+ * const signed = await signer.buildSignedTransaction({ tx, txHash: signingHash, aaBundle: aa_bundle });
  * ```
  */
 export function buildSponsoredTransaction(options: BuildSponsoredTransactionOptions): {
@@ -585,7 +590,7 @@ export function buildInnerTransfer(
   value: bigint,
   gasLimit = 21_000,
 ): AaInnerCall {
-  return { to, value, data: "0x", gas_limit: gasLimit };
+  return { to, value: ("0x" + value.toString(16)) as HexString, data: "0x", gas_limit: gasLimit };
 }
 
 /**
@@ -603,6 +608,6 @@ export function buildInnerCall(
   gasLimit: number,
   value = 0n,
 ): AaInnerCall {
-  return { to, value, data, gas_limit: gasLimit };
+  return { to, value: ("0x" + value.toString(16)) as HexString, data, gas_limit: gasLimit };
 }
 

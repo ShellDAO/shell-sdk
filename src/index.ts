@@ -81,8 +81,6 @@ export {
   publicKeyFromHex,
   ShellSigner,
   signatureTypeFromKeyType,
-  SIGNATURE_TYPE_IDS,
-  KEY_TYPE_TO_SIGNATURE_TYPE,
   type SignerAdapter,
 } from "./signer.js";
 export type {
@@ -108,6 +106,7 @@ export type {
   ShellTxByAddressPage,
   ShellTxWitness,
   ShellWitnessBundle,
+  ShellWitnessRootResult,
   SignedShellTransaction,
   SignatureTypeName,
 } from "./types.js";
