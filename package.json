@@ -1,6 +1,6 @@
 {
   "name": "shell-sdk",
-  "version": "0.4.1",
+  "version": "0.5.0-dev",
   "description": "TypeScript SDK for Shell Chain — build quantum-safe dApps before Q-Day.",
   "license": "MIT",
   "type": "module",

@@ -14,6 +14,7 @@ import type {
   AaInnerCall,
   AddressLike,
   HexString,
+  SessionAuth,
   ShellSignature,
   ShellTransactionRequest,
   SignedShellTransaction,
@@ -547,6 +548,12 @@ export function hashBatchTransaction(
     ? (normalizeHexAddress(bundle.paymaster) as HexString)
     : ("0x" as HexString);
 
+  // paymaster_context: raw bytes or empty.
+  const paymasterContextField: HexString =
+    bundle.paymaster_context && bundle.paymaster_context.length > 0
+      ? (bytesToHex(new Uint8Array(bundle.paymaster_context)) as HexString)
+      : ("0x" as HexString);
+
   const txFields = [
     toRlpUint(tx.chain_id),
     toRlpUint(tx.nonce),
@@ -563,7 +570,7 @@ export function hashBatchTransaction(
     (tx.blob_versioned_hashes ?? []).map((hash) => hash as HexString),
   ] as const;
 
-  const bundleSigningFields = [innerCallsRlp, paymasterField] as const;
+  const bundleSigningFields = [innerCallsRlp, paymasterField, paymasterContextField] as const;
 
   const domainBuf = new Uint8Array([BATCH_SIGNING_HASH_DOMAIN]);
   const txRlp = hexToBytes(toRlp(txFields));
@@ -611,3 +618,104 @@ export function buildInnerCall(
   return { to, value: ("0x" + value.toString(16)) as HexString, data, gas_limit: gasLimit };
 }
 
+// ---------------------------------------------------------------------------
+// AA Phase 2 helpers (v0.19.0-dev)
+// ---------------------------------------------------------------------------
+
+/**
+ * Options for {@link buildContractPaymasterTransaction}.
+ *
+ * Extends {@link BuildBatchTransactionOptions} with contract paymaster fields.
+ */
+export interface BuildContractPaymasterTransactionOptions extends BuildBatchTransactionOptions {
+  /** Contract paymaster address. */
+  paymaster: AddressLike;
+  /**
+   * Opaque context bytes forwarded to `IPaymaster.validatePaymasterOp`.
+   * Max 256 bytes.
+   */
+  paymasterContext: Uint8Array | number[];
+}
+
+/**
+ * Build an AA batch transaction using a **contract paymaster** (Phase 2).
+ *
+ * Unlike {@link buildSponsoredTransaction} (off-chain paymaster), a contract
+ * paymaster implements `IPaymaster.validatePaymasterOp` on-chain and receives
+ * `paymasterContext` as input. The bundle must NOT include `paymaster_signature`.
+ *
+ * @param options - Options including contract paymaster address and context bytes.
+ * @returns `{ tx, aa_bundle }` — an unsigned transaction skeleton plus bundle.
+ *
+ * @example
+ * ```typescript
+ * const { tx, aa_bundle } = buildContractPaymasterTransaction({
+ *   chainId: 424242,
+ *   nonce: 0,
+ *   innerCalls: [...],
+ *   paymaster: contractPaymasterAddress,
+ *   paymasterContext: contextBytes,
+ * });
+ * const signingHash = hashBatchTransaction(tx, aa_bundle);
+ * const signed = await signer.buildSignedTransaction({ tx, txHash: signingHash, aaBundle: aa_bundle });
+ * ```
+ */
+export function buildContractPaymasterTransaction(
+  options: BuildContractPaymasterTransactionOptions,
+): {
+  tx: ShellTransactionRequest;
+  aa_bundle: AaBundle;
+} {
+  const { tx, aa_bundle } = buildBatchTransaction(options);
+  aa_bundle.paymaster = options.paymaster;
+  aa_bundle.paymaster_context = Array.from(options.paymasterContext);
+  return { tx, aa_bundle };
+}
+
+/**
+ * Options for {@link buildSessionKeyTransaction}.
+ *
+ * Extends {@link BuildBatchTransactionOptions} with session key authorization.
+ */
+export interface BuildSessionKeyTransactionOptions extends BuildBatchTransactionOptions {
+  /** Pre-built session key authorization. */
+  sessionAuth: SessionAuth;
+}
+
+/**
+ * Build an AA batch transaction authorized by a **session key** (Phase 2).
+ *
+ * The session key must have been authorized by the root account via a
+ * `root_signature` over its `auth_hash`. The transaction is then signed
+ * by the session key via `session_signature`.
+ *
+ * @param options - Options including the session key authorization struct.
+ * @returns `{ tx, aa_bundle }` — an unsigned transaction skeleton plus bundle.
+ *
+ * @example
+ * ```typescript
+ * const { tx, aa_bundle } = buildSessionKeyTransaction({
+ *   chainId: 424242,
+ *   nonce: 0,
+ *   innerCalls: [...],
+ *   sessionAuth: {
+ *     session_pubkey: Array.from(sessionPubkeyBytes),
+ *     session_algo: 0,
+ *     target: null,
+ *     value_cap: "0xde0b6b3a7640000",
+ *     expiry_block: 500,
+ *     root_signature: Array.from(rootSigBytes),
+ *     session_signature: Array.from(sessionSigBytes),
+ *   },
+ * });
+ * const signingHash = hashBatchTransaction(tx, aa_bundle);
+ * ```
+ */
+export function buildSessionKeyTransaction(options: BuildSessionKeyTransactionOptions): {
+  tx: ShellTransactionRequest;
+  aa_bundle: AaBundle;
+} {
+  const { tx, aa_bundle } = buildBatchTransaction(options);
+  aa_bundle.session_auth = options.sessionAuth;
+  return { tx, aa_bundle };
+}

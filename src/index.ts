@@ -22,13 +22,21 @@ export {
 export {
   accountManagerAddress,
   accountManagerHexAddress,
+  cancelRecoverySelector,
   clearValidationCodeSelector,
+  encodeCancelRecoveryCalldata,
   encodeClearValidationCodeCalldata,
+  encodeExecuteRecoveryCalldata,
   encodeRotateKeyCalldata,
+  encodeSetGuardiansCalldata,
   encodeSetValidationCodeCalldata,
+  encodeSubmitRecoveryCalldata,
+  executeRecoverySelector,
   isSystemContractAddress,
   rotateKeySelector,
+  setGuardiansSelector,
   setValidationCodeSelector,
+  submitRecoverySelector,
   validatorRegistryAddress,
   validatorRegistryHexAddress,
 } from "./system-contracts.js";
@@ -37,9 +45,11 @@ export {
   AA_MAX_INNER_CALLS,
   buildBatchTransaction,
   buildClearValidationCodeTransaction,
+  buildContractPaymasterTransaction,
   buildInnerCall,
   buildInnerTransfer,
   buildRotateKeyTransaction,
+  buildSessionKeyTransaction,
   buildSetValidationCodeTransaction,
   buildSignature,
   buildSignedTransaction,
@@ -56,6 +66,8 @@ export {
   hashBatchTransaction,
   hashTransaction,
   type BuildBatchTransactionOptions,
+  type BuildContractPaymasterTransactionOptions,
+  type BuildSessionKeyTransactionOptions,
   type BuildSponsoredTransactionOptions,
 } from "./transactions.js";
 export {
@@ -83,11 +95,15 @@ export {
   signatureTypeFromKeyType,
   type SignerAdapter,
 } from "./signer.js";
+export { AA_MAX_PAYMASTER_CONTEXT, AA_SESSION_KEY_GAS_SURCHARGE } from "./types.js";
 export type {
   AaBundle,
   AaInnerCall,
   AddressLike,
+  GuardianConfig,
   HexString,
+  RecoveryProposal,
+  SessionAuth,
   ShellAccessListItem,
   ShellBatchInnerCallRequest,
   ShellBatchInnerGas,

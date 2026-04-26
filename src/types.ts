@@ -103,20 +103,134 @@ export interface AaInnerCall {
  *
  * All inner calls execute atomically under a single PQ signature covering
  * the outer envelope + bundle (via `batch_signing_hash`).
+ *
+ * ## AA Phase 2 extensions (v0.19.0-dev)
+ *
+ * - **Contract paymaster** (`paymaster_context`): pass opaque bytes to a
+ *   contract paymaster's `validatePaymasterOp` on-chain. Mutually exclusive
+ *   with `paymaster_signature` (off-chain/EOA paymaster).
+ * - **Session keys** (`session_auth`): attach a short-lived sub-key
+ *   authorization instead of the root PQ key.
  */
 export interface AaBundle {
   /** Ordered list of inner calls to execute. Max {@link AA_MAX_INNER_CALLS}. */
   inner_calls: AaInnerCall[];
   /**
    * Optional paymaster address paying the gas cost.
-   * When set, `paymaster_signature` must also be provided.
+   *
+   * - EOA/off-chain paymaster: set `paymaster_signature` (not `paymaster_context`).
+   * - Contract paymaster: set `paymaster_context` (not `paymaster_signature`).
    */
   paymaster?: AddressLike | null;
   /**
    * Paymaster's PQ signature over the `paymaster_signing_hash`.
-   * Required when `paymaster` is set.
+   * Required for EOA/off-chain paymaster. Mutually exclusive with `paymaster_context`.
    */
   paymaster_signature?: number[] | null;
+  /**
+   * Opaque context bytes forwarded to `IPaymaster.validatePaymasterOp`.
+   * Required for contract paymaster. Mutually exclusive with `paymaster_signature`.
+   * Max 256 bytes.
+   */
+  paymaster_context?: number[] | null;
+  /**
+   * Session key authorization. When set the root signature field belongs to
+   * the session `root_signature` and `session_signature` pair, not the root
+   * key signing the tx directly.
+   */
+  session_auth?: SessionAuth | null;
+}
+
+// ---------------------------------------------------------------------------
+// AA Phase 2 types (v0.19.0-dev)
+// ---------------------------------------------------------------------------
+
+/**
+ * Maximum length of `paymaster_context` bytes (256 bytes).
+ */
+export const AA_MAX_PAYMASTER_CONTEXT = 256;
+
+/**
+ * Extra PQ verify gas cost per session key authorization (2 × PQ_VERIFY_GAS = 20 000).
+ * Added to intrinsic gas when a session key is used.
+ */
+export const AA_SESSION_KEY_GAS_SURCHARGE = 20_000;
+
+/**
+ * Session key authorization attached to an AA bundle.
+ *
+ * Allows a short-lived sub-key to authorize a transaction on behalf of the
+ * root account, with optional restrictions on target address and value cap.
+ *
+ * ## Spec (AA_PHASE2_SPEC.md §4)
+ *
+ * 1. `session_pubkey` is authorized by the root key's `root_signature` over
+ *    `auth_hash = blake3(0x81 || session_pubkey || target(20B) || value_cap(32B BE) || expiry_block(8B BE) || chain_id(8B BE))`.
+ * 2. The transaction is signed by `session_pubkey` via `session_signature`.
+ * 3. `expiry_block` must be > current block at validation time.
+ * 4. Σ(inner_call.value) ≤ `value_cap`.
+ * 5. If `target` is set, all inner calls must target that address.
+ *
+ * @example
+ * ```typescript
+ * const sessionAuth: SessionAuth = {
+ *   session_pubkey: Array.from(sessionPubkeyBytes),
+ *   session_algo: 0, // ML-DSA-65
+ *   target: null,
+ *   value_cap: "0xde0b6b3a7640000",
+ *   expiry_block: 500,
+ *   root_signature: Array.from(rootSigBytes),
+ *   session_signature: Array.from(sessionSigBytes),
+ * };
+ * ```
+ */
+export interface SessionAuth {
+  /** Raw bytes of the session public key. */
+  session_pubkey: number[];
+  /** Algorithm ID of the session key (Dilithium3/ML-DSA-65 = 0, SphincsSha2256f = 2). */
+  session_algo: number;
+  /** If set, every inner call in the bundle must target this address. */
+  target?: AddressLike | null;
+  /** Maximum total value (Σ inner_call.value) permitted in wei as a hex string. */
+  value_cap: HexString;
+  /** Block number after which the session key is no longer valid (exclusive). */
+  expiry_block: number;
+  /**
+   * Root account's PQ signature over the session key authorization hash.
+   * `auth_hash = blake3(0x81 || session_pubkey || target || value_cap || expiry_block || chain_id)`.
+   */
+  root_signature: number[];
+  /** Session key's PQ signature over the tx `sender_signing_hash()`. */
+  session_signature: number[];
+}
+
+/**
+ * Guardian recovery configuration stored on-chain for an account.
+ *
+ * Set via `setGuardians` calldata (use {@link encodeSetGuardiansCalldata}).
+ */
+export interface GuardianConfig {
+  /** Guardian addresses (1..=5). */
+  guardians: AddressLike[];
+  /** Required votes (k-of-n). */
+  threshold: number;
+  /** Minimum blocks between threshold-reach and execution (≥ 100). */
+  timelock: number;
+}
+
+/**
+ * Active recovery proposal returned by the `shell_getRecoveryProposal` RPC method
+ * (if implemented by the node).
+ */
+export interface RecoveryProposal {
+  /** Proposed new PQ public key as a hex string. */
+  new_pubkey: HexString;
+  /** Algorithm ID of the new public key. */
+  new_algo: number;
+  /** Guardian addresses that have voted for this proposal. */
+  votes: AddressLike[];
+  /** Block after which `executeRecovery` may be called (0 = threshold not yet met). */
+  maturity_block: number;
 }
 
 /**

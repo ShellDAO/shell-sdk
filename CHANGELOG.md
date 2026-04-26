@@ -1,5 +1,31 @@
 # Changelog
 
+## [Unreleased — 0.5.0-dev]
+
+### Added — AA Phase 2 (matches `shell-chain v0.19.0-dev`)
+
+#### Types (`types.ts`)
+- **`SessionAuth`** interface: session PQ key authorization struct with `session_pubkey`, `session_algo`, `target?`, `value_cap`, `expiry_block`, `root_signature`, `session_signature`.
+- **`GuardianConfig`** interface: on-chain guardian set descriptor.
+- **`RecoveryProposal`** interface: active recovery proposal with votes and maturity block.
+- **`AaBundle`** extended: added `paymaster_context?: number[] | null` (contract paymaster opaque bytes) and `session_auth?: SessionAuth | null` (session key authorization).
+- Constants: `AA_MAX_PAYMASTER_CONTEXT = 256`, `AA_SESSION_KEY_GAS_SURCHARGE = 20_000`.
+
+#### Transaction builders (`transactions.ts`)
+- **`buildContractPaymasterTransaction`**: builds an AA batch tx with a contract paymaster (sets `paymaster_context`). Mutually exclusive with `paymaster_signature`.
+- **`buildSessionKeyTransaction`**: builds an AA batch tx authorized by a session key (sets `session_auth`).
+- **`hashBatchTransaction`**: updated signing hash to include `paymaster_context` as the 3rd RLP field in `bundleSigningFields`, matching `shell-chain` `AaBundle::encode_for_signing`.
+
+#### System contract calldata (`system-contracts.ts`)
+- **`setGuardiansSelector`** + **`encodeSetGuardiansCalldata`**: `setGuardians(address[],uint8,uint64)`.
+- **`submitRecoverySelector`** + **`encodeSubmitRecoveryCalldata`**: `submitRecovery(address,bytes,uint8)`.
+- **`executeRecoverySelector`** + **`encodeExecuteRecoveryCalldata`**: `executeRecovery(address)`.
+- **`cancelRecoverySelector`** + **`encodeCancelRecoveryCalldata`**: `cancelRecovery(address)`.
+
+### Compatibility
+- Fully backwards-compatible with SDK `0.4.x` usage. All new fields are optional.
+- New AA Phase 2 features require `shell-chain v0.19.0+`.
+
 ## [0.4.1] — 2026-04-25
 
 ### Changed
