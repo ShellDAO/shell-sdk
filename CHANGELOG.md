@@ -1,8 +1,8 @@
 # Changelog
 
-## [Unreleased — 0.5.0-dev]
+## [0.5.0] — 2026-04-26
 
-### Added — AA Phase 2 (matches `shell-chain v0.19.0-dev`)
+### Added — AA Phase 2 (matches `shell-chain v0.19.0`)
 
 #### Types (`types.ts`)
 - **`SessionAuth`** interface: session PQ key authorization struct with `session_pubkey`, `session_algo`, `target?`, `value_cap`, `expiry_block`, `root_signature`, `session_signature`.
