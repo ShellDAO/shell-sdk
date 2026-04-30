@@ -64,7 +64,7 @@ async function getNonce(provider, address) {
 const nonces = {};
 
 async function getNextNonce(provider, signer) {
-  const addr = signer.getHexAddress();
+  const addr = signer.getAddress();
   if (nonces[addr] === undefined) {
     nonces[addr] = await getNonce(provider, addr);
   }
@@ -72,7 +72,7 @@ async function getNextNonce(provider, signer) {
 }
 
 function resetNonce(signer) {
-  delete nonces[signer.getHexAddress()];
+  delete nonces[signer.getAddress()];
 }
 
 // --- Transaction builders ---
@@ -181,7 +181,7 @@ async function main() {
   // Pre-fetch all nonces concurrently before first burst
   await Promise.all(signers.map(s => getNextNonce(provider, s).then(n => {
     // getNextNonce already cached + incremented; roll back the increment
-    nonces[s.getHexAddress()] = n - 1;
+    nonces[s.getAddress()] = n - 1;
   })));
 
   while (true) {
