@@ -78,7 +78,7 @@ const signer  = new ShellSigner("MlDsa65", adapter);
 const from    = signer.getAddress(); // pq1…
 
 const provider = createShellProvider();
-const nonce    = await provider.client.getTransactionCount({ address: signer.getHexAddress() });
+const nonce    = await provider.client.getTransactionCount({ address: from });
 
 const tx       = buildTransferTransaction({ chainId: 424242, nonce, to: "pq1recipient…", value: parseEther("1") });
 const txHash   = hashTransaction(tx);
@@ -107,7 +107,7 @@ blake3( version(1) || algo_id(1) || public_key )[0..20]
 
 Algorithm IDs: `Dilithium3=0`, `MlDsa65=1`, `SphincsSha2256f=2`.
 
-Internally the chain also recognises the hex representation (`0x…`) of the same 20 bytes, so both forms are interchangeable in SDK APIs.
+Shell Chain v0.21.0+ accepts `pq1…` addresses at user-facing RPC and SDK boundaries. Legacy `0x…` address inputs are rejected.
 
 ### Native account abstraction (AA)
 
@@ -173,10 +173,7 @@ Defined in `src/types.ts`. All types are re-exported from the package root.
 | `bytesToPqAddress` | `(bytes: Uint8Array, version?) → string` | Encode 20 raw bytes as a `pq1…` bech32m address |
 | `pqAddressToBytes` | `(address: string) → Uint8Array` | Decode a `pq1…` address to its 20 raw bytes |
 | `pqAddressVersion` | `(address: string) → number` | Extract the version byte from a `pq1…` address |
-| `hexAddressToBytes` | `(address: string) → Uint8Array` | Parse a `0x…` address to 20 bytes |
-| `bytesToHexAddress` | `(bytes: Uint8Array) → HexString` | Encode 20 bytes as a `0x…` hex address |
-| `normalizePqAddress` | `(address: string) → string` | Accept either pq1 or 0x form, always return pq1 |
-| `normalizeHexAddress` | `(address: string) → HexString` | Accept either pq1 or 0x form, always return 0x |
+| `normalizePqAddress` | `(address: string) → string` | Validate and return a `pq1…` address |
 | `derivePqAddressFromPublicKey` | `(pk, algoId, version?) → string` | Derive pq1 address from a raw public key |
 | `isPqAddress` | `(address: string) → boolean` | Return `true` if the string is a valid pq1 address |
 
@@ -194,9 +191,9 @@ const address = derivePqAddressFromPublicKey(publicKey, 1 /* MlDsa65 */);
 
 console.log(isPqAddress(address)); // true
 
-// Round-trip normalisation
-normalizePqAddress("0xabcdef…"); // → "pq1…"
+// Validation / normalisation
 normalizePqAddress("pq1qx3f…");  // → "pq1qx3f…" (unchanged)
+normalizePqAddress("0xabcdef…"); // throws: expected a pq1… bech32m address
 ```
 
 ---
@@ -334,7 +331,6 @@ const signer = new ShellSigner("MlDsa65", MlDsa65Adapter.generate());
 | `algorithmId` | Numeric algorithm ID (`0`, `1`, or `2`) |
 | `getPublicKey()` | Raw public key bytes |
 | `getAddress()` | `pq1…` bech32m address |
-| `getHexAddress()` | `0x…` hex address |
 | `sign(message)` | Sign an arbitrary byte message → signature bytes |
 | `buildSignedTransaction(options)` | Sign `txHash` and assemble a `SignedShellTransaction` |
 
@@ -568,7 +564,6 @@ import { buildTransferTransaction, hashTransaction } from "shell-sdk/transaction
 const adapter = MlDsa65Adapter.generate();
 const signer  = new ShellSigner("MlDsa65", adapter);
 const from    = signer.getAddress();      // pq1…
-const fromHex = signer.getHexAddress();   // 0x…
 
 console.log("Address:", from);
 
@@ -576,7 +571,7 @@ console.log("Address:", from);
 const provider = createShellProvider(); // defaults to http://127.0.0.1:8545
 
 // 3. Get current nonce
-const nonce = await provider.client.getTransactionCount({ address: fromHex });
+const nonce = await provider.client.getTransactionCount({ address: from });
 
 // 4. Build the transaction
 const tx = buildTransferTransaction({
@@ -614,7 +609,7 @@ import { parseEther } from "viem";
 
 const signer   = await decryptKeystore(readFileSync("./key.json", "utf8"), process.env.PASSPHRASE!);
 const provider = createShellProvider();
-const nonce    = await provider.client.getTransactionCount({ address: signer.getHexAddress() });
+const nonce    = await provider.client.getTransactionCount({ address: signer.getAddress() });
 
 const tx = buildTransferTransaction({
   chainId: 424242,
@@ -639,13 +634,13 @@ This is the recommended shape for a Chrome extension background worker: keep the
 import { createShellProvider, buildTransferTransaction, hashTransaction } from "shell-sdk";
 
 async function submitTransfer({ signer, to, value, rpcHttpUrl }: {
-  signer: { getHexAddress(): `0x${string}`; buildSignedTransaction(args: { tx: unknown; txHash: Uint8Array; includePublicKey?: boolean }): Promise<unknown> };
+  signer: { getAddress(): string; buildSignedTransaction(args: { tx: unknown; txHash: Uint8Array; includePublicKey?: boolean }): Promise<unknown> };
   to: string;
   value: bigint;
   rpcHttpUrl: string;
 }) {
   const provider = createShellProvider({ rpcHttpUrl });
-  const nonce = await provider.client.getTransactionCount({ address: signer.getHexAddress() });
+  const nonce = await provider.client.getTransactionCount({ address: signer.getAddress() });
 
   const tx = buildTransferTransaction({
     chainId: 424242,
@@ -671,7 +666,7 @@ const provider = createShellProvider({
   rpcHttpUrl: "https://rpc.testnet.shell.network",
 });
 
-const account = normalizePqAddress("0x1234...abcd");
+const account = normalizePqAddress("pq1qx3f...");
 const history = await provider.getTransactionsByAddress(account, { page: 1, limit: 10 });
 
 console.log("recent txs:", history.transactions);
@@ -699,7 +694,7 @@ const currentSigner = await decryptKeystore(readFileSync("old-key.json", "utf8")
 const newAdapter = MlDsa65Adapter.generate();
 const newSigner  = new ShellSigner("MlDsa65", newAdapter);
 
-const nonce = await provider.client.getTransactionCount({ address: currentSigner.getHexAddress() });
+const nonce = await provider.client.getTransactionCount({ address: currentSigner.getAddress() });
 
 // Build the rotateKey system transaction
 const tx = buildRotateKeyTransaction({
@@ -728,7 +723,6 @@ All SDK functions throw standard `Error` instances. Common error messages:
 |---|---|
 | `expected 20 address bytes, got N` | Wrong-length bytes passed to address helpers |
 | `expected pq address prefix, got X` | bech32m prefix is not `pq` |
-| `invalid hex address` | String does not start with `0x` |
 | `invalid bech32m address` | String is not a valid bech32m address |
 | `unsupported key type: X` | Keystore `key_type` not recognised |
 | `unsupported kdf: X` | Only `argon2id` is supported |
