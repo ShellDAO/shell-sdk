@@ -1,12 +1,10 @@
 export {
-  bytesToHexAddress,
   PQ_ADDRESS_HRP,
   PQ_ADDRESS_LENGTH,
   PQ_ADDRESS_VERSION_V1,
   bytesToPqAddress,
   derivePqAddressFromPublicKey,
   isPqAddress,
-  normalizeHexAddress,
   normalizePqAddress,
   pqAddressVersion,
   pqAddressToBytes,
@@ -21,7 +19,6 @@ export {
 } from "./provider.js";
 export {
   accountManagerAddress,
-  accountManagerHexAddress,
   cancelRecoverySelector,
   clearValidationCodeSelector,
   encodeCancelRecoveryCalldata,
@@ -38,7 +35,6 @@ export {
   setValidationCodeSelector,
   submitRecoverySelector,
   validatorRegistryAddress,
-  validatorRegistryHexAddress,
 } from "./system-contracts.js";
 export {
   AA_BUNDLE_TX_TYPE,

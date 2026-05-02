@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { derivePqAddressFromPublicKey, normalizeHexAddress } from '../dist/address.js';
+import { derivePqAddressFromPublicKey } from '../dist/address.js';
 import { hashTransaction, hexBytes } from '../dist/transactions.js';
 import { generateMlDsa65KeyPair } from '../dist/adapters.js';
 import { MlDsa65Adapter } from '../dist/adapters.js';
@@ -15,7 +15,6 @@ test('rust compatibility: address derivation vectors match shell-chain', () => {
     const derived = derivePqAddressFromPublicKey(publicKey, vector.algo_id);
 
     assert.equal(derived, vector.pq_address, `pq address mismatch for ${vector.name}`);
-    assert.equal(normalizeHexAddress(derived), vector.hex_address, `hex address mismatch for ${vector.name}`);
   }
 });
 

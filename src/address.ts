@@ -1,9 +1,9 @@
 /**
  * PQ address utilities for Shell Chain.
  *
- * Shell Chain uses **bech32m**-encoded addresses (prefix `"pq"`) instead of
- * Ethereum's checksummed hex format. Each address encodes a version byte and
- * 20 address bytes derived from the account's post-quantum public key:
+ * Shell Chain uses **bech32m**-encoded addresses (prefix `"pq"`) exclusively.
+ * Each address encodes a version byte and 20 address bytes derived from the
+ * account's post-quantum public key:
  *
  * ```
  * address_bytes = blake3(version || algo_id || public_key)[0..20]
@@ -12,14 +12,10 @@
  *
  * Algorithm IDs: Dilithium3=0, MlDsa65=1, SphincsSha2256f=2.
  *
- * Both pq1… and 0x… representations refer to the same underlying 20 bytes;
- * the SDK accepts either form in most places via the `AddressLike` type.
- *
  * @module address
  */
 import { blake3 } from "@noble/hashes/blake3";
 import { bech32m } from "@scure/base";
-import { bytesToHex, hexToBytes } from "viem";
 
 /** Human-readable part (HRP) used in Shell bech32m addresses. */
 export const PQ_ADDRESS_HRP = "pq";
@@ -31,17 +27,10 @@ export const PQ_ADDRESS_LENGTH = 20;
 export const PQ_ADDRESS_VERSION_V1 = 0x01;
 
 type Bech32Address = `${string}1${string}`;
-type HexAddress = `0x${string}`;
 
 function assertBech32Address(value: string): asserts value is Bech32Address {
   if (!value.includes("1")) {
     throw new Error("invalid bech32m address");
-  }
-}
-
-function assertHexAddress(value: string): asserts value is HexAddress {
-  if (!value.startsWith("0x")) {
-    throw new Error("invalid hex address");
   }
 }
 
@@ -125,66 +114,18 @@ export function pqAddressVersion(address: string): number {
 }
 
 /**
- * Parse a `0x…` hex address string into its raw 20 bytes.
+ * Normalise an address: validates it is a `pq1…` bech32m address and returns it.
  *
- * @param address - A `0x`-prefixed 40-character hex address.
- * @returns The 20-byte address payload.
- * @throws {Error} If the string does not start with `"0x"` or is not exactly 20 bytes.
- */
-export function hexAddressToBytes(address: string): Uint8Array {
-  assertHexAddress(address);
-  const bytes = hexToBytes(address);
-  if (bytes.length !== PQ_ADDRESS_LENGTH) {
-    throw new Error(`expected ${PQ_ADDRESS_LENGTH} address bytes, got ${bytes.length}`);
-  }
-  return bytes;
-}
-
-/**
- * Encode 20 raw address bytes as a `0x…` hex address.
+ * Hex (`0x…`) addresses are no longer accepted. Use `pq1…` format everywhere.
  *
- * @param bytes - Exactly 20 address bytes.
- * @returns A `0x`-prefixed 40-character hex string.
- * @throws {Error} If `bytes.length !== 20`.
- */
-export function bytesToHexAddress(bytes: Uint8Array): HexAddress {
-  if (bytes.length !== PQ_ADDRESS_LENGTH) {
-    throw new Error(`expected ${PQ_ADDRESS_LENGTH} address bytes, got ${bytes.length}`);
-  }
-  return bytesToHex(bytes);
-}
-
-/**
- * Normalise an address to `pq1…` bech32m form.
- *
- * Accepts either a `pq1…` or `0x…` address and always returns the canonical
- * bech32m form.
- *
- * @param address - A `pq1…` or `0x…` address.
- * @returns The `pq1…` bech32m address.
+ * @param address - A `pq1…` bech32m address.
+ * @returns The same `pq1…` address (validated).
+ * @throws {Error} If the address is not a valid `pq1…` bech32m address.
  */
 export function normalizePqAddress(address: string): string {
-  if (isPqAddress(address)) {
-    return address;
+  if (!isPqAddress(address)) {
+    throw new Error(`expected a pq1… bech32m address, got: "${address.slice(0, 10)}…"`);
   }
-
-  return bytesToPqAddress(hexAddressToBytes(address));
-}
-
-/**
- * Normalise an address to `0x…` hex form.
- *
- * Accepts either a `pq1…` or `0x…` address and always returns the hex form.
- *
- * @param address - A `pq1…` or `0x…` address.
- * @returns The `0x`-prefixed hex address.
- */
-export function normalizeHexAddress(address: string): HexAddress {
-  if (isPqAddress(address)) {
-    return bytesToHexAddress(pqAddressToBytes(address));
-  }
-
-  assertHexAddress(address);
   return address;
 }
 

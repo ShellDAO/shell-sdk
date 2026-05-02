@@ -22,7 +22,7 @@ function hexToBytes(hex) {
   return bytes;
 }
 
-const MINIMAL_INNER_CALL = { to: '0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef', value: '0x0', data: '0x', gas_limit: 21_000 };
+const MINIMAL_INNER_CALL = { to: 'pq1q802m0h0m6kmam774klwlh4dhmhaatd7aunnnrmm', value: '0x0', data: '0x', gas_limit: 21_000 };
 
 // ---------------------------------------------------------------------------
 // Builder validation
@@ -59,7 +59,7 @@ test('buildSponsoredTransaction: sets paymaster and signature', () => {
     chainId: 1,
     nonce: 0,
     innerCalls: [MINIMAL_INNER_CALL],
-    paymaster: '0xabababababababababababababababababababababab',
+    paymaster: 'pq1qx46h2at4w46h2at4w46h2at4w46h2at4v6lzg9h',
     paymasterSignature: pmSig,
   });
   assert.ok(aa_bundle.paymaster, 'paymaster must be set');
@@ -106,7 +106,7 @@ test('hashBatchTransaction: paymaster changes the hash', () => {
   const { tx, aa_bundle: bundleNoPaymaster } = buildBatchTransaction({ chainId: 1, nonce: 0, innerCalls: calls });
   const bundleWithPaymaster = {
     ...bundleNoPaymaster,
-    paymaster: '0xabababababababababababababababababababababab',
+    paymaster: 'pq1qx46h2at4w46h2at4w46h2at4w46h2at4v6lzg9h',
   };
   const h1 = hexBytes(hashBatchTransaction(tx, bundleNoPaymaster));
   const h2 = hexBytes(hashBatchTransaction(tx, bundleWithPaymaster));

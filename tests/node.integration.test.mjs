@@ -27,7 +27,6 @@ test('node integration: parse/decrypt keystore and sign transaction', async () =
 
   const parsed = parseEncryptedKey(keystore);
   assert.equal(parsed.canonicalAddress, signer.getAddress());
-  assert.equal(parsed.hexAddress, signer.getHexAddress());
 
   const decryptedSigner = await decryptKeystore(keystore, 'correct horse battery');
   assert.equal(decryptedSigner.getAddress(), signer.getAddress());
@@ -68,10 +67,10 @@ test('node integration: tampered keystore address is rejected', async () => {
 
   const tampered = {
     ...keystore,
-    address: `0x${signer.getHexAddress().slice(2, -1)}${signer.getHexAddress().endsWith('0') ? '1' : '0'}`,
+    address: signer.getAddress().slice(0, -2) + (signer.getAddress().endsWith('0') ? '1' : '0'),
   };
   await assert.rejects(
     () => decryptKeystore(tampered, 'correct horse battery'),
-    /keystore address mismatch/,
+    /address mismatch|bech32m/i,
   );
 });

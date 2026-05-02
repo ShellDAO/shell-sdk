@@ -141,7 +141,7 @@ export class ShellProvider {
    * Calls `shell_getPqPubkey`. Returns `null` if the address has not yet
    * submitted a transaction (public key is only recorded on first send).
    *
-   * @param address - A `pq1…` or `0x…` address.
+   * @param address - A `pq1…` bech32m address.
    * @returns Hex-encoded public key string, or `null` if unknown.
    */
   async getPqPubkey(address: string): Promise<string | null> {
@@ -376,7 +376,7 @@ export function createShellWsClient(options: CreateShellPublicClientOptions = {}
  * @example
  * ```typescript
  * const provider = createShellProvider();
- * const balance  = await provider.client.getBalance({ address: signer.getHexAddress() });
+ * const balance  = await provider.getBalance(signer.getAddress());
  * const hash     = await provider.sendTransaction(signedTx);
  * ```
  */

@@ -8,7 +8,6 @@ import {
   createShellProvider,
   generateMlDsa65KeyPair,
   hashTransaction,
-  normalizeHexAddress,
 } from '../dist/index.js';
 import { createJsonRpcFetchMock } from './helpers.mjs';
 
@@ -38,7 +37,8 @@ test('browser integration: dist exports work with fetch-based provider', async (
 
   assert.equal(txHash, '0x' + 'ab'.repeat(32));
   assert.equal(pqPubkey, '0x' + '11'.repeat(32));
-  assert.equal(normalizeHexAddress(signer.getAddress()), signer.getHexAddress());
+  assert.equal(typeof signer.getAddress(), 'string');
+  assert.ok(signer.getAddress().startsWith('pq1'), 'signer address must be pq1 format');
   assert.deepEqual(
     calls.map((call) => call.method),
     ['shell_sendTransaction', 'shell_getPqPubkey'],

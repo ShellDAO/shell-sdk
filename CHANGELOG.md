@@ -1,5 +1,58 @@
 # Changelog
 
+## [0.7.0] — 2026-04-30 ⚠️ BREAKING
+
+### Breaking Changes — F-PQ1-ONLY (pq1 bech32m addresses everywhere)
+
+This is a **breaking release**. All `0x` hex address support has been removed.
+
+#### Removed
+- `hexAddress()` / `hexAddressFromPubkey()` exports deleted — use `pq1Address()` instead.
+- `normalizePqAddress()` no longer accepts `0x...` hex strings — only `pq1...` bech32m.
+- Keystore `address` field: `encryptKeystore()` now always emits `pq1...` bech32m (was `0x...` hex).
+- `decryptKeystore()` rejects keystores with `0x` address fields (use `shell-node key migrate` first).
+
+#### Added
+- `pq1Address(pubkey, sigType)` — canonical address derivation returning `pq1...` bech32m string.
+- SK-only keystore format: `encryptKeystore` stores only the secret key in ciphertext (no pk concatenation), matching `shell-node key generate` output for full cross-language compatibility.
+- Full cross-format compatibility: SDK keystores are now byte-for-byte compatible with Rust CLI keystores.
+
+#### Updated
+- All SDK test fixtures regenerated with `pq1` addresses.
+- `SIGNATURE_TYPE_IDS.MlDsa65 = 1` (was incorrectly aliased to `0` in v0.6.x).
+- ML-DSA-65 (FIPS 204) via `@noble/post-quantum` — real implementation, not a Dilithium3 alias.
+
+### Migration Guide
+```js
+// Before (0.6.x)
+import { hexAddress } from 'shell-sdk';
+const addr = hexAddress(pubkey, sigType); // "0x..."
+
+// After (0.7.0)
+import { pq1Address } from 'shell-sdk';
+const addr = pq1Address(pubkey, sigType); // "pq1..."
+```
+
+For existing keystores with `0x` addresses: run `shell-node key migrate <keystore.json>` to upgrade to pq1 format.
+
+### Compatibility
+- Requires `shell-chain v0.21.0+` (pq1-only RPC).
+- Not backwards-compatible with SDK `0.6.x` address handling.
+
+## [0.6.0] — 2026-04-27
+
+### Added — ML-DSA-65 (FIPS 204) + Keystore SK-only format
+
+#### Crypto (`keystore.ts`, `address.ts`)
+- **`MlDsa65Adapter`**: real FIPS 204 ML-DSA-65 implementation via `@noble/post-quantum`.
+- **`SIGNATURE_TYPE_IDS.MlDsa65 = 1`**: ML-DSA-65 is now a distinct algorithm (was aliased to Dilithium3=0).
+- **SK-only keystore**: `encryptKeystore` stores only secret key bytes in ciphertext, matching `shell-node` CLI format. Cross-language compatible.
+- **`decryptCliKeystore`** helper removed — standard `decryptKeystore` now handles CLI keystores.
+
+#### Compatibility
+- Fully cross-language compatible: Rust CLI keystores decryptable by SDK and vice versa.
+- `shell-chain v0.20.0+` required for ML-DSA-65 transaction signing.
+
 ## [0.5.0] — 2026-04-26
 
 ### Added — AA Phase 2 (matches `shell-chain v0.19.0`)

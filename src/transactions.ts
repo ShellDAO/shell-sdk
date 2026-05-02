@@ -28,7 +28,7 @@ import {
   encodeRotateKeyCalldata,
   encodeSetValidationCodeCalldata,
 } from "./system-contracts.js";
-import { normalizeHexAddress } from "./address.js";
+import { pqAddressToBytes } from "./address.js";
 
 /** Default transaction type: `2` (EIP-1559). */
 export const DEFAULT_TX_TYPE = 2;
@@ -113,7 +113,7 @@ function toRlpAccessList(
   }
 
   return accessList.map((item) => [
-    normalizeHexAddress(item.address),
+    bytesToHex(pqAddressToBytes(item.address)),
     item.storage_keys.map((key) => key as HexString),
   ]);
 }
@@ -357,7 +357,7 @@ export function hashTransaction(tx: ShellTransactionRequest): Uint8Array {
   const fields = [
     toRlpUint(tx.chain_id),
     toRlpUint(tx.nonce),
-    tx.to ? normalizeHexAddress(tx.to) : "0x",
+    tx.to ? bytesToHex(pqAddressToBytes(tx.to)) : "0x",
     toRlpUint(tx.value),
     tx.data,
     toRlpUint(tx.gas_limit),
@@ -537,7 +537,7 @@ export function hashBatchTransaction(
 
   // Encode inner calls for signing (matches chain's encode_for_signing).
   const innerCallsRlp = bundle.inner_calls.map((call) => [
-    call.to ? normalizeHexAddress(call.to) : "0x",
+    call.to ? bytesToHex(pqAddressToBytes(call.to)) : "0x",
     toRlpUint(call.value),
     call.data,
     toRlpUint(call.gas_limit),
@@ -545,7 +545,7 @@ export function hashBatchTransaction(
 
   // Paymaster: 20-byte address or empty bytes.
   const paymasterField = bundle.paymaster
-    ? (normalizeHexAddress(bundle.paymaster) as HexString)
+    ? (bytesToHex(pqAddressToBytes(bundle.paymaster)) as HexString)
     : ("0x" as HexString);
 
   // paymaster_context: raw bytes or empty.
@@ -557,7 +557,7 @@ export function hashBatchTransaction(
   const txFields = [
     toRlpUint(tx.chain_id),
     toRlpUint(tx.nonce),
-    tx.to ? normalizeHexAddress(tx.to) : "0x",
+    tx.to ? bytesToHex(pqAddressToBytes(tx.to)) : "0x",
     toRlpUint(tx.value),
     tx.data,
     toRlpUint(tx.gas_limit),

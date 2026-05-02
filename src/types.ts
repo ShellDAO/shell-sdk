@@ -1,7 +1,7 @@
 /** A `0x`-prefixed hex string, e.g. `"0xdeadbeef"`. */
 export type HexString = `0x${string}`;
 
-/** Any string accepted as an address — either a `pq1…` bech32m address or a `0x…` hex address. */
+/** A `pq1…` bech32m address string (Shell Chain canonical address format). */
 export type AddressLike = string;
 
 /** A single entry in an EIP-2930 access list. */
@@ -21,7 +21,7 @@ export interface ShellTransactionRequest {
   chain_id: number;
   /** Sender account nonce. */
   nonce: number;
-  /** Recipient address (pq1… or 0x…), or `null` for contract deployment. */
+  /** Recipient address (`pq1…` bech32m format), or `null` for contract deployment. */
   to: AddressLike | null;
   /** Transfer value as a hex-encoded bigint string, e.g. `"0xde0b6b3a7640000"`. */
   value: string;

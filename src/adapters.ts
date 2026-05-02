@@ -4,12 +4,10 @@
  * `@noble/post-quantum` provides ML-DSA-65 and SLH-DSA-SHA2-256f via
  * WebAssembly-accelerated pure-JS implementations.
  *
- * **Dilithium3 compatibility note**: `pqcrypto-dilithium` v0.5 (used by
- * shell-chain) implements ML-DSA-65 (FIPS 204) under the `dilithium3` name.
- * `@noble/post-quantum` `ml_dsa65` produces byte-identical keys and
- * signatures (pk=1952, sk=4032, sig=3309), so `MlDsa65Adapter` is fully
- * wire-compatible with the chain's Dilithium3 verifier. Both `"Dilithium3"`
- * and `"MlDsa65"` algorithm names route to the same adapter.
+ * **Algorithm distinction**: `"Dilithium3"` (type_id=0) and `"ML-DSA-65"` /
+ * `"MlDsa65"` (type_id=1) are now separate algorithms on chain with distinct
+ * address derivation. `MlDsa65Adapter` and `DilithiumAdapter` both use the
+ * same underlying `ml_dsa65` crypto (FIPS 204), but produce different addresses.
  *
  * @module adapters
  */

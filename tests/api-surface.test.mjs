@@ -15,7 +15,7 @@ test('stable root exports exclude low-level internals', () => {
     'decryptKeystore',
     'generateMlDsa65KeyPair',
     'hashTransaction',
-    'normalizeHexAddress',
+    'normalizePqAddress',
     'parseEncryptedKey',
     'signatureTypeFromKeyType',
   ];

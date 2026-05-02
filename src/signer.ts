@@ -11,7 +11,7 @@
  */
 import { hexToBytes } from "viem";
 
-import { derivePqAddressFromPublicKey, normalizeHexAddress, normalizePqAddress } from "./address.js";
+import { derivePqAddressFromPublicKey, normalizePqAddress } from "./address.js";
 import {
   buildSignature,
   buildSignedTransaction,
@@ -23,15 +23,14 @@ import type { SignedShellTransaction, SignatureTypeName } from "./types.js";
  * Maps each {@link SignatureTypeName} to its numeric algorithm ID used in
  * address derivation and on-chain records.
  *
- * - `"ML-DSA-65"` → `0` (canonical FIPS 204 name)
- * - `"Dilithium3"` → `0` (legacy alias, same algorithm)
- * - `"MlDsa65"` → `0` (camelCase alias, same algorithm)
+ * - `"Dilithium3"` → `0` (Round 3 Dilithium, legacy compat)
+ * - `"ML-DSA-65"` / `"MlDsa65"` → `1` (FIPS 204 ML-DSA-65, canonical)
  * - `"SphincsSha2256f"` → `2`
  */
 export const SIGNATURE_TYPE_IDS: Record<SignatureTypeName, number> = {
-  "ML-DSA-65": 0,
+  "ML-DSA-65": 1,
   Dilithium3: 0,
-  MlDsa65: 0,
+  MlDsa65: 1,
   SphincsSha2256f: 2,
 };
 
@@ -40,14 +39,17 @@ export const SIGNATURE_TYPE_IDS: Record<SignatureTypeName, number> = {
  * corresponding {@link SignatureTypeName}.
  *
  * Keys are lowercase; matching is done after calling `.toLowerCase()`.
- * Always returns the FIPS 204 canonical name `"ML-DSA-65"` for ML-DSA-65 variants.
  */
 export const KEY_TYPE_TO_SIGNATURE_TYPE: Record<string, SignatureTypeName> = {
   "ml-dsa-65": "ML-DSA-65",
   mldsa65: "ML-DSA-65",
-  dilithium3: "ML-DSA-65",
+  dilithium3: "Dilithium3",
   "sphincs-sha2-256f": "SphincsSha2256f",
 };
+
+export function canonicalSignatureType(signatureType: SignatureTypeName): SignatureTypeName {
+  return signatureType === "MlDsa65" ? "ML-DSA-65" : signatureType;
+}
 
 /**
  * Minimal interface that any post-quantum signing implementation must satisfy
@@ -88,8 +90,7 @@ export interface SignerAdapter {
  * const adapter = MlDsa65Adapter.generate();
  * const signer  = new ShellSigner("MlDsa65", adapter);
  *
- * console.log(signer.getAddress());    // pq1…
- * console.log(signer.getHexAddress()); // 0x…
+ * console.log(signer.getAddress()); // pq1…
  * ```
  */
 export class ShellSigner {
@@ -103,7 +104,7 @@ export class ShellSigner {
    * @param adapter - An adapter providing `sign` and `getPublicKey`.
    */
   constructor(signatureType: SignatureTypeName, adapter: SignerAdapter) {
-    this.signatureType = signatureType;
+    this.signatureType = canonicalSignatureType(signatureType);
     this.adapter = adapter;
   }
 
@@ -128,15 +129,6 @@ export class ShellSigner {
    */
   getAddress(): string {
     return derivePqAddressFromPublicKey(this.getPublicKey(), this.algorithmId);
-  }
-
-  /**
-   * Return the `0x…` hex representation of this signer's address.
-   *
-   * Equivalent to `normalizeHexAddress(signer.getAddress())`.
-   */
-  getHexAddress(): `0x${string}` {
-    return normalizeHexAddress(this.getAddress());
   }
 
   /**
@@ -199,7 +191,7 @@ export class ShellSigner {
  *
  * @example
  * ```typescript
- * signatureTypeFromKeyType("mldsa65");          // "MlDsa65"
+ * signatureTypeFromKeyType("mldsa65");          // "ML-DSA-65"
  * signatureTypeFromKeyType("sphincs-sha2-256f"); // "SphincsSha2256f"
  * ```
  */

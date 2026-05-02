@@ -16,9 +16,7 @@ export async function createKeystoreFixture({ secretKey, publicKey, address, key
   });
   const derivedKey = hexToBytes(derivedKeyHex);
 
-  const plaintext = new Uint8Array(secretKey.length + publicKey.length);
-  plaintext.set(secretKey, 0);
-  plaintext.set(publicKey, secretKey.length);
+  const plaintext = new Uint8Array(secretKey);
   const cipher = xchacha20poly1305(derivedKey, nonce);
   const ciphertext = cipher.encrypt(plaintext);
 
