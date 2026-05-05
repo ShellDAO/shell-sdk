@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.7.1] — 2026-05-06
+
+### Added
+- Typed Shell RPC reward metadata for address-history and transaction-summary
+  responses, including block gas rewards, STARK rewards, reward layers,
+  source hashes, and compression accounting fields.
+
+### Changed
+- Preserve pq1-only compatibility from `0.7.0` while aligning the SDK type
+  surface with `shell-chain v0.21.1`.
+
 ## [0.7.0] — 2026-04-30 ⚠️ BREAKING
 
 ### Breaking Changes — F-PQ1-ONLY (pq1 bech32m addresses everywhere)
