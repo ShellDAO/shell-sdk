@@ -290,6 +290,31 @@ export type ShellReadableTxType =
   | "System"
   | "Transaction";
 
+/**
+ * Decoded proof amendment payload for `starkReward` settlement transactions.
+ *
+ * Populated by the node when `system_tx_to_rpc` decodes the `StarkReward`
+ * proof payload; `null` for non-settlement or non-StarkReward transactions.
+ */
+export interface ShellDecodedProofInput {
+  /** STARK compression layer (1 = L1, 2 = L2, …). */
+  layer: number;
+  /** Terminal block number of the proof range. */
+  blockNumber: number;
+  /** First block number in the proof range. */
+  startBlock: number;
+  /** Last block number in the proof range (= blockNumber). */
+  endBlock: number;
+  /** Number of transaction entries (signatures) compressed. */
+  nSigs: number;
+  /** Size of the stored proof in bytes. */
+  compressedSize: number;
+  /** Original (pre-compression) witness size in bytes. */
+  originalSize: number;
+  /** Hash of the settlement transaction that carried this proof, if finalized. */
+  settlementTxHash?: HexString | null;
+}
+
 /** Shell Chain `eth_getTransactionByHash` transaction shape. */
 export interface ShellRpcTransaction {
   hash: HexString;
@@ -313,6 +338,8 @@ export interface ShellRpcTransaction {
   rewardSourceHash?: HexString | null;
   originalSize?: HexString | null;
   compressedSize?: HexString | null;
+  /** Decoded proof payload for `starkReward` settlement transactions (v0.22+). */
+  decodedInput?: ShellDecodedProofInput | null;
 }
 
 /** Shell Chain transaction summary returned in block/address transaction lists. */
