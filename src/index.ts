@@ -108,6 +108,7 @@ export type {
   ShellEncryptedKey,
   ShellEstimateBatchRequest,
   ShellEstimateBatchResult,
+  ShellKnownRpcTxType,
   ShellIsSponsoredResult,
   ShellKdfParams,
   ShellNodeInfo,

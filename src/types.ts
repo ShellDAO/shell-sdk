@@ -266,14 +266,15 @@ export interface SignedShellTransaction {
 // ---------------------------------------------------------------------------
 
 /** Product-level transaction kind emitted by Shell Chain RPC. */
-export type ShellRpcTxType =
+export type ShellKnownRpcTxType =
   | "transfer"
   | "contractCreate"
   | "contractCall"
   | "aaBatch"
   | "blockGasReward"
-  | "starkReward"
-  | string;
+  | "starkReward";
+
+export type ShellRpcTxType = ShellKnownRpcTxType | (string & {});
 
 /** Reward kind emitted for first-class system reward transactions. */
 export type ShellRewardKind = "blockGasReward" | "starkReward";
@@ -567,9 +568,13 @@ export interface ShellWitnessBundle {
 export interface ShellTxByAddressPage {
   address: AddressLike;
   /** Inclusive lower block bound used for the query, hex-encoded. */
-  fromBlock: HexString;
+  from_block?: HexString;
   /** Inclusive upper block snapshot used for the query, hex-encoded. */
-  toBlock: HexString;
+  to_block?: HexString;
+  /** Inclusive lower block bound used for the query, hex-encoded. */
+  fromBlock?: HexString;
+  /** Inclusive upper block snapshot used for the query, hex-encoded. */
+  toBlock?: HexString;
   page: number;
   limit: number;
   total: number;

@@ -148,6 +148,7 @@ Defined in `src/types.ts`. All types are re-exported from the package root.
 | `ShellSignature` | `{ sig_type, data: number[] }` |
 | `SignedShellTransaction` | Complete signed transaction ready to broadcast |
 | `ShellAccessListItem` | EIP-2930 access list entry |
+| `ShellKnownRpcTxType` | Literal union of known Shell RPC transaction kinds |
 | `ShellRpcTransactionSummary` | Lightweight transaction summary with Shell reward metadata |
 | `ShellTxByAddressPage` | Paginated address history response with effective `fromBlock`/`toBlock` range |
 | `ShellKdfParams` | argon2id parameters inside a keystore |
@@ -236,7 +237,7 @@ import { shellDevnet } from "shell-sdk/provider";
 | `getPqPubkey(address)` | `shell_getPqPubkey` → hex public key or `null` |
 | `sendTransaction(signed)` | `shell_sendTransaction` → tx hash string |
 | `getTransactionsByAddress(address, opts)` | `shell_getTransactionsByAddress` with optional `fromBlock/toBlock/page/limit`; pin `toBlock` from page 0 for stable full-history pagination |
-| `getBlockReceipts(block)` | `eth_getBlockReceipts` → array of receipts |
+| `getBlockReceipts(block)` | `eth_getBlockReceipts` → `ShellRpcReceipt[]` |
 | `getNodeInfo()` | `shell_getNodeInfo` → `ShellNodeInfo` (version, block height, peer count, storage profile) |
 | `getWitness(blockNumberOrHash)` | `shell_getWitness` → `ShellWitnessBundle` or `null` if pruned |
 | `getStorageProfile()` | Convenience wrapper around `getNodeInfo()` → `ShellStorageProfile \| undefined` |
@@ -260,7 +261,7 @@ const history = await provider.getTransactionsByAddress("pq1…", { page: 0, lim
 const older = await provider.getTransactionsByAddress("pq1…", {
   page: 1,
   limit: 20,
-  toBlock: Number(BigInt(history.toBlock)),
+  toBlock: history.toBlock ?? history.to_block,
 });
 ```
 
