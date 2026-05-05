@@ -40,6 +40,7 @@
 - **Native account abstraction** — key rotation and custom validation code via system contracts
 - **viem integration** — standard Ethereum JSON-RPC methods via a typed `PublicClient`
 - **Shell-specific RPC** — `shell_getPqPubkey`, `shell_sendTransaction`, `shell_getTransactionsByAddress`, `shell_getNodeInfo`, `shell_getWitness`
+- **Reward-aware history types** — block/address transaction summaries expose readable `shellType`, `rewardKind`, and STARK reward metadata (`rewardLayer`, `rewardSourceHash`, `originalSize`, `compressedSize`)
 - **Node introspection** — `getNodeInfo()` returns version, block height, peer count, and storage profile; `getWitness()` fetches raw PQ signatures for any block
 - **Encrypted keystore** — argon2id KDF + xchacha20-poly1305 cipher; compatible with the Shell CLI
 
@@ -147,7 +148,8 @@ Defined in `src/types.ts`. All types are re-exported from the package root.
 | `ShellSignature` | `{ sig_type, data: number[] }` |
 | `SignedShellTransaction` | Complete signed transaction ready to broadcast |
 | `ShellAccessListItem` | EIP-2930 access list entry |
-| `ShellTxByAddressPage` | Paginated address history response |
+| `ShellRpcTransactionSummary` | Lightweight transaction summary with Shell reward metadata |
+| `ShellTxByAddressPage` | Paginated address history response with effective `fromBlock`/`toBlock` range |
 | `ShellKdfParams` | argon2id parameters inside a keystore |
 | `ShellCipherParams` | xchacha20-poly1305 nonce inside a keystore |
 | `ShellEncryptedKey` | Full encrypted keystore file structure |
@@ -233,7 +235,7 @@ import { shellDevnet } from "shell-sdk/provider";
 | `.rpcHttpUrl` | HTTP RPC URL in use |
 | `getPqPubkey(address)` | `shell_getPqPubkey` → hex public key or `null` |
 | `sendTransaction(signed)` | `shell_sendTransaction` → tx hash string |
-| `getTransactionsByAddress(address, opts)` | `shell_getTransactionsByAddress` with optional `fromBlock/toBlock/page/limit` |
+| `getTransactionsByAddress(address, opts)` | `shell_getTransactionsByAddress` with optional `fromBlock/toBlock/page/limit`; pin `toBlock` from page 0 for stable full-history pagination |
 | `getBlockReceipts(block)` | `eth_getBlockReceipts` → array of receipts |
 | `getNodeInfo()` | `shell_getNodeInfo` → `ShellNodeInfo` (version, block height, peer count, storage profile) |
 | `getWitness(blockNumberOrHash)` | `shell_getWitness` → `ShellWitnessBundle` or `null` if pruned |
@@ -255,6 +257,11 @@ const pubkeyHex = await provider.getPqPubkey("pq1…");
 const txHash    = await provider.sendTransaction(signedTx);
 
 const history = await provider.getTransactionsByAddress("pq1…", { page: 0, limit: 20 });
+const older = await provider.getTransactionsByAddress("pq1…", {
+  page: 1,
+  limit: 20,
+  toBlock: Number(BigInt(history.toBlock)),
+});
 ```
 
 **Custom endpoint:**
