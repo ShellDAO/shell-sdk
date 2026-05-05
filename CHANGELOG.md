@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.8.0] — 2026-05-06
+
+### Added
+- `ShellDecodedProofInput` type: structured proof amendment payload decoded
+  from `starkReward` settlement transactions (requires `shell-chain v0.22+`).
+  Fields: `layer`, `blockNumber`, `startBlock`, `endBlock`, `nSigs`,
+  `compressedSize`, `originalSize`, `settlementTxHash`.
+- `ShellRpcTransaction.decodedInput?: ShellDecodedProofInput | null` — filled
+  by the node for `starkReward` system transactions; `null`/absent otherwise.
+- `ShellDecodedProofInput` exported from the package root.
+
+### Changed
+- Aligned with `shell-chain v0.22.0` RPC surface.
+
 ## [0.7.1] — 2026-05-06
 
 ### Added

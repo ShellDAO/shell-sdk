@@ -119,6 +119,7 @@ export type {
   ShellRpcTransaction,
   ShellRpcTransactionSummary,
   ShellRpcTxType,
+  ShellDecodedProofInput,
   ShellSendTransactionParams,
   ShellSignature,
   ShellStorageProfile,
