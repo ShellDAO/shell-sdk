@@ -92,6 +92,7 @@ export {
   type SignerAdapter,
 } from "./signer.js";
 export { AA_MAX_PAYMASTER_CONTEXT, AA_SESSION_KEY_GAS_SURCHARGE } from "./types.js";
+export { formatShellRpcTxType } from "./types.js";
 export type {
   AaBundle,
   AaInnerCall,
@@ -107,10 +108,17 @@ export type {
   ShellEncryptedKey,
   ShellEstimateBatchRequest,
   ShellEstimateBatchResult,
+  ShellKnownRpcTxType,
   ShellIsSponsoredResult,
   ShellKdfParams,
   ShellNodeInfo,
   ShellPaymasterPolicy,
+  ShellReadableTxType,
+  ShellRewardKind,
+  ShellRpcReceipt,
+  ShellRpcTransaction,
+  ShellRpcTransactionSummary,
+  ShellRpcTxType,
   ShellSendTransactionParams,
   ShellSignature,
   ShellStorageProfile,

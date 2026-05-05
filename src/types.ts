@@ -262,6 +262,131 @@ export interface SignedShellTransaction {
 }
 
 // ---------------------------------------------------------------------------
+// RPC transaction / reward types
+// ---------------------------------------------------------------------------
+
+/** Product-level transaction kind emitted by Shell Chain RPC. */
+export type ShellKnownRpcTxType =
+  | "transfer"
+  | "contractCreate"
+  | "contractCall"
+  | "aaBatch"
+  | "blockGasReward"
+  | "starkReward";
+
+export type ShellRpcTxType = ShellKnownRpcTxType | (string & {});
+
+/** Reward kind emitted for first-class system reward transactions. */
+export type ShellRewardKind = "blockGasReward" | "starkReward";
+
+/** Human-readable transaction label for wallets, explorers, and apps. */
+export type ShellReadableTxType =
+  | "Transfer"
+  | "Contract Create"
+  | "Contract Call"
+  | "AA Batch"
+  | "Block Reward"
+  | "STARK Reward"
+  | "System"
+  | "Transaction";
+
+/** Shell Chain `eth_getTransactionByHash` transaction shape. */
+export interface ShellRpcTransaction {
+  hash: HexString;
+  blockHash?: HexString | null;
+  blockNumber?: HexString | null;
+  transactionIndex?: HexString | null;
+  from: AddressLike;
+  to?: AddressLike | null;
+  value: HexString;
+  gas: HexString;
+  gasPrice: HexString;
+  maxFeePerGas?: HexString;
+  maxPriorityFeePerGas?: HexString;
+  nonce: HexString;
+  input: HexString;
+  chainId: HexString;
+  type: HexString;
+  shellType?: ShellRpcTxType | null;
+  rewardKind?: ShellRewardKind | null;
+  rewardLayer?: HexString | null;
+  rewardSourceHash?: HexString | null;
+  originalSize?: HexString | null;
+  compressedSize?: HexString | null;
+}
+
+/** Shell Chain transaction summary returned in block/address transaction lists. */
+export interface ShellRpcTransactionSummary {
+  hash: HexString;
+  blockHash?: HexString | null;
+  blockNumber?: HexString | null;
+  transactionIndex?: HexString | null;
+  from?: AddressLike;
+  to?: AddressLike | null;
+  value?: HexString;
+  type?: HexString;
+  hasInput?: boolean;
+  shellType?: ShellRpcTxType | null;
+  rewardKind?: ShellRewardKind | null;
+  rewardLayer?: HexString | null;
+  rewardSourceHash?: HexString | null;
+  originalSize?: HexString | null;
+  compressedSize?: HexString | null;
+}
+
+/** Shell Chain transaction receipt shape, including system reward metadata. */
+export interface ShellRpcReceipt {
+  transactionHash: HexString;
+  blockHash: HexString;
+  blockNumber: HexString;
+  transactionIndex: HexString;
+  from: AddressLike;
+  to?: AddressLike | null;
+  status: HexString;
+  gasUsed: HexString;
+  cumulativeGasUsed: HexString;
+  effectiveGasPrice: HexString;
+  contractAddress?: AddressLike | null;
+  logs: unknown[];
+  logsBloom: HexString;
+  type: HexString;
+  shellType?: ShellRpcTxType | null;
+  rewardKind?: ShellRewardKind | null;
+}
+
+/** Return a user-facing transaction type label without leaking EIP wire labels. */
+export function formatShellRpcTxType(tx: {
+  type?: string | null;
+  to?: AddressLike | null;
+  hasInput?: boolean;
+  input?: string | null;
+  shellType?: ShellRpcTxType | null;
+  rewardKind?: ShellRewardKind | null;
+}): ShellReadableTxType {
+  const shellType = tx.shellType ?? tx.rewardKind;
+  if (shellType === "blockGasReward") return "Block Reward";
+  if (shellType === "starkReward") return "STARK Reward";
+  if (shellType === "aaBatch") return "AA Batch";
+  if (shellType === "contractCreate") return "Contract Create";
+  if (shellType === "contractCall") return "Contract Call";
+  if (shellType === "transfer") return "Transfer";
+  if (shellType) return "System";
+  if (tx.type === "0x7e") return "AA Batch";
+  if (tx.to === null) return "Contract Create";
+  if (tx.hasInput || (tx.input && tx.input !== "0x")) return "Contract Call";
+  if (tx.type === "0x80") return "System";
+  if (
+    tx.type == null &&
+    tx.to === undefined &&
+    tx.hasInput === undefined &&
+    tx.input === undefined
+  ) {
+    return "Transaction";
+  }
+  return "Transfer";
+}
+
+// ---------------------------------------------------------------------------
 // AA RPC types (v0.18.0)
 // ---------------------------------------------------------------------------
 
@@ -442,10 +567,18 @@ export interface ShellWitnessBundle {
 /** Paginated response from `shell_getTransactionsByAddress`. */
 export interface ShellTxByAddressPage {
   address: AddressLike;
+  /** Inclusive lower block bound used for the query, hex-encoded. */
+  from_block?: HexString;
+  /** Inclusive upper block snapshot used for the query, hex-encoded. */
+  to_block?: HexString;
+  /** Inclusive lower block bound used for the query, hex-encoded. */
+  fromBlock?: HexString;
+  /** Inclusive upper block snapshot used for the query, hex-encoded. */
+  toBlock?: HexString;
   page: number;
   limit: number;
   total: number;
-  transactions: unknown[];
+  transactions: ShellRpcTransactionSummary[];
 }
 
 /** Parameters for `shell_sendTransaction`. */
@@ -499,4 +632,3 @@ export interface ShellEncryptedKey {
   /** Hex-encoded raw public key bytes. */
   public_key: string;
 }
-

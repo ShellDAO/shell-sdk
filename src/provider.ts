@@ -30,7 +30,9 @@ import type {
   ShellIsSponsoredResult,
   ShellNodeInfo,
   ShellPaymasterPolicy,
+  ShellRpcReceipt,
   ShellStorageProfile,
+  ShellTxByAddressPage,
   ShellWitnessBundle,
   ShellWitnessRootResult,
   SignedShellTransaction,
@@ -72,6 +74,8 @@ export interface CreateShellPublicClientOptions {
 
 /** A typed alias for a viem `PublicClient`. */
 export type ShellPublicClient = PublicClient;
+
+export type ShellBlockRangeBound = number | `0x${string}`;
 
 interface JsonRpcSuccess<T> {
   result: T;
@@ -172,17 +176,19 @@ export class ShellProvider {
    * @param options.toBlock - End of block range (inclusive).
    * @param options.page - Zero-based page index.
    * @param options.limit - Maximum number of results per page.
-   * @returns Raw paginated response from the node.
+   * @returns Paginated response from the node. `fromBlock`/`toBlock` in the
+   * response is the effective inclusive range; clients that paginate under
+   * live load should pin `toBlock` from the first page.
    */
   async getTransactionsByAddress(
     address: string,
     options: {
-      fromBlock?: number;
-      toBlock?: number;
+      fromBlock?: ShellBlockRangeBound;
+      toBlock?: ShellBlockRangeBound;
       page?: number;
       limit?: number;
     } = {},
-  ): Promise<unknown> {
+  ): Promise<ShellTxByAddressPage> {
     return this.request("shell_getTransactionsByAddress", [
       address,
       options.fromBlock ?? null,
@@ -200,7 +206,7 @@ export class ShellProvider {
    * @param block - Block identifier: `"latest"`, `"earliest"`, or a hex block number.
    * @returns Array of transaction receipt objects.
    */
-  async getBlockReceipts(block: string): Promise<unknown[]> {
+  async getBlockReceipts(block: string): Promise<ShellRpcReceipt[]> {
     return this.request("eth_getBlockReceipts", [block]);
   }
 
