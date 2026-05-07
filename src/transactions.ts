@@ -14,6 +14,7 @@ import type {
   AaInnerCall,
   AddressLike,
   HexString,
+  HexQuantity,
   SessionAuth,
   ShellSignature,
   ShellTransactionRequest,
@@ -587,6 +588,19 @@ export function hashBatchTransaction(
 }
 
 /**
+ * Validate and encode a gas limit as a JSON-RPC hex quantity.
+ * Throws if `gasLimit` is not a non-negative safe integer.
+ */
+function toHexGasLimit(gasLimit: number): HexQuantity {
+  if (!Number.isSafeInteger(gasLimit) || gasLimit < 0) {
+    throw new RangeError(
+      `gasLimit must be a non-negative safe integer, got: ${gasLimit}`,
+    );
+  }
+  return ("0x" + gasLimit.toString(16)) as HexQuantity;
+}
+
+/**
  * Convenience helper: build a minimal `AaInnerCall` for a SHELL token transfer.
  *
  * @param to - Recipient address.
@@ -599,7 +613,7 @@ export function buildInnerTransfer(
   value: bigint,
   gasLimit = 21_000,
 ): AaInnerCall {
-  return { to, value: ("0x" + value.toString(16)) as HexString, data: "0x", gas_limit: ("0x" + gasLimit.toString(16)) as HexString };
+  return { to, value: ("0x" + value.toString(16)) as HexString, data: "0x", gas_limit: toHexGasLimit(gasLimit) };
 }
 
 /**
@@ -617,7 +631,7 @@ export function buildInnerCall(
   gasLimit: number,
   value = 0n,
 ): AaInnerCall {
-  return { to, value: ("0x" + value.toString(16)) as HexString, data, gas_limit: ("0x" + gasLimit.toString(16)) as HexString };
+  return { to, value: ("0x" + value.toString(16)) as HexString, data, gas_limit: toHexGasLimit(gasLimit) };
 }
 
 // ---------------------------------------------------------------------------
