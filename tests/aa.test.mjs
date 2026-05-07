@@ -4,6 +4,9 @@ import test from 'node:test';
 import {
   buildBatchTransaction,
   buildSponsoredTransaction,
+  buildSignedTransaction,
+  buildInnerTransfer,
+  buildInnerCall,
   hashBatchTransaction,
   hexBytes,
   AA_BUNDLE_TX_TYPE,
@@ -22,7 +25,8 @@ function hexToBytes(hex) {
   return bytes;
 }
 
-const MINIMAL_INNER_CALL = { to: 'pq1q802m0h0m6kmam774klwlh4dhmhaatd7aunnnrmm', value: '0x0', data: '0x', gas_limit: 21_000 };
+// gas_limit must be a hex quantity string per JSON-RPC wire format
+const MINIMAL_INNER_CALL = { to: 'pq1q802m0h0m6kmam774klwlh4dhmhaatd7aunnnrmm', value: '0x0', data: '0x', gas_limit: '0x5208' };
 
 // ---------------------------------------------------------------------------
 // Builder validation
@@ -118,9 +122,73 @@ test('hashBatchTransaction: known deterministic vector (chain_id=1, nonce=0, sin
   const { tx, aa_bundle } = buildBatchTransaction({
     chainId: 1,
     nonce: 0,
-    innerCalls: [{ to: null, value: '0x0', data: '0x1234', gas_limit: 21_000 }],
+    innerCalls: [{ to: null, value: '0x0', data: '0x1234', gas_limit: '0x5208' }],
   });
   const hash = hexBytes(hashBatchTransaction(tx, aa_bundle));
   // Record the actual computed value (32-byte keccak256 — deterministic across Node versions).
   assert.match(hash, /^0x[0-9a-f]{64}$/, 'hash must be 32-byte hex');
+});
+
+// ---------------------------------------------------------------------------
+// buildInnerTransfer / buildInnerCall — hex encoding and validation
+// ---------------------------------------------------------------------------
+test('buildInnerTransfer: encodes gas_limit as hex quantity', () => {
+  const call = buildInnerTransfer('pq1q802m0h0m6kmam774klwlh4dhmhaatd7aunnnrmm', 0n, 21_000);
+  assert.equal(call.gas_limit, '0x5208', 'gas_limit must be hex-encoded');
+  assert.match(call.gas_limit, /^0x[0-9a-f]+$/, 'gas_limit must be a valid hex quantity');
+});
+
+test('buildInnerCall: encodes gas_limit as hex quantity', () => {
+  const call = buildInnerCall('pq1q802m0h0m6kmam774klwlh4dhmhaatd7aunnnrmm', '0x', 50_000);
+  assert.equal(call.gas_limit, '0xc350', 'gas_limit must be hex-encoded');
+});
+
+test('buildInnerTransfer: rejects negative gasLimit', () => {
+  assert.throws(() => buildInnerTransfer('pq1q802m0h0m6kmam774klwlh4dhmhaatd7aunnnrmm', 0n, -1), /non-negative safe integer/);
+});
+
+test('buildInnerCall: rejects non-integer gasLimit', () => {
+  assert.throws(() => buildInnerCall('pq1q802m0h0m6kmam774klwlh4dhmhaatd7aunnnrmm', '0x', 21_000.5), /non-negative safe integer/);
+});
+
+// ---------------------------------------------------------------------------
+// aaBundle / aaBbundle option naming and precedence
+// ---------------------------------------------------------------------------
+const DUMMY_BUNDLE = { inner_calls: [MINIMAL_INNER_CALL], paymaster: null, paymaster_data: null };
+const DUMMY_SIG = new Uint8Array(64);
+const DUMMY_TX = { tx_type: '0x0', chain_id: 1, nonce: 0, gas_price: '0x0', gas_limit: '0x0', to: null, value: '0x0', data: '0x', access_list: [] };
+
+test('buildSignedTransaction: aaBundle canonical option sets aa_bundle', () => {
+  const signed = buildSignedTransaction({
+    from: 'pq1q802m0h0m6kmam774klwlh4dhmhaatd7aunnnrmm',
+    tx: DUMMY_TX,
+    signatureType: 'falcon512',
+    signature: DUMMY_SIG,
+    aaBundle: DUMMY_BUNDLE,
+  });
+  assert.deepEqual(signed.aa_bundle, DUMMY_BUNDLE, 'aaBundle should populate aa_bundle');
+});
+
+test('buildSignedTransaction: aaBbundle deprecated alias still works', () => {
+  const signed = buildSignedTransaction({
+    from: 'pq1q802m0h0m6kmam774klwlh4dhmhaatd7aunnnrmm',
+    tx: DUMMY_TX,
+    signatureType: 'falcon512',
+    signature: DUMMY_SIG,
+    aaBbundle: DUMMY_BUNDLE,
+  });
+  assert.deepEqual(signed.aa_bundle, DUMMY_BUNDLE, 'aaBbundle alias should populate aa_bundle');
+});
+
+test('buildSignedTransaction: aaBundle takes precedence over aaBbundle', () => {
+  const OTHER_BUNDLE = { inner_calls: [], paymaster: null, paymaster_data: null };
+  const signed = buildSignedTransaction({
+    from: 'pq1q802m0h0m6kmam774klwlh4dhmhaatd7aunnnrmm',
+    tx: DUMMY_TX,
+    signatureType: 'falcon512',
+    signature: DUMMY_SIG,
+    aaBundle: DUMMY_BUNDLE,
+    aaBbundle: OTHER_BUNDLE,
+  });
+  assert.deepEqual(signed.aa_bundle, DUMMY_BUNDLE, 'aaBundle must take precedence over aaBbundle');
 });

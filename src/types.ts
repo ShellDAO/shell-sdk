@@ -1,6 +1,14 @@
 /** A `0x`-prefixed hex string, e.g. `"0xdeadbeef"`. */
 export type HexString = `0x${string}`;
 
+/**
+ * A `0x`-prefixed hex-encoded unsigned integer quantity (JSON-RPC "QUANTITY"
+ * type), e.g. `"0x0"`, `"0x5208"`. No leading zeros (except `"0x0"` itself).
+ * Assignable to `HexString`; use where the value is always a non-negative
+ * integer (gas limits, values, nonces).
+ */
+export type HexQuantity = HexString;
+
 /** A `pq1…` bech32m address string (Shell Chain canonical address format). */
 export type AddressLike = string;
 
@@ -94,8 +102,8 @@ export interface AaInnerCall {
   value: HexString;
   /** ABI-encoded calldata. */
   data: HexString;
-  /** Gas limit for this inner call. */
-  gas_limit: number;
+  /** Gas limit for this inner call as a hex-quantity string (e.g. `"0x5208"` for 21 000). Must be a non-negative integer encoded per JSON-RPC QUANTITY rules. */
+  gas_limit: HexQuantity;
 }
 
 /**
