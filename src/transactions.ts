@@ -86,6 +86,8 @@ export interface BuildSignedTransactionOptions {
   /** Optional public key bytes to embed as `sender_pubkey`. */
   senderPubkey?: Uint8Array | number[];
   /** AA bundle to attach when `tx.tx_type === AA_BUNDLE_TX_TYPE`. */
+  aaBundle?: AaBundle;
+  /** @deprecated Use {@link aaBundle} (typo alias kept for backward compatibility). */
   aaBbundle?: AaBundle;
 }
 
@@ -316,7 +318,7 @@ export function buildSignedTransaction(
     tx: options.tx,
     signature: buildSignature(options.signatureType, options.signature),
     sender_pubkey: options.senderPubkey ? toByteArray(options.senderPubkey) : null,
-    aa_bundle: options.aaBbundle ?? null,
+    aa_bundle: options.aaBundle ?? options.aaBbundle ?? null,
   };
 }
 
@@ -441,7 +443,7 @@ export const DEFAULT_AA_GAS_LIMIT = 200_000;
  * const { tx, aa_bundle } = buildBatchTransaction({
  *   chainId: 424242,
  *   nonce: 0,
- *   innerCalls: [{ to: "pq1recipient…", value: "0x3e8", data: "0x", gas_limit: 21_000 }],
+ *   innerCalls: [{ to: "pq1recipient…", value: "0x3e8", data: "0x", gas_limit: "0x5208" }],
  * });
  * const signingHash = hashBatchTransaction(tx, aa_bundle);
  * const signed = await signer.buildSignedTransaction({ tx, txHash: signingHash, aaBundle: aa_bundle });
@@ -597,7 +599,7 @@ export function buildInnerTransfer(
   value: bigint,
   gasLimit = 21_000,
 ): AaInnerCall {
-  return { to, value: ("0x" + value.toString(16)) as HexString, data: "0x", gas_limit: gasLimit };
+  return { to, value: ("0x" + value.toString(16)) as HexString, data: "0x", gas_limit: ("0x" + gasLimit.toString(16)) as HexString };
 }
 
 /**
@@ -615,7 +617,7 @@ export function buildInnerCall(
   gasLimit: number,
   value = 0n,
 ): AaInnerCall {
-  return { to, value: ("0x" + value.toString(16)) as HexString, data, gas_limit: gasLimit };
+  return { to, value: ("0x" + value.toString(16)) as HexString, data, gas_limit: ("0x" + gasLimit.toString(16)) as HexString };
 }
 
 // ---------------------------------------------------------------------------

@@ -175,7 +175,7 @@ export class ShellSigner {
       signature,
       signatureType: this.signatureType,
       senderPubkey: options.includePublicKey ? this.getPublicKey() : undefined,
-      aaBbundle: options.aaBundle,
+      aaBundle: options.aaBundle,
     });
   }
 }

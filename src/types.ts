@@ -94,8 +94,8 @@ export interface AaInnerCall {
   value: HexString;
   /** ABI-encoded calldata. */
   data: HexString;
-  /** Gas limit for this inner call. */
-  gas_limit: number;
+  /** Gas limit for this inner call as a hex string (e.g. `"0x5208"` for 21 000). */
+  gas_limit: HexString;
 }
 
 /**
