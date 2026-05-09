@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.1] — 2026-05-10
+
+### Changed
+- Version bump for the next coordinated ShellDAO release cut.
+
 ## [0.8.0] — 2026-05-06
 
 ### Added
