@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.2] — 2026-05-12
+
+### Changed
+- Compatibility release aligned with `shell-chain v0.22.2`.
+- No public API changes; version bump ensures npm consumers receive the
+  latest wire-format fixes shipped in `shell-chain v0.22.2` (STARK
+  drain-frontier loop fix, contiguous-frontier reseed anchor).
+
 ## [0.8.1] — 2026-05-10
 
 ### Changed
