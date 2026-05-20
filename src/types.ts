@@ -9,7 +9,7 @@ export type HexString = `0x${string}`;
  */
 export type HexQuantity = HexString;
 
-/** A `pq1…` bech32m address string (Shell Chain canonical address format). */
+/** A `0x`-prefixed 64-char hex address string (Shell Chain canonical address format). */
 export type AddressLike = string;
 
 /** A single entry in an EIP-2930 access list. */
@@ -29,7 +29,7 @@ export interface ShellTransactionRequest {
   chain_id: number;
   /** Sender account nonce. */
   nonce: number;
-  /** Recipient address (`pq1…` bech32m format), or `null` for contract deployment. */
+  /** Recipient address (`0x…` hex format), or `null` for contract deployment. */
   to: AddressLike | null;
   /** Transfer value as a hex-encoded bigint string, e.g. `"0xde0b6b3a7640000"`. */
   value: string;
@@ -251,7 +251,7 @@ export interface RecoveryProposal {
  * ```
  */
 export interface SignedShellTransaction {
-  /** Sender address (pq1… bech32m form). */
+  /** Sender address (0x… hex form). */
   from: AddressLike;
   /** The unsigned transaction payload. */
   tx: ShellTransactionRequest;
@@ -483,7 +483,7 @@ export interface ShellEstimateBatchResult {
  * Paymaster policy returned by `shell_getPaymasterPolicy`.
  */
 export interface ShellPaymasterPolicy {
-  /** Paymaster address (pq1… form). */
+  /** Paymaster address (0x… hex form). */
   address: AddressLike;
   /** `true` if a PQ pubkey has been registered on-chain for this address. */
   has_pq_pubkey: boolean;
@@ -650,7 +650,7 @@ export interface ShellCipherParams {
 export interface ShellEncryptedKey {
   /** Schema version (currently `1`). */
   version: number;
-  /** bech32m `pq1…` address corresponding to the encrypted key. */
+  /** `0x`-prefixed hex address corresponding to the encrypted key. */
   address: string;
   /** Key algorithm identifier string, e.g. `"mldsa65"` or `"sphincs-sha2-256f"`. */
   key_type: string;

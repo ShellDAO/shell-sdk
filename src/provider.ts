@@ -145,7 +145,7 @@ export class ShellProvider {
    * Calls `shell_getPqPubkey`. Returns `null` if the address has not yet
    * submitted a transaction (public key is only recorded on first send).
    *
-   * @param address - A `pq1…` bech32m address.
+   * @param address - A `0x…` hex address.
    * @returns Hex-encoded public key string, or `null` if unknown.
    */
   async getPqPubkey(address: string): Promise<string | null> {
@@ -261,7 +261,7 @@ export class ShellProvider {
    * @example
    * ```typescript
    * const estimate = await provider.estimateBatch({
-   *   inner_calls: [{ to: "pq1…", value: "0x0", gas_limit: "0x5208" }],
+   *   inner_calls: [{ to: "0x…", value: "0x0", gas_limit: "0x5208" }],
    * });
    * const totalGas = parseInt(estimate.total_gas, 16);
    * ```

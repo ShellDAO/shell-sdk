@@ -11,7 +11,7 @@
  */
 import { hexToBytes } from "viem";
 
-import { derivePqAddressFromPublicKey, normalizePqAddress } from "./address.js";
+import { deriveShellAddressFromPublicKey, normalizeShellAddress } from "./address.js";
 import {
   buildSignature,
   buildSignedTransaction,
@@ -90,7 +90,7 @@ export interface SignerAdapter {
  * const adapter = MlDsa65Adapter.generate();
  * const signer  = new ShellSigner("MlDsa65", adapter);
  *
- * console.log(signer.getAddress()); // pq1…
+ * console.log(signer.getAddress()); // 0x…
  * ```
  */
 export class ShellSigner {
@@ -123,12 +123,12 @@ export class ShellSigner {
   }
 
   /**
-   * Derive and return the `pq1…` bech32m address for this signer.
+   * Derive and return the `0x…` hex address for this signer.
    *
    * The address is computed deterministically from the public key and algorithm ID.
    */
   getAddress(): string {
-    return derivePqAddressFromPublicKey(this.getPublicKey(), this.algorithmId);
+    return deriveShellAddressFromPublicKey(this.getPublicKey(), this.algorithmId);
   }
 
   /**
@@ -170,7 +170,7 @@ export class ShellSigner {
     const signature = await this.sign(options.txHash);
 
     return buildSignedTransaction({
-      from: normalizePqAddress(this.getAddress()),
+      from: normalizeShellAddress(this.getAddress()),
       tx: options.tx,
       signature,
       signatureType: this.signatureType,

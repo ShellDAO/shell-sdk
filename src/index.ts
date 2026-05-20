@@ -1,7 +1,11 @@
 export {
-  PQ_ADDRESS_HRP,
-  PQ_ADDRESS_LENGTH,
-  PQ_ADDRESS_VERSION_V1,
+  SHELL_ADDRESS_LENGTH,
+  bytesToShellAddress,
+  deriveShellAddressFromPublicKey,
+  isShellAddress,
+  normalizeShellAddress,
+  shellAddressToBytes,
+  // Legacy aliases (deprecated)
   bytesToPqAddress,
   derivePqAddressFromPublicKey,
   isPqAddress,

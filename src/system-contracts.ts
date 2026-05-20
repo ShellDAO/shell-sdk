@@ -19,10 +19,10 @@
  */
 import { bytesToHex, encodeAbiParameters, keccak256, toBytes } from "viem";
 
-import { bytesToPqAddress, pqAddressToBytes } from "./address.js";
+import { bytesToShellAddress, shellAddressToBytes } from "./address.js";
 import type { AddressLike, HexString } from "./types.js";
 
-const SYSTEM_ADDRESS_LENGTH = 20;
+const SYSTEM_ADDRESS_LENGTH = 32;
 
 function systemAddress(lastByte: number): Uint8Array {
   const bytes = new Uint8Array(SYSTEM_ADDRESS_LENGTH);
@@ -34,11 +34,11 @@ function selector(signature: string): HexString {
   return keccak256(toBytes(signature)).slice(0, 10) as HexString;
 }
 
-/** `pq1…` bech32m address of the ValidatorRegistry system contract. */
-export const validatorRegistryAddress = bytesToPqAddress(systemAddress(1));
+/** `0x`-prefixed hex address of the ValidatorRegistry system contract. */
+export const validatorRegistryAddress = bytesToShellAddress(systemAddress(1));
 
-/** `pq1…` bech32m address of the AccountManager system contract. */
-export const accountManagerAddress = bytesToPqAddress(systemAddress(2));
+/** `0x`-prefixed hex address of the AccountManager system contract. */
+export const accountManagerAddress = bytesToShellAddress(systemAddress(2));
 
 /** 4-byte ABI function selector for `rotateKey(bytes,uint8)`. */
 export const rotateKeySelector = selector("rotateKey(bytes,uint8)");
@@ -119,13 +119,13 @@ export function encodeClearValidationCodeCalldata(): HexString {
 /**
  * Return `true` if `address` refers to one of the Shell system contracts.
  *
- * @param address - `pq1…` address to test.
+ * @param address - `0x…` hex address to test.
  * @returns `true` if the address matches AccountManager or ValidatorRegistry.
  *
  * @example
  * ```typescript
  * isSystemContractAddress(accountManagerAddress);  // true
- * isSystemContractAddress("pq1someuser…");         // false
+ * isSystemContractAddress("0xsomeuser…");         // false
  * ```
  */
 export function isSystemContractAddress(address: AddressLike): boolean {
@@ -143,7 +143,7 @@ export function isSystemContractAddress(address: AddressLike): boolean {
  * account owner can call this (the call must be made as an inner call from
  * the owner's AA bundle, or as a direct transaction).
  *
- * @param guardians - Array of guardian addresses (1..5). Must be `pq1…` bech32m form.
+ * @param guardians - Array of guardian addresses (1..5). Must be `0x…` hex form.
  * @param threshold - k-of-n required votes (1 ≤ threshold ≤ guardians.length).
  * @param timelock - Minimum blocks between threshold-reach and execution (≥ 100).
  * @returns `HexString` with the 4-byte selector prepended.
@@ -151,7 +151,7 @@ export function isSystemContractAddress(address: AddressLike): boolean {
  * @example
  * ```typescript
  * const data = encodeSetGuardiansCalldata(
- *   ["pq1guardian1…", "pq1guardian2…", "pq1guardian3…"],
+ *   ["0xguardian…", "0xguardian…", "0xguardian…"],
  *   2,   // 2-of-3 threshold
  *   100, // 100-block timelock
  * );
@@ -162,9 +162,9 @@ export function encodeSetGuardiansCalldata(
   threshold: number,
   timelock: number,
 ): HexString {
-  // Decode pq1… addresses to raw 20 bytes, then to 0x-hex for ABI encoding.
+  // Decode shell addresses to raw 32 bytes, then to 0x-hex for ABI encoding.
   const hexGuardians = guardians.map((g) =>
-    bytesToHex(pqAddressToBytes(g as string)) as `0x${string}`,
+    bytesToHex(shellAddressToBytes(g as string)) as `0x${string}`,
   );
   const encoded = encodeAbiParameters(
     [{ type: "address[]" }, { type: "uint8" }, { type: "uint64" }],
@@ -180,7 +180,7 @@ export function encodeSetGuardiansCalldata(
  * When k-of-n threshold is reached, the proposal becomes executable after
  * `timelock` blocks.
  *
- * @param account - Account being recovered (`pq1…` bech32m form).
+ * @param account - Account being recovered (`0x…` hex form).
  * @param newPubkey - Raw bytes of the new PQ public key.
  * @param newAlgo - Algorithm ID for the new key (ML-DSA-65 = 0, etc.).
  * @returns `HexString` with the 4-byte selector prepended.
@@ -188,7 +188,7 @@ export function encodeSetGuardiansCalldata(
  * @example
  * ```typescript
  * const data = encodeSubmitRecoveryCalldata(
- *   "pq1accountaddress…",
+ *   "0xaccountaddress…",
  *   newPubkeyBytes,
  *   0, // ML-DSA-65
  * );
@@ -241,7 +241,7 @@ export function encodeCancelRecoveryCalldata(account: AddressLike): HexString {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-/** Convert a pq1… address to a 0x-hex form for EVM ABI encoding. */
+/** Convert a shell 0x… address to a 0x-hex form for EVM ABI encoding. */
 function normaliseToHex(address: AddressLike): `0x${string}` {
-  return bytesToHex(pqAddressToBytes(address as string)) as `0x${string}`;
+  return bytesToHex(shellAddressToBytes(address as string)) as `0x${string}`;
 }

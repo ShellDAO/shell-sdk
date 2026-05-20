@@ -1,13 +1,13 @@
 /**
- * PQ address utilities for Shell Chain.
+ * Shell address utilities for Shell Chain.
  *
- * Shell Chain uses **bech32m**-encoded addresses (prefix `"pq"`) exclusively.
- * Each address encodes a version byte and 20 address bytes derived from the
- * account's post-quantum public key:
+ * Shell Chain uses **0x-prefixed 64-character lowercase hex** addresses exclusively.
+ * Each address is the full 32-byte BLAKE3 output derived from the account's
+ * post-quantum public key:
  *
  * ```
- * address_bytes = blake3(version || algo_id || public_key)[0..20]
- * bech32m_address = bech32m_encode("pq", [version, ...address_bytes])
+ * address_bytes = BLAKE3(algo_id || public_key)   // full 32 bytes, no truncation
+ * address_string = "0x" + hex_lower(address_bytes)
  * ```
  *
  * Algorithm IDs: Dilithium3=0, MlDsa65=1, SphincsSha2256f=2.
@@ -15,178 +15,144 @@
  * @module address
  */
 import { blake3 } from "@noble/hashes/blake3";
-import { bech32m } from "@scure/base";
 
-/** Human-readable part (HRP) used in Shell bech32m addresses. */
-export const PQ_ADDRESS_HRP = "pq";
-
-/** Number of raw address bytes (excluding the version byte). */
-export const PQ_ADDRESS_LENGTH = 20;
-
-/** Version byte for V1 Shell addresses (`0x01`). */
-export const PQ_ADDRESS_VERSION_V1 = 0x01;
-
-type Bech32Address = `${string}1${string}`;
-
-function assertBech32Address(value: string): asserts value is Bech32Address {
-  if (!value.includes("1")) {
-    throw new Error("invalid bech32m address");
-  }
-}
+/** Number of raw address bytes. */
+export const SHELL_ADDRESS_LENGTH = 32;
 
 /**
- * Encode 20 raw address bytes as a `pq1…` bech32m address.
+ * Encode 32 raw address bytes as a `0x`-prefixed hex string.
  *
- * @param bytes - Exactly 20 address bytes (the 20-byte hash derived from a public key).
- * @param version - Address version byte; defaults to {@link PQ_ADDRESS_VERSION_V1} (`0x01`).
- * @returns The bech32m-encoded address string, e.g. `"pq1qx3f…"`.
- * @throws {Error} If `bytes.length !== 20` or `version` is out of the 0–255 range.
+ * @param bytes - Exactly 32 address bytes.
+ * @returns The hex-encoded address string, e.g. `"0xabcdef…"`.
+ * @throws {Error} If `bytes.length !== 32`.
  *
  * @example
  * ```typescript
- * const addr = bytesToPqAddress(hashBytes);
- * // → "pq1qx3f…"
+ * const addr = bytesToShellAddress(hashBytes);
+ * // → "0xabcdef…"
  * ```
  */
-export function bytesToPqAddress(
-  bytes: Uint8Array,
-  version: number = PQ_ADDRESS_VERSION_V1,
-): string {
-  if (bytes.length !== PQ_ADDRESS_LENGTH) {
-    throw new Error(`expected ${PQ_ADDRESS_LENGTH} address bytes, got ${bytes.length}`);
+export function bytesToShellAddress(bytes: Uint8Array): string {
+  if (bytes.length !== SHELL_ADDRESS_LENGTH) {
+    throw new Error(`expected ${SHELL_ADDRESS_LENGTH} address bytes, got ${bytes.length}`);
   }
-  if (version < 0 || version > 255) {
-    throw new Error(`invalid address version: ${version}`);
-  }
-
-  const payload = new Uint8Array(1 + PQ_ADDRESS_LENGTH);
-  payload[0] = version;
-  payload.set(bytes, 1);
-  return bech32m.encode(PQ_ADDRESS_HRP, bech32m.toWords(payload));
+  return "0x" + Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
 /**
- * Decode a `pq1…` bech32m address to its raw 20 address bytes.
+ * Decode a `0x`-prefixed hex address to its raw 32 bytes.
  *
- * The version byte is stripped; use {@link pqAddressVersion} to retrieve it.
- *
- * @param address - A valid `pq1…` bech32m address.
- * @returns The 20-byte address payload (version byte excluded).
- * @throws {Error} If the prefix is not `"pq"` or the payload length is wrong.
+ * @param address - A valid `0x` + 64-char hex address string.
+ * @returns The 32-byte address payload.
+ * @throws {Error} If the address is not a valid Shell address.
  *
  * @example
  * ```typescript
- * const bytes = pqAddressToBytes("pq1qx3f…");
- * // bytes.length === 20
+ * const bytes = shellAddressToBytes("0xabcdef…");
+ * // bytes.length === 32
  * ```
  */
-export function pqAddressToBytes(address: string): Uint8Array {
-  assertBech32Address(address);
-  const { prefix, words } = bech32m.decode(address);
-
-  if (prefix !== PQ_ADDRESS_HRP) {
-    throw new Error(`expected ${PQ_ADDRESS_HRP} address prefix, got ${prefix}`);
+export function shellAddressToBytes(address: string): Uint8Array {
+  if (!isShellAddress(address)) {
+    throw new Error(`expected 0x + 64-char hex address, got: "${address.slice(0, 12)}…"`);
   }
-
-  const bytes = Uint8Array.from(bech32m.fromWords(words));
-  if (bytes.length !== 1 + PQ_ADDRESS_LENGTH) {
-    throw new Error(`expected ${1 + PQ_ADDRESS_LENGTH} address bytes, got ${bytes.length}`);
+  const hex = address.slice(2);
+  const bytes = new Uint8Array(32);
+  for (let i = 0; i < 32; i++) {
+    bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
   }
-
-  return bytes.slice(1);
+  return bytes;
 }
 
 /**
- * Extract the version byte from a `pq1…` bech32m address.
+ * Normalise an address: validates it is a Shell `0x` hex address and returns it.
  *
- * @param address - A valid `pq1…` bech32m address.
- * @returns The version byte (e.g. `1` for V1 addresses).
- * @throws {Error} If the address is malformed.
+ * @param address - A `0x` + 64-char hex address string.
+ * @returns The same address (validated, lowercased).
+ * @throws {Error} If the address is not a valid Shell hex address.
  */
-export function pqAddressVersion(address: string): number {
-  assertBech32Address(address);
-  const { words } = bech32m.decode(address);
-  const bytes = Uint8Array.from(bech32m.fromWords(words));
-  if (bytes.length !== 1 + PQ_ADDRESS_LENGTH) {
-    throw new Error(`expected ${1 + PQ_ADDRESS_LENGTH} address bytes, got ${bytes.length}`);
+export function normalizeShellAddress(address: string): string {
+  if (!isShellAddress(address)) {
+    throw new Error(`expected a 0x + 64-char hex address, got: "${address.slice(0, 12)}…"`);
   }
-  return bytes[0];
+  return address.toLowerCase();
 }
 
 /**
- * Normalise an address: validates it is a `pq1…` bech32m address and returns it.
- *
- * Hex (`0x…`) addresses are no longer accepted. Use `pq1…` format everywhere.
- *
- * @param address - A `pq1…` bech32m address.
- * @returns The same `pq1…` address (validated).
- * @throws {Error} If the address is not a valid `pq1…` bech32m address.
- */
-export function normalizePqAddress(address: string): string {
-  if (!isPqAddress(address)) {
-    throw new Error(`expected a pq1… bech32m address, got: "${address.slice(0, 10)}…"`);
-  }
-  return address;
-}
-
-/**
- * Derive a `pq1…` address from a raw post-quantum public key.
+ * Derive a Shell address from a raw post-quantum public key.
  *
  * The derivation is:
  * ```
- * address_bytes = blake3(version || algo_id || public_key)[0..20]
+ * address_bytes = BLAKE3(algo_id || public_key)   // full 32 bytes, no version byte
  * ```
  *
  * @param publicKey - Raw public key bytes (length depends on algorithm).
  * @param algorithmId - Numeric algorithm ID: Dilithium3=0, MlDsa65=1, SphincsSha2256f=2.
- * @param version - Address version byte; defaults to {@link PQ_ADDRESS_VERSION_V1}.
- * @returns The derived `pq1…` bech32m address.
+ * @returns The derived `0x`-prefixed hex address.
  * @throws {Error} If `algorithmId` is outside 0–255.
  *
  * @example
  * ```typescript
- * const address = derivePqAddressFromPublicKey(publicKey, 1 /* MlDsa65 *\/);
- * // → "pq1qx3f…"
+ * const address = deriveShellAddressFromPublicKey(publicKey, 1 /* MlDsa65 *\/);
+ * // → "0xabcdef…"
  * ```
  */
-export function derivePqAddressFromPublicKey(
+export function deriveShellAddressFromPublicKey(
   publicKey: Uint8Array,
   algorithmId: number,
-  version: number = PQ_ADDRESS_VERSION_V1,
 ): string {
   if (algorithmId < 0 || algorithmId > 255) {
     throw new Error(`invalid algorithm id: ${algorithmId}`);
   }
 
-  const input = new Uint8Array(2 + publicKey.length);
-  input[0] = version;
-  input[1] = algorithmId;
-  input.set(publicKey, 2);
+  const input = new Uint8Array(1 + publicKey.length);
+  input[0] = algorithmId;
+  input.set(publicKey, 1);
 
   const hash = blake3(input);
-  return bytesToPqAddress(hash.slice(0, PQ_ADDRESS_LENGTH), version);
+  return bytesToShellAddress(hash);
 }
 
 /**
- * Return `true` if `address` is a structurally valid `pq1…` bech32m address.
+ * Return `true` if `address` is a structurally valid Shell address (`0x` + 64 hex chars).
  *
  * Does **not** check whether the address exists on-chain.
  *
  * @param address - Any string to test.
- * @returns `true` if the string is a valid Shell bech32m address.
+ * @returns `true` if the string is a valid Shell hex address.
  *
  * @example
  * ```typescript
- * isPqAddress("pq1qx3f…"); // true
- * isPqAddress("0xabc…");   // false
- * isPqAddress("garbage");   // false
+ * isShellAddress("0xabcdef…"); // true
+ * isShellAddress("pq1qx3f…"); // false
+ * isShellAddress("garbage");   // false
  * ```
  */
-export function isPqAddress(address: string): boolean {
-  try {
-    pqAddressToBytes(address);
-    return true;
-  } catch {
-    return false;
-  }
+export function isShellAddress(address: string): boolean {
+  return /^0x[0-9a-f]{64}$/i.test(address);
+}
+
+// ---------------------------------------------------------------------------
+// Legacy aliases (deprecated — use the Shell* variants above)
+// ---------------------------------------------------------------------------
+
+/** @deprecated Use {@link bytesToShellAddress} */
+export const bytesToPqAddress = bytesToShellAddress;
+/** @deprecated Use {@link shellAddressToBytes} */
+export const pqAddressToBytes = shellAddressToBytes;
+/** @deprecated Use {@link normalizeShellAddress} */
+export const normalizePqAddress = normalizeShellAddress;
+/** @deprecated Use {@link deriveShellAddressFromPublicKey} */
+export function derivePqAddressFromPublicKey(
+  publicKey: Uint8Array,
+  algorithmId: number,
+  _version?: number,
+): string {
+  return deriveShellAddressFromPublicKey(publicKey, algorithmId);
+}
+/** @deprecated Use {@link isShellAddress} */
+export const isPqAddress = isShellAddress;
+/** @deprecated No longer meaningful — Shell addresses have no version byte */
+export function pqAddressVersion(_address: string): number {
+  return 0;
 }

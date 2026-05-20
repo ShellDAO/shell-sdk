@@ -20,7 +20,7 @@
 import { xchacha20poly1305 } from "@noble/ciphers/chacha.js";
 import { argon2id } from "hash-wasm";
 
-import { derivePqAddressFromPublicKey, normalizePqAddress } from "./address.js";
+import { deriveShellAddressFromPublicKey, normalizeShellAddress } from "./address.js";
 import { adapterFromKeyPair } from "./adapters.js";
 import {
   ShellSigner,
@@ -44,7 +44,7 @@ export interface ParsedShellKeystore {
   algorithmId: number;
   /** Raw public key bytes decoded from `raw.public_key`. */
   publicKey: Uint8Array;
-  /** Canonical `pq1…` address derived from `publicKey`. */
+  /** Canonical `0x…` address derived from `publicKey`. */
   canonicalAddress: string;
 }
 
@@ -63,7 +63,7 @@ const SIG_IDS: Record<SignatureTypeName, number> = { "ML-DSA-65": 1, Dilithium3:
  * @example
  * ```typescript
  * const parsed = parseEncryptedKey(readFileSync("key.json", "utf8"));
- * console.log(parsed.canonicalAddress); // pq1…
+ * console.log(parsed.canonicalAddress); // 0x…
  * console.log(parsed.signatureType);    // "ML-DSA-65"
  * ```
  */
@@ -72,7 +72,7 @@ export function parseEncryptedKey(input: string | ShellEncryptedKey): ParsedShel
   const signatureType = signatureTypeFromKeyType(raw.key_type);
   const algorithmId = SIG_IDS[signatureType];
   const publicKey = publicKeyFromHex(raw.public_key);
-  const canonicalAddress = derivePqAddressFromPublicKey(publicKey, algorithmId);
+  const canonicalAddress = deriveShellAddressFromPublicKey(publicKey, algorithmId);
   return { raw, signatureType, algorithmId, publicKey, canonicalAddress };
 }
 
@@ -90,7 +90,7 @@ export function parseEncryptedKey(input: string | ShellEncryptedKey): ParsedShel
  */
 export function validateEncryptedKeyAddress(input: string | ShellEncryptedKey): ParsedShellKeystore {
   const parsed = parseEncryptedKey(input);
-  const declared = normalizePqAddress(parsed.raw.address);
+  const declared = normalizeShellAddress(parsed.raw.address);
   if (declared !== parsed.canonicalAddress) {
     throw new Error("keystore address mismatch: declared=" + declared + " derived=" + parsed.canonicalAddress);
   }
@@ -155,7 +155,7 @@ function hexToBytes(hex: string): Uint8Array {
  * @example
  * ```typescript
  * const signer = await decryptKeystore(readFileSync("key.json", "utf8"), "my-passphrase");
- * console.log(signer.getAddress()); // pq1…
+ * console.log(signer.getAddress()); // 0x…
  * const hash = await provider.sendTransaction(await signer.buildSignedTransaction(…));
  * ```
  */

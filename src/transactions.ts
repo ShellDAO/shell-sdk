@@ -29,7 +29,7 @@ import {
   encodeRotateKeyCalldata,
   encodeSetValidationCodeCalldata,
 } from "./system-contracts.js";
-import { pqAddressToBytes } from "./address.js";
+import { shellAddressToBytes } from "./address.js";
 
 /** Default transaction type: `2` (EIP-1559). */
 export const DEFAULT_TX_TYPE = 2;
@@ -76,7 +76,7 @@ export interface BuildTransactionOptions {
 
 /** Options accepted by {@link buildSignedTransaction}. */
 export interface BuildSignedTransactionOptions {
-  /** Sender address (pq1… bech32m form). */
+  /** Sender address (0x… hex form). */
   from: AddressLike;
   /** The unsigned transaction payload. */
   tx: ShellTransactionRequest;
@@ -116,7 +116,7 @@ function toRlpAccessList(
   }
 
   return accessList.map((item) => [
-    bytesToHex(pqAddressToBytes(item.address)),
+    bytesToHex(shellAddressToBytes(item.address)),
     item.storage_keys.map((key) => key as HexString),
   ]);
 }
@@ -164,7 +164,7 @@ export function buildTransaction(options: BuildTransactionOptions): ShellTransac
  * const tx = buildTransferTransaction({
  *   chainId: 424242,
  *   nonce: 0,
- *   to: "pq1recipient…",
+ *   to: "0xrecipient…",
  *   value: parseEther("1.5"),
  * });
  * ```
@@ -348,7 +348,7 @@ export function hexBytes(bytes: Uint8Array): HexString {
  * ```typescript
  * import { buildTransferTransaction, hashTransaction } from "shell-sdk/transactions";
  *
- * const tx     = buildTransferTransaction({ chainId: 424242, nonce: 0, to: "pq1…", value: 1n });
+ * const tx     = buildTransferTransaction({ chainId: 424242, nonce: 0, to: "0x…", value: 1n });
  * const txHash = hashTransaction(tx);
  * const signed = await signer.buildSignedTransaction({ tx, txHash });
  * ```
@@ -360,7 +360,7 @@ export function hashTransaction(tx: ShellTransactionRequest): Uint8Array {
   const fields = [
     toRlpUint(tx.chain_id),
     toRlpUint(tx.nonce),
-    tx.to ? bytesToHex(pqAddressToBytes(tx.to)) : "0x",
+    tx.to ? bytesToHex(shellAddressToBytes(tx.to)) : "0x",
     toRlpUint(tx.value),
     tx.data,
     toRlpUint(tx.gas_limit),
@@ -444,7 +444,7 @@ export const DEFAULT_AA_GAS_LIMIT = 200_000;
  * const { tx, aa_bundle } = buildBatchTransaction({
  *   chainId: 424242,
  *   nonce: 0,
- *   innerCalls: [{ to: "pq1recipient…", value: "0x3e8", data: "0x", gas_limit: "0x5208" }],
+ *   innerCalls: [{ to: "0xrecipient…", value: "0x3e8", data: "0x", gas_limit: "0x5208" }],
  * });
  * const signingHash = hashBatchTransaction(tx, aa_bundle);
  * const signed = await signer.buildSignedTransaction({ tx, txHash: signingHash, aaBundle: aa_bundle });
@@ -499,7 +499,7 @@ export function buildBatchTransaction(options: BuildBatchTransactionOptions): {
  *   chainId: 424242,
  *   nonce: 0,
  *   innerCalls: [...],
- *   paymaster: "pq1paymaster…",
+ *   paymaster: "0xpaymaster…",
  *   paymasterSignature: pmSigBytes,
  * });
  * const signingHash = hashBatchTransaction(tx, aa_bundle);
@@ -540,7 +540,7 @@ export function hashBatchTransaction(
 
   // Encode inner calls for signing (matches chain's encode_for_signing).
   const innerCallsRlp = bundle.inner_calls.map((call) => [
-    call.to ? bytesToHex(pqAddressToBytes(call.to)) : "0x",
+    call.to ? bytesToHex(shellAddressToBytes(call.to)) : "0x",
     toRlpUint(call.value),
     call.data,
     toRlpUint(call.gas_limit),
@@ -548,7 +548,7 @@ export function hashBatchTransaction(
 
   // Paymaster: 20-byte address or empty bytes.
   const paymasterField = bundle.paymaster
-    ? (bytesToHex(pqAddressToBytes(bundle.paymaster)) as HexString)
+    ? (bytesToHex(shellAddressToBytes(bundle.paymaster)) as HexString)
     : ("0x" as HexString);
 
   // paymaster_context: raw bytes or empty.
@@ -560,7 +560,7 @@ export function hashBatchTransaction(
   const txFields = [
     toRlpUint(tx.chain_id),
     toRlpUint(tx.nonce),
-    tx.to ? bytesToHex(pqAddressToBytes(tx.to)) : "0x",
+    tx.to ? bytesToHex(shellAddressToBytes(tx.to)) : "0x",
     toRlpUint(tx.value),
     tx.data,
     toRlpUint(tx.gas_limit),
