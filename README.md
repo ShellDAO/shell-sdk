@@ -132,10 +132,10 @@ These are sent as ordinary transactions whose `to` field is the AccountManager a
 
 ### System contracts
 
-| Name | Hex address | PQ address |
-|---|---|---|
-| ValidatorRegistry | `0x0000…0001` (32-byte big-endian) |
-| AccountManager   | `0x0000…0002` (32-byte big-endian) |
+| Name | Address |
+|---|---|
+| ValidatorRegistry | `0x0000000000000000000000000000000000000000000000000000000000000001` |
+| AccountManager   | `0x0000000000000000000000000000000000000000000000000000000000000002` |
 
 ---
 
@@ -203,7 +203,7 @@ console.log(isShellAddress(address)); // true
 
 // Validation / normalisation
 normalizeShellAddress("0x9A3F…");  // → "0x9a3f…" (lowercased)
-normalizeShellAddress("pq1abc…");  // throws: expected a 0x… 32-byte Shell address
+normalizeShellAddress("pq1abc…");  // throws: expected 0x + 64-char hex address, got: "pq1abc…"
 ```
 
 ---
@@ -478,10 +478,8 @@ const signed = await signer.buildSignedTransaction({ tx, txHash });
 
 | Export | Value |
 |---|---|
-| `validatorRegistryHexAddress` | `0x0000000000000000000000000000000000000001` |
-| `accountManagerHexAddress` | `0x0000000000000000000000000000000000000002` |
-| `validatorRegistryAddress` | 32-byte `0x…` form of above |
-| `accountManagerAddress`   | 32-byte `0x…` form of above |
+| `validatorRegistryAddress` | `0x0000000000000000000000000000000000000000000000000000000000000001` |
+| `accountManagerAddress`   | `0x0000000000000000000000000000000000000000000000000000000000000002` |
 
 #### Function selectors
 
@@ -505,7 +503,7 @@ const data = encodeRotateKeyCalldata(newPublicKey, 1 /* MlDsa65 */);
 const data = encodeSetValidationCodeCalldata("0xcodehash…");
 const data = encodeClearValidationCodeCalldata(); // selector only
 
-isSystemContractAddress("0x0000000000000000000000000000000000000002"); // true
+isSystemContractAddress("0x0000000000000000000000000000000000000000000000000000000000000002"); // true
 ```
 
 ---
@@ -736,7 +734,7 @@ All SDK functions throw standard `Error` instances. Common error messages:
 
 | Error message | Cause |
 |---|---|
-| `expected 20 address bytes, got N` | Wrong-length bytes passed to address helpers |
+| `expected 32 address bytes, got N` | Wrong-length bytes passed to address helpers |
 | `expected 0x prefix, got X` | Shell address must start with `0x` |
 | `invalid Shell address length` | Address must be 32 raw bytes / 64 hex characters |
 | `unsupported key type: X` | Keystore `key_type` not recognised |
