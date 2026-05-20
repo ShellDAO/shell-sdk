@@ -35,22 +35,22 @@ test('ks-3: parseEncryptedKey reads CLI ML-DSA-65 keystore metadata', () => {
   assert.equal(cliMlDsa65.kdf, 'argon2id', 'kdf must be argon2id');
   assert.equal(cliMlDsa65.cipher, 'xchacha20-poly1305', 'cipher must be xchacha20-poly1305');
 
-  // Address stored by CLI must be pq1… bech32m format (F-PQ1-ONLY)
+  // Address stored in fixture must be 0x + 64-char hex (v0.23.0 canonical format)
   assert.ok(
-    cliMlDsa65.address.startsWith('pq1'),
-    'CLI keystore address must be pq1 bech32m format',
+    cliMlDsa65.address.startsWith('0x'),
+    'CLI keystore address must be 0x hex format',
   );
 
   assert.equal(parsed.signatureType, 'ML-DSA-65');
   assert.equal(parsed.algorithmId, 1, 'ML-DSA-65 algo_id must be 1');
   assert.equal(parsed.publicKey.length, 1952, 'ML-DSA-65 public key must be 1952 bytes');
-  assert.ok(parsed.canonicalAddress.startsWith('pq1'), 'canonical address must be pq1 bech32');
+  assert.ok(parsed.canonicalAddress.startsWith('0x'), 'canonical address must be 0x hex format');
 });
 
 test('ks-3: decryptKeystore decrypts CLI ML-DSA-65 keystore', async () => {
   const signer = await decryptKeystore(cliMlDsa65, CLI_PASSWORD);
 
-  assert.ok(signer.getAddress().startsWith('pq1'), 'decrypted address must be pq1 bech32');
+  assert.ok(signer.getAddress().startsWith('0x'), 'decrypted address must be 0x hex format');
   assert.equal(signer.algorithmId, 1, 'algorithm id must be 1 (ML-DSA-65)');
   const parsed = parseEncryptedKey(cliMlDsa65);
   assert.equal(signer.getAddress(), parsed.canonicalAddress, 'address must match keystore metadata');
@@ -83,8 +83,8 @@ test('ks-3: parseEncryptedKey reads CLI Dilithium3 keystore metadata', () => {
 
   assert.equal(cliDilithium3.key_type, 'dilithium3', 'key_type must be dilithium3');
   assert.ok(
-    cliDilithium3.address.startsWith('pq1'),
-    'CLI Dilithium3 keystore address must be pq1 bech32m format',
+    cliDilithium3.address.startsWith('0x'),
+    'CLI Dilithium3 keystore address must be 0x hex format',
   );
 
   assert.equal(parsed.signatureType, 'Dilithium3');
@@ -95,7 +95,7 @@ test('ks-3: parseEncryptedKey reads CLI Dilithium3 keystore metadata', () => {
 test('ks-3: decryptKeystore decrypts CLI Dilithium3 keystore', async () => {
   const signer = await decryptKeystore(cliDilithium3, CLI_PASSWORD);
 
-  assert.ok(signer.getAddress().startsWith('pq1'), 'Dilithium3 address must be pq1 bech32');
+  assert.ok(signer.getAddress().startsWith('0x'), 'Dilithium3 address must be 0x hex format');
   assert.equal(signer.algorithmId, 0, 'algorithm id must be 0 (Dilithium3)');
 
   const parsed = parseEncryptedKey(cliDilithium3);
