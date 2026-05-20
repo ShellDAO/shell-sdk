@@ -65,12 +65,14 @@ test('node integration: tampered keystore address is rejected', async () => {
     password: 'correct horse battery',
   });
 
+  const addr = signer.getAddress();
+  const lastChar = addr[addr.length - 1];
   const tampered = {
     ...keystore,
-    address: signer.getAddress().slice(0, -2) + (signer.getAddress().endsWith('0') ? '1' : '0'),
+    address: addr.slice(0, -1) + (lastChar === '0' ? '1' : '0'),
   };
   await assert.rejects(
     () => decryptKeystore(tampered, 'correct horse battery'),
-    /address mismatch|bech32m/i,
+    /address mismatch/i,
   );
 });

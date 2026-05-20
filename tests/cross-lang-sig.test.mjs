@@ -148,7 +148,7 @@ test('cross-lang: address derivation is deterministic from fixture pk', () => {
   assert.equal(algoId, 1, 'ML-DSA-65 algo_id must be 1');
 
   const addr = derivePqAddressFromPublicKey(pk_bytes, algoId);
-  assert.ok(addr.startsWith('pq1'), 'address must be pq1 bech32');
+  assert.ok(addr.startsWith('0x'), 'address must be 0x hex format');
 
   // Same key → same address (deterministic)
   const addr2 = derivePqAddressFromPublicKey(pk_bytes, algoId);

@@ -26,7 +26,7 @@ function hexToBytes(hex) {
 }
 
 // gas_limit must be a hex quantity string per JSON-RPC wire format
-const MINIMAL_INNER_CALL = { to: 'pq1q802m0h0m6kmam774klwlh4dhmhaatd7aunnnrmm', value: '0x0', data: '0x', gas_limit: '0x5208' };
+const MINIMAL_INNER_CALL = { to: '0x0000000000000000000000000000000000000000000000000000000000000042', value: '0x0', data: '0x', gas_limit: '0x5208' };
 
 // ---------------------------------------------------------------------------
 // Builder validation
@@ -63,7 +63,7 @@ test('buildSponsoredTransaction: sets paymaster and signature', () => {
     chainId: 1,
     nonce: 0,
     innerCalls: [MINIMAL_INNER_CALL],
-    paymaster: 'pq1qx46h2at4w46h2at4w46h2at4w46h2at4v6lzg9h',
+    paymaster: '0x0000000000000000000000000000000000000000000000000000000000000099',
     paymasterSignature: pmSig,
   });
   assert.ok(aa_bundle.paymaster, 'paymaster must be set');
@@ -110,7 +110,7 @@ test('hashBatchTransaction: paymaster changes the hash', () => {
   const { tx, aa_bundle: bundleNoPaymaster } = buildBatchTransaction({ chainId: 1, nonce: 0, innerCalls: calls });
   const bundleWithPaymaster = {
     ...bundleNoPaymaster,
-    paymaster: 'pq1qx46h2at4w46h2at4w46h2at4w46h2at4v6lzg9h',
+    paymaster: '0x0000000000000000000000000000000000000000000000000000000000000099',
   };
   const h1 = hexBytes(hashBatchTransaction(tx, bundleNoPaymaster));
   const h2 = hexBytes(hashBatchTransaction(tx, bundleWithPaymaster));
@@ -133,22 +133,22 @@ test('hashBatchTransaction: known deterministic vector (chain_id=1, nonce=0, sin
 // buildInnerTransfer / buildInnerCall — hex encoding and validation
 // ---------------------------------------------------------------------------
 test('buildInnerTransfer: encodes gas_limit as hex quantity', () => {
-  const call = buildInnerTransfer('pq1q802m0h0m6kmam774klwlh4dhmhaatd7aunnnrmm', 0n, 21_000);
+  const call = buildInnerTransfer('0x0000000000000000000000000000000000000000000000000000000000000042', 0n, 21_000);
   assert.equal(call.gas_limit, '0x5208', 'gas_limit must be hex-encoded');
   assert.match(call.gas_limit, /^0x[0-9a-f]+$/, 'gas_limit must be a valid hex quantity');
 });
 
 test('buildInnerCall: encodes gas_limit as hex quantity', () => {
-  const call = buildInnerCall('pq1q802m0h0m6kmam774klwlh4dhmhaatd7aunnnrmm', '0x', 50_000);
+  const call = buildInnerCall('0x0000000000000000000000000000000000000000000000000000000000000042', '0x', 50_000);
   assert.equal(call.gas_limit, '0xc350', 'gas_limit must be hex-encoded');
 });
 
 test('buildInnerTransfer: rejects negative gasLimit', () => {
-  assert.throws(() => buildInnerTransfer('pq1q802m0h0m6kmam774klwlh4dhmhaatd7aunnnrmm', 0n, -1), /non-negative safe integer/);
+  assert.throws(() => buildInnerTransfer('0x0000000000000000000000000000000000000000000000000000000000000042', 0n, -1), /non-negative safe integer/);
 });
 
 test('buildInnerCall: rejects non-integer gasLimit', () => {
-  assert.throws(() => buildInnerCall('pq1q802m0h0m6kmam774klwlh4dhmhaatd7aunnnrmm', '0x', 21_000.5), /non-negative safe integer/);
+  assert.throws(() => buildInnerCall('0x0000000000000000000000000000000000000000000000000000000000000042', '0x', 21_000.5), /non-negative safe integer/);
 });
 
 // ---------------------------------------------------------------------------
@@ -160,7 +160,7 @@ const DUMMY_TX = { tx_type: '0x0', chain_id: 1, nonce: 0, gas_price: '0x0', gas_
 
 test('buildSignedTransaction: aaBundle canonical option sets aa_bundle', () => {
   const signed = buildSignedTransaction({
-    from: 'pq1q802m0h0m6kmam774klwlh4dhmhaatd7aunnnrmm',
+    from: '0x0000000000000000000000000000000000000000000000000000000000000042',
     tx: DUMMY_TX,
     signatureType: 'falcon512',
     signature: DUMMY_SIG,
@@ -171,7 +171,7 @@ test('buildSignedTransaction: aaBundle canonical option sets aa_bundle', () => {
 
 test('buildSignedTransaction: aaBbundle deprecated alias still works', () => {
   const signed = buildSignedTransaction({
-    from: 'pq1q802m0h0m6kmam774klwlh4dhmhaatd7aunnnrmm',
+    from: '0x0000000000000000000000000000000000000000000000000000000000000042',
     tx: DUMMY_TX,
     signatureType: 'falcon512',
     signature: DUMMY_SIG,
@@ -183,7 +183,7 @@ test('buildSignedTransaction: aaBbundle deprecated alias still works', () => {
 test('buildSignedTransaction: aaBundle takes precedence over aaBbundle', () => {
   const OTHER_BUNDLE = { inner_calls: [], paymaster: null, paymaster_data: null };
   const signed = buildSignedTransaction({
-    from: 'pq1q802m0h0m6kmam774klwlh4dhmhaatd7aunnnrmm',
+    from: '0x0000000000000000000000000000000000000000000000000000000000000042',
     tx: DUMMY_TX,
     signatureType: 'falcon512',
     signature: DUMMY_SIG,

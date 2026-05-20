@@ -7,6 +7,19 @@
 
 ---
 
+> **⚠️ v0.23.0 alignment status (in progress)**
+>
+> Addresses, system-contract IDs, and adapter types are aligned with shell-chain v0.23.0
+> (32-byte `0x…` BLAKE3 addresses; `algo_id` byte `Dilithium3=0`, `MlDsa65=1`, `SphincsSha2256f=2`).
+>
+> The transaction signing-hash helpers (`hashTransaction`, `hashBatchTransaction`)
+> still implement the pre-v0.23.0 `keccak256(RLP(tx))` scheme. Shell-chain v0.23.0
+> nodes expect `BLAKE3(structured preimage including sig_type)` instead. A
+> follow-up release will replace these helpers and regenerate the
+> `tests/fixtures/rust-compatibility.json` vectors against the v0.23.0 chain.
+> Do not rely on the `hashTransaction*` helpers against a v0.23.0 node yet.
+
+
 ## Table of Contents
 
 - [Features](#features)
@@ -36,7 +49,7 @@
 ## Features
 
 - **Post-quantum signing** — ML-DSA-65 (FIPS 204) and SLH-DSA-SHA2-256f (FIPS 205)
-- **PQ addresses** — bech32m-encoded `pq1…` addresses derived from PQ public keys via BLAKE3
+- **Shell addresses** — `0x`-prefixed 64-character lowercase hex (full 32-byte BLAKE3) derived from PQ public keys
 - **Native account abstraction** — key rotation and custom validation code via system contracts
 - **viem integration** — standard Ethereum JSON-RPC methods via a typed `PublicClient`
 - **Shell-specific RPC** — `shell_getPqPubkey`, `shell_sendTransaction`, `shell_getTransactionsByAddress`, `shell_getNodeInfo`, `shell_getWitness`
@@ -76,12 +89,12 @@ import { parseEther } from "viem";
 
 const adapter = MlDsa65Adapter.generate();
 const signer  = new ShellSigner("MlDsa65", adapter);
-const from    = signer.getAddress(); // pq1…
+const from    = signer.getAddress(); // 0x… (64-char hex)
 
 const provider = createShellProvider();
 const nonce    = await provider.client.getTransactionCount({ address: from });
 
-const tx       = buildTransferTransaction({ chainId: 424242, nonce, to: "pq1recipient…", value: parseEther("1") });
+const tx       = buildTransferTransaction({ chainId: 424242, nonce, to: "0x…", value: parseEther("1") });
 const txHash   = hashTransaction(tx);
 const signed   = await signer.buildSignedTransaction({ tx, txHash });
 const hash     = await provider.sendTransaction(signed);
@@ -94,21 +107,16 @@ console.log("tx hash:", hash);
 
 ### PQ addresses
 
-Shell Chain uses **bech32m**-encoded addresses (prefix `pq`) instead of Ethereum's hex checksummed format. A `pq1…` address encodes:
+Shell Chain uses **`0x`-prefixed 64-character lowercase hex** addresses — the full 32-byte BLAKE3 hash of the PQ public key with a one-byte algorithm tag:
 
 ```
-bech32m( hrp="pq", payload = [ version_byte(0x01) | address_bytes(20) ] )
-```
-
-The 20 address bytes are derived deterministically:
-
-```
-blake3( version(1) || algo_id(1) || public_key )[0..20]
+address_bytes  = BLAKE3(algo_id || public_key)   // full 32 bytes, no truncation
+address_string = "0x" + hex_lower(address_bytes)
 ```
 
 Algorithm IDs: `Dilithium3=0`, `MlDsa65=1`, `SphincsSha2256f=2`.
 
-Shell Chain v0.21.0+ accepts `pq1…` addresses at user-facing RPC and SDK boundaries. Legacy `0x…` address inputs are rejected.
+There is no Bech32m/`pq1…` encoding and no separate version byte: Shell-Chain is a clean-slate chain with no backward bridge to any 20-byte Ethereum address model.
 
 ### Native account abstraction (AA)
 
@@ -124,10 +132,10 @@ These are sent as ordinary transactions whose `to` field is the AccountManager a
 
 ### System contracts
 
-| Name | Hex address | PQ address |
-|---|---|---|
-| ValidatorRegistry | `0x0000000000000000000000000000000000000001` | derived pq1 form |
-| AccountManager | `0x0000000000000000000000000000000000000002` | derived pq1 form |
+| Name | Address |
+|---|---|
+| ValidatorRegistry | `0x0000000000000000000000000000000000000000000000000000000000000001` |
+| AccountManager   | `0x0000000000000000000000000000000000000000000000000000000000000002` |
 
 ---
 
@@ -143,7 +151,7 @@ Defined in `src/types.ts`. All types are re-exported from the package root.
 |---|---|
 | `HexString` | Template-literal type `0x${string}` |
 | `AddressLike` | Any string accepted as an address |
-| `SignatureTypeName` | `"Dilithium3" \| "MlDsa65" \| "SphincsSha2256f"` |
+| `SignatureTypeName` | `"ML-DSA-65" \| "Dilithium3" \| "MlDsa65" \| "SphincsSha2256f"` |
 | `ShellTransactionRequest` | Wire format for a Shell transaction |
 | `ShellSignature` | `{ sig_type, data: number[] }` |
 | `SignedShellTransaction` | Complete signed transaction ready to broadcast |
@@ -165,38 +173,37 @@ Defined in `src/types.ts`. All types are re-exported from the package root.
 
 | Export | Value | Description |
 |---|---|---|
-| `PQ_ADDRESS_HRP` | `"pq"` | Human-readable part for bech32m encoding |
-| `PQ_ADDRESS_LENGTH` | `20` | Address bytes (excluding version byte) |
-| `PQ_ADDRESS_VERSION_V1` | `0x01` | Current address version |
+| `SHELL_ADDRESS_LENGTH` | `32` | Address bytes (full BLAKE3 output) |
 
 #### Functions
 
 | Function | Signature | Description |
 |---|---|---|
-| `bytesToPqAddress` | `(bytes: Uint8Array, version?) → string` | Encode 20 raw bytes as a `pq1…` bech32m address |
-| `pqAddressToBytes` | `(address: string) → Uint8Array` | Decode a `pq1…` address to its 20 raw bytes |
-| `pqAddressVersion` | `(address: string) → number` | Extract the version byte from a `pq1…` address |
-| `normalizePqAddress` | `(address: string) → string` | Validate and return a `pq1…` address |
-| `derivePqAddressFromPublicKey` | `(pk, algoId, version?) → string` | Derive pq1 address from a raw public key |
-| `isPqAddress` | `(address: string) → boolean` | Return `true` if the string is a valid pq1 address |
+| `bytesToShellAddress` | `(bytes: Uint8Array) → string` | Encode 32 raw bytes as a `0x`-prefixed 64-char hex address |
+| `shellAddressToBytes` | `(address: string) → Uint8Array` | Decode a `0x…` Shell address to its 32 raw bytes |
+| `normalizeShellAddress` | `(address: string) → string` | Validate and lowercase a `0x…` Shell address |
+| `deriveShellAddressFromPublicKey` | `(pk, algoId) → string` | Derive a 32-byte `0x…` Shell address from a raw PQ public key |
+| `isShellAddress` | `(address: string) → boolean` | Return `true` if the string is a valid 32-byte `0x…` Shell address |
+
+Legacy aliases (`bytesToPqAddress`, `pqAddressToBytes`, `normalizePqAddress`, `derivePqAddressFromPublicKey`, `isPqAddress`) remain exported but are deprecated — they now operate on the same 32-byte `0x…` format.
 
 **Examples:**
 
 ```typescript
 import {
-  derivePqAddressFromPublicKey,
-  isPqAddress,
-  normalizePqAddress,
+  deriveShellAddressFromPublicKey,
+  isShellAddress,
+  normalizeShellAddress,
 } from "shell-sdk/address";
 
-const address = derivePqAddressFromPublicKey(publicKey, 1 /* MlDsa65 */);
-// → "pq1qx3f…"
+const address = deriveShellAddressFromPublicKey(publicKey, 1 /* MlDsa65 */);
+// → "0x9a3f…" (64-char lowercase hex)
 
-console.log(isPqAddress(address)); // true
+console.log(isShellAddress(address)); // true
 
 // Validation / normalisation
-normalizePqAddress("pq1qx3f…");  // → "pq1qx3f…" (unchanged)
-normalizePqAddress("0xabcdef…"); // throws: expected a pq1… bech32m address
+normalizeShellAddress("0x9A3F…");  // → "0x9a3f…" (lowercased)
+normalizeShellAddress("pq1abc…");  // throws: expected 0x + 64-char hex address, got: "pq1abc…"
 ```
 
 ---
@@ -254,11 +261,11 @@ const block = await provider.client.getBlockNumber();
 const balance = await provider.client.getBalance({ address: "0x…" });
 
 // Shell-specific methods
-const pubkeyHex = await provider.getPqPubkey("pq1…");
+const pubkeyHex = await provider.getPqPubkey("0x…");
 const txHash    = await provider.sendTransaction(signedTx);
 
-const history = await provider.getTransactionsByAddress("pq1…", { page: 0, limit: 20 });
-const older = await provider.getTransactionsByAddress("pq1…", {
+const history = await provider.getTransactionsByAddress("0x…", { page: 0, limit: 20 });
+const older = await provider.getTransactionsByAddress("0x…", {
   page: 1,
   limit: 20,
   toBlock: history.toBlock ?? history.to_block,
@@ -338,7 +345,7 @@ const signer = new ShellSigner("MlDsa65", MlDsa65Adapter.generate());
 |---|---|
 | `algorithmId` | Numeric algorithm ID (`0`, `1`, or `2`) |
 | `getPublicKey()` | Raw public key bytes |
-| `getAddress()` | `pq1…` bech32m address |
+| `getAddress()` | `0x…` 64-char hex Shell address |
 | `sign(message)` | Sign an arbitrary byte message → signature bytes |
 | `buildSignedTransaction(options)` | Sign `txHash` and assemble a `SignedShellTransaction` |
 
@@ -385,7 +392,7 @@ import { parseEther } from "viem";
 const tx = buildTransferTransaction({
   chainId: 424242,
   nonce: 0,
-  to: "pq1recipient…",
+  to: "0x…",
   value: parseEther("1.5"),
 });
 ```
@@ -437,7 +444,7 @@ Assemble a `SignedShellTransaction` directly (use `ShellSigner.buildSignedTransa
 import { buildSignedTransaction } from "shell-sdk/transactions";
 
 const signed = buildSignedTransaction({
-  from: "pq1sender…",
+  from: "0x…",
   tx,
   signature: sigBytes,
   signatureType: "MlDsa65",
@@ -456,7 +463,7 @@ Shell Chain signs the full unsigned transaction payload in this order:
 ```typescript
 import { buildTransferTransaction, hashTransaction } from "shell-sdk/transactions";
 
-const tx     = buildTransferTransaction({ chainId: 424242, nonce: 0, to: "pq1…", value: 1n });
+const tx     = buildTransferTransaction({ chainId: 424242, nonce: 0, to: "0x…", value: 1n });
 const txHash = hashTransaction(tx);              // Uint8Array (32 bytes)
 const signed = await signer.buildSignedTransaction({ tx, txHash });
 ```
@@ -471,10 +478,8 @@ const signed = await signer.buildSignedTransaction({ tx, txHash });
 
 | Export | Value |
 |---|---|
-| `validatorRegistryHexAddress` | `0x0000000000000000000000000000000000000001` |
-| `accountManagerHexAddress` | `0x0000000000000000000000000000000000000002` |
-| `validatorRegistryAddress` | pq1 bech32m form of above |
-| `accountManagerAddress` | pq1 bech32m form of above |
+| `validatorRegistryAddress` | `0x0000000000000000000000000000000000000000000000000000000000000001` |
+| `accountManagerAddress`   | `0x0000000000000000000000000000000000000000000000000000000000000002` |
 
 #### Function selectors
 
@@ -498,7 +503,7 @@ const data = encodeRotateKeyCalldata(newPublicKey, 1 /* MlDsa65 */);
 const data = encodeSetValidationCodeCalldata("0xcodehash…");
 const data = encodeClearValidationCodeCalldata(); // selector only
 
-isSystemContractAddress("0x0000000000000000000000000000000000000002"); // true
+isSystemContractAddress("0x0000000000000000000000000000000000000000000000000000000000000002"); // true
 ```
 
 ---
@@ -514,7 +519,7 @@ Shell keystore files are JSON objects encrypted with **argon2id** (KDF) and **xc
 ```jsonc
 {
   "version": 1,
-  "address": "pq1…",
+  "address": "0x…",
   "key_type": "mldsa65",
   "kdf": "argon2id",
   "kdf_params": { "m_cost": 65536, "t_cost": 3, "p_cost": 1, "salt": "hex…" },
@@ -547,12 +552,12 @@ const json  = readFileSync("./my-key.json", "utf8");
 
 // Inspect without decrypting
 const parsed = parseEncryptedKey(json);
-console.log(parsed.canonicalAddress); // pq1…
+console.log(parsed.canonicalAddress); // 0x…
 console.log(parsed.signatureType);    // "MlDsa65"
 
 // Decrypt
 const signer = await decryptKeystore(json, "my-passphrase");
-console.log(signer.getAddress()); // pq1…
+console.log(signer.getAddress()); // 0x…
 ```
 
 ---
@@ -571,7 +576,7 @@ import { buildTransferTransaction, hashTransaction } from "shell-sdk/transaction
 // 1. Generate keys
 const adapter = MlDsa65Adapter.generate();
 const signer  = new ShellSigner("MlDsa65", adapter);
-const from    = signer.getAddress();      // pq1…
+const from    = signer.getAddress();      // 0x…
 
 console.log("Address:", from);
 
@@ -585,7 +590,7 @@ const nonce = await provider.client.getTransactionCount({ address: from });
 const tx = buildTransferTransaction({
   chainId: 424242,
   nonce,
-  to: "pq1recipientaddress…",
+  to: "0x…",
   value: parseEther("0.5"),
 });
 
@@ -622,7 +627,7 @@ const nonce    = await provider.client.getTransactionCount({ address: signer.get
 const tx = buildTransferTransaction({
   chainId: 424242,
   nonce,
-  to: "pq1dest…",
+  to: "0x…",
   value: parseEther("10"),
 });
 
@@ -674,7 +679,7 @@ const provider = createShellProvider({
   rpcHttpUrl: "https://rpc.testnet.shell.network",
 });
 
-const account = normalizePqAddress("pq1qx3f...");
+const account = normalizeShellAddress("0x9a3f…");
 const history = await provider.getTransactionsByAddress(account, { page: 1, limit: 10 });
 
 console.log("recent txs:", history.transactions);
@@ -729,9 +734,9 @@ All SDK functions throw standard `Error` instances. Common error messages:
 
 | Error message | Cause |
 |---|---|
-| `expected 20 address bytes, got N` | Wrong-length bytes passed to address helpers |
-| `expected pq address prefix, got X` | bech32m prefix is not `pq` |
-| `invalid bech32m address` | String is not a valid bech32m address |
+| `expected 32 address bytes, got N` | Wrong-length bytes passed to address helpers |
+| `expected 0x prefix, got X` | Shell address must start with `0x` |
+| `invalid Shell address length` | Address must be 32 raw bytes / 64 hex characters |
 | `unsupported key type: X` | Keystore `key_type` not recognised |
 | `unsupported kdf: X` | Only `argon2id` is supported |
 | `unsupported cipher: X` | Only `xchacha20-poly1305` is supported |
@@ -758,7 +763,7 @@ try {
 // Branded hex string: "0x" + arbitrary hex chars
 type HexString = `0x${string}`;
 
-// Any value accepted as an address (pq1… or 0x…)
+// Any value accepted as a Shell address (0x… 64-char hex)
 type AddressLike = string;
 
 // Post-quantum signature algorithm names
@@ -812,7 +817,6 @@ interface ShellSignature {
 | [`@noble/post-quantum`](https://github.com/paulmillr/noble-post-quantum) | ML-DSA-65 and SLH-DSA-SHA2-256f |
 | [`@noble/hashes`](https://github.com/paulmillr/noble-hashes) | BLAKE3 |
 | [`@noble/ciphers`](https://github.com/paulmillr/noble-ciphers) | xchacha20-poly1305 |
-| [`@scure/base`](https://github.com/paulmillr/scure-base) | bech32m encoding |
 | [`hash-wasm`](https://github.com/nicowillis/hash-wasm) | argon2id (WASM) |
 
 ---
@@ -839,7 +843,7 @@ Before publishing a `shell-sdk` release candidate:
 | Native currency | SHELL (18 decimals) |
 | HTTP RPC | `http://127.0.0.1:8545` |
 | WebSocket RPC | `ws://127.0.0.1:8546` |
-| Address format | bech32m, prefix `pq`, version byte `0x01` |
+| Address format | `0x` + 64 lowercase hex chars (32-byte BLAKE3 hash of `algo_id ‖ pubkey`) |
 | Default tx type | 2 (EIP-1559) |
 | Default gas limit (transfer) | 21 000 |
 | Default gas limit (system) | 100 000 |
