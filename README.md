@@ -1,6 +1,6 @@
 # shell-sdk
 
-**TypeScript / JavaScript SDK for Shell Chain** — build quantum-safe dApps on the first EVM chain secured before Q-Day.
+**TypeScript / JavaScript SDK for Shell Chain** — build quantum-safe dApps on the PQVM-native post-quantum blockchain secured before Q-Day.
 
 [![Node ≥ 18](https://img.shields.io/badge/node-%3E%3D18-brightgreen)](https://nodejs.org/)
 [![ESM only](https://img.shields.io/badge/module-ESM-blue)](https://nodejs.org/api/esm.html)
