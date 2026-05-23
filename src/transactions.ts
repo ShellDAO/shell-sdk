@@ -31,7 +31,7 @@ import {
 } from "./system-contracts.js";
 import { shellAddressToBytes } from "./address.js";
 
-/** Default transaction type: `2` (EIP-1559-style fee fields; Shell PQTx format). */
+/** Default transaction type: `2` (Shell PQTx format; encodes EIP-1559 fee fields, which are scaffolded and not yet enforced on-chain). */
 export const DEFAULT_TX_TYPE = 2;
 
 /** Default gas limit for simple SHELL token transfers (`21_000`). */
@@ -48,7 +48,7 @@ export const DEFAULT_MAX_PRIORITY_FEE_PER_GAS = 100_000_000;
 
 /** Options accepted by {@link buildTransaction}. */
 export interface BuildTransactionOptions {
-  /** Shell chain ID. Devnet = 424242. */
+  /** EIP-155 chain ID (Shell Chain). Devnet = 424242. */
   chainId: number;
   /** Sender account nonce. */
   nonce: number;
@@ -60,9 +60,9 @@ export interface BuildTransactionOptions {
   data?: HexString;
   /** Gas limit. Defaults to {@link DEFAULT_TRANSFER_GAS_LIMIT}. */
   gasLimit?: number;
-  /** EIP-1559-style max fee per gas in wei. Defaults to {@link DEFAULT_MAX_FEE_PER_GAS}. */
+  /** EIP-1559 max fee per gas in wei (scaffolded; not enforced by the chain). Defaults to {@link DEFAULT_MAX_FEE_PER_GAS}. */
   maxFeePerGas?: number;
-  /** EIP-1559-style priority fee in wei. Defaults to {@link DEFAULT_MAX_PRIORITY_FEE_PER_GAS}. */
+  /** EIP-1559 priority fee in wei (scaffolded; not enforced by the chain). Defaults to {@link DEFAULT_MAX_PRIORITY_FEE_PER_GAS}. */
   maxPriorityFeePerGas?: number;
   /** Transaction type. Defaults to {@link DEFAULT_TX_TYPE}. */
   txType?: number;
