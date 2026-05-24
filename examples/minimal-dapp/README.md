@@ -22,8 +22,7 @@ SHELL_RPC_URL=http://my-node:8545 node examples/minimal-dapp/node-demo.mjs
 
 Expected output:
 ```
-Address (pq1…): pq1…
-Address (0x…): 0x…
+Address (0x + 64 hex): 0x…
 Balance (wei): 0   ← 0 for a fresh account; fund it via the faucet
 Signed tx type: 2
 Signature length (bytes): 3309

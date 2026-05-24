@@ -15,7 +15,7 @@ Provides:
 - viem-based PQ signers (Dilithium3, ML-DSA-65)
 - Account Abstraction bundle builders (AaBundle, tx_type `0x7E`)
 - RPC provider helpers (mirroring the chain's JSON-RPC surface)
-- Address utilities for Bech32m `pq1...` derivation
+- Address utilities for canonical Shell `0x` + 64 lowercase hex derivation
 
 ## Quick commands
 
@@ -30,9 +30,9 @@ npm run typecheck
 ## Cardinal rules
 
 1. **Wire-format fidelity**. PQ signing logic must produce the exact bytes
-   that shell-chain accepts. Domain separation, Bech32m HRP (`pq1`), and
-   AaBundle field order must match the chain's wire spec — never invent
-   client-side variants. When in doubt, generate test vectors against a
+   that shell-chain accepts. Domain separation, canonical Shell address
+   derivation, and AaBundle field order must match the chain's wire spec —
+   never invent client-side variants. When in doubt, generate test vectors against a
    running shell-chain node and compare bytes.
 2. **No private-key leakage**. Never log secret-key material; never embed
    secret keys in source. Keystores follow the chain's keystore JSON v1

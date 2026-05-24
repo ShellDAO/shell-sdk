@@ -35,28 +35,28 @@
   source hashes, and compression accounting fields.
 
 ### Changed
-- Preserve pq1-only compatibility from `0.7.0` while aligning the SDK type
+- Preserve address-format compatibility from `0.7.0` while aligning the SDK type
   surface with `shell-chain v0.21.1`.
 
 ## [0.7.0] — 2026-04-30 ⚠️ BREAKING
 
-### Breaking Changes — F-PQ1-ONLY (pq1 bech32m addresses everywhere)
+### Breaking Changes — F-ADDRESS-CANONICALIZATION
 
-This is a **breaking release**. All `0x` hex address support has been removed.
+This historical release changed the experimental address API. Current v0.23.0-compatible SDKs use canonical `0x` + 64 lowercase hex addresses only.
 
 #### Removed
-- `hexAddress()` / `hexAddressFromPubkey()` exports deleted — use `pq1Address()` instead.
-- `normalizePqAddress()` no longer accepts `0x...` hex strings — only `pq1...` bech32m.
-- Keystore `address` field: `encryptKeystore()` now always emits `pq1...` bech32m (was `0x...` hex).
+- Address helper exports were reshaped around the then-current experimental address API.
+- Address normalisation behaviour changed in this historical release.
+- Keystore `address` field emission changed with the experimental address API.
 - `decryptKeystore()` rejects keystores with `0x` address fields (use `shell-node key migrate` first).
 
 #### Added
-- `pq1Address(pubkey, sigType)` — canonical address derivation returning `pq1...` bech32m string.
+- Address derivation helper for the then-current experimental address format.
 - SK-only keystore format: `encryptKeystore` stores only the secret key in ciphertext (no pk concatenation), matching `shell-node key generate` output for full cross-language compatibility.
 - Full cross-format compatibility: SDK keystores are now byte-for-byte compatible with Rust CLI keystores.
 
 #### Updated
-- All SDK test fixtures regenerated with `pq1` addresses.
+- All SDK test fixtures regenerated for the then-current address format.
 - `SIGNATURE_TYPE_IDS.MlDsa65 = 1` (was incorrectly aliased to `0` in v0.6.x).
 - ML-DSA-65 (FIPS 204) via `@noble/post-quantum` — real implementation, not a Dilithium3 alias.
 
@@ -67,14 +67,14 @@ import { hexAddress } from 'shell-sdk';
 const addr = hexAddress(pubkey, sigType); // "0x..."
 
 // After (0.7.0)
-import { pq1Address } from 'shell-sdk';
-const addr = pq1Address(pubkey, sigType); // "pq1..."
+import { deriveShellAddressFromPublicKey } from 'shell-sdk';
+const addr = deriveShellAddressFromPublicKey(pubkey, sigType); // "0x..."
 ```
 
-For existing keystores with `0x` addresses: run `shell-node key migrate <keystore.json>` to upgrade to pq1 format.
+For current v0.23.0-compatible keystores, use the canonical `0x` + 64 lowercase hex address field.
 
 ### Compatibility
-- Requires `shell-chain v0.21.0+` (pq1-only RPC).
+- Requires the matching `shell-chain v0.21.0+` RPC surface for this historical release.
 - Not backwards-compatible with SDK `0.6.x` address handling.
 
 ## [0.6.0] — 2026-04-27
@@ -169,6 +169,6 @@ For existing keystores with `0x` addresses: run `shell-node key migrate <keystor
 - add Browser and Node integration tests for signer, keystore, and provider flows
 - add Rust compatibility vectors for address derivation and transaction hashing
 - fix `hashTransaction()` to match the Rust node's canonical RLP field ordering
-- fix `hashTransaction()` to accept canonical `pq1...` recipient addresses
+- fix `hashTransaction()` to accept canonical recipient addresses
 - narrow the package root export surface to stable application-facing APIs
 - document extension background flow, minimal dApp usage, and release checklist

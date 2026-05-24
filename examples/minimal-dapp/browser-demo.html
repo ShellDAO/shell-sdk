@@ -49,8 +49,7 @@
         const adapter = MlDsa65Adapter.generate();
         signer = new ShellSigner("MlDsa65", adapter);
         log("=== Key Generated ===");
-        log("Address (pq1…):", signer.getAddress());
-        log("Address (0x…):", signer.getHexAddress());
+        log("Address (0x + 64 hex):", signer.getAddress());
         log("Public key size:", adapter.getPublicKey().length, "bytes");
       };
 
