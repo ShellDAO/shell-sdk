@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.9.1] — 2026-05-25
+
+### Changed
+- Documentation: remove all residual `pq1`/Bech32m references from AGENTS.md,
+  CHANGELOG, `examples/minimal-dapp/`, and test fixtures. Canonical address is
+  `0x` + 64 lowercase hex throughout. (#19)
+- Documentation: align README and `PQTx` comments with PQVM-native design. (#18)
+- Documentation: add self-contained AGENTS.md SSoT for AI coding agents. (#16)
+
+### Breaking (from 0.8.x — included in this release)
+- Address encoding migrated to **32-byte BLAKE3** displayed as `0x` + 64-char
+  lowercase hex. Bech32m (`pq1…`) is no longer supported on `shell-chain v0.23+`.
+  - `isShellAddress(addr)` / `normalizeShellAddress(addr)` validate `0x` hex only.
+  - Legacy `isPqAddress` / `normalizePqAddress` remain as `@deprecated` aliases.
+  - Requires `shell-chain ≥ v0.23.0`.
+
 ## [0.8.2] — 2026-05-12
 
 ### Changed
