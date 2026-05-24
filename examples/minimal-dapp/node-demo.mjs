@@ -23,12 +23,11 @@ async function main() {
   const adapter = MlDsa65Adapter.generate();
   const signer = new ShellSigner("MlDsa65", adapter);
 
-  console.log("Address (pq1…):", signer.getAddress());
-  console.log("Address (0x…):", signer.getHexAddress());
+  console.log("Address (0x + 64 hex):", signer.getAddress());
 
   // ── 3. Query balance ───────────────────────────────────────────────────
   try {
-    const balance = await provider.client.getBalance({ address: signer.getHexAddress() });
+    const balance = await provider.client.getBalance({ address: signer.getAddress() });
     console.log("Balance (wei):", balance.toString());
   } catch (err) {
     console.warn("getBalance failed (node may not be running):", err.message);
@@ -37,11 +36,11 @@ async function main() {
   // ── 4. Build and sign a transaction ───────────────────────────────────
   // NOTE: sending requires a funded account + live node.
   // This section shows the sign-only flow without broadcasting.
-  const TO = "0x0000000000000000000000000000000000000001";
+  const TO = "0x0000000000000000000000000000000000000000000000000000000000000001";
 
   /** @type {import("shell-sdk").ShellTransactionRequest} */
   const tx = {
-    from: signer.getHexAddress(),
+    from: signer.getAddress(),
     chain_id: 1337,
     nonce: 0,
     to: TO,

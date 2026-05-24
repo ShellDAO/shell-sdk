@@ -46,7 +46,7 @@ test('ShellRpcTransaction accepts decodedInput field (v0.22+ fixture)', () => {
   /** @type {import('../dist/index.js').ShellRpcTransaction} */
   const settlementTx = {
     hash: '0xabcdef01',
-    from: 'pq1validator',
+    from: '0x1111111111111111111111111111111111111111111111111111111111111111',
     to: null,
     value: '0x0',
     gas: '0x0',
@@ -84,8 +84,8 @@ test('ShellRpcTransaction allows null decodedInput for non-settlement txs', () =
   /** @type {import('../dist/index.js').ShellRpcTransaction} */
   const transferTx = {
     hash: '0x1234',
-    from: 'pq1alice',
-    to: 'pq1bob',
+    from: '0x2222222222222222222222222222222222222222222222222222222222222222',
+    to: '0x3333333333333333333333333333333333333333333333333333333333333333',
     value: '0xde0b6b3a7640000',
     gas: '0x5208',
     gasPrice: '0x1',
