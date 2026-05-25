@@ -5,12 +5,13 @@ import {
   MlDsa65Adapter,
   ShellSigner,
   assertSignerMatchesKeystore,
+  buildBatchTransaction,
   buildTransferTransaction,
   decryptKeystore,
   exportEncryptedKeyJson,
   generateMlDsa65KeyPair,
-  hashTransaction,
   parseEncryptedKey,
+  withDecryptedKeystoreSigner,
 } from '../dist/index.js';
 import { createKeystoreFixture } from './helpers.mjs';
 
@@ -40,7 +41,6 @@ test('node integration: parse/decrypt keystore and sign transaction', async () =
   });
   const signed = await decryptedSigner.buildSignedTransaction({
     tx,
-    txHash: hashTransaction(tx),
     includePublicKey: true,
   });
 
@@ -52,6 +52,48 @@ test('node integration: parse/decrypt keystore and sign transaction', async () =
 
   const json = exportEncryptedKeyJson(keystore);
   assert.match(json, /"cipher": "xchacha20-poly1305"/);
+});
+
+test('node integration: withDecryptedKeystoreSigner disposes the signer after use', async () => {
+  const { publicKey, secretKey } = generateMlDsa65KeyPair();
+  const signer = new ShellSigner('MlDsa65', MlDsa65Adapter.fromKeyPair(publicKey, secretKey));
+  const keystore = await createKeystoreFixture({
+    secretKey,
+    publicKey,
+    address: signer.getAddress(),
+    keyType: 'mldsa65',
+    password: 'correct horse battery',
+  });
+
+  let callbackSigner;
+  await withDecryptedKeystoreSigner(keystore, 'correct horse battery', async (decryptedSigner) => {
+    callbackSigner = decryptedSigner;
+    const tx = buildTransferTransaction({
+      chainId: 424242,
+      nonce: 1,
+      to: signer.getAddress(),
+      value: 1n,
+    });
+    const signed = await decryptedSigner.buildSignedTransaction({ tx, includePublicKey: true });
+    assert.equal(signed.signature.sig_type, 'ML-DSA-65');
+  });
+
+  await assert.rejects(() => callbackSigner.sign(new Uint8Array([1])), /disposed/i);
+});
+
+test('node integration: AA tx requires aaBundle when auto-computing txHash', async () => {
+  const { publicKey, secretKey } = generateMlDsa65KeyPair();
+  const signer = new ShellSigner('MlDsa65', MlDsa65Adapter.fromKeyPair(publicKey, secretKey));
+  const { tx } = buildBatchTransaction({
+    chainId: 424242,
+    nonce: 0,
+    innerCalls: [{ to: signer.getAddress(), value: '0x0', data: '0x', gas_limit: '0x5208' }],
+  });
+
+  await assert.rejects(
+    () => signer.buildSignedTransaction({ tx, includePublicKey: true }),
+    /aaBundle is required/i,
+  );
 });
 
 test('node integration: tampered keystore address is rejected', async () => {

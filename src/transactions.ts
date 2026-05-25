@@ -7,7 +7,8 @@
  *
  * @module transactions
  */
-import { bytesToHex, keccak256, toRlp, hexToBytes } from "viem";
+import { blake3 } from "@noble/hashes/blake3";
+import { bytesToHex, toRlp, hexToBytes } from "viem";
 
 import type {
   AaBundle,
@@ -23,6 +24,16 @@ import type {
 } from "./types.js";
 import { AA_BUNDLE_TX_TYPE, AA_MAX_INNER_CALLS } from "./types.js";
 export { AA_BUNDLE_TX_TYPE, AA_MAX_INNER_CALLS };
+
+const BATCH_SIGNING_HASH_DOMAIN = AA_BUNDLE_TX_TYPE;
+const PAYMASTER_SIGNING_HASH_DOMAIN = 0x7f;
+
+const SIGNATURE_TYPE_IDS: Record<SignatureTypeName, number> = {
+  "ML-DSA-65": 1,
+  Dilithium3: 0,
+  MlDsa65: 1,
+  SphincsSha2256f: 2,
+};
 import {
   accountManagerAddress,
   encodeClearValidationCodeCalldata,
@@ -106,6 +117,62 @@ function toRlpUint(value: number | bigint | string): HexString {
     return "0x";
   }
   return `0x${numeric.toString(16)}`;
+}
+
+function signatureTypeToId(signatureType: SignatureTypeName | number): number {
+  if (typeof signatureType === "number") {
+    if (!Number.isInteger(signatureType) || signatureType < 0 || signatureType > 255) {
+      throw new RangeError(`signatureType id must be a byte, got: ${signatureType}`);
+    }
+    return signatureType;
+  }
+
+  const id = SIGNATURE_TYPE_IDS[signatureType];
+  if (id == null) {
+    throw new Error(`unsupported signature type: ${signatureType}`);
+  }
+  return id;
+}
+
+function encodeU64Be(value: number | bigint | string, fieldName: string): Uint8Array {
+  const numeric = typeof value === "string" ? BigInt(value) : BigInt(value);
+  if (numeric < 0n || numeric > 0xffff_ffff_ffff_ffffn) {
+    throw new RangeError(`${fieldName} must fit in u64, got: ${value}`);
+  }
+
+  const bytes = new Uint8Array(8);
+  let remaining = numeric;
+  for (let index = 7; index >= 0; index -= 1) {
+    bytes[index] = Number(remaining & 0xffn);
+    remaining >>= 8n;
+  }
+  return bytes;
+}
+
+function encodeU256Be(value: number | bigint | string, fieldName: string): Uint8Array {
+  const numeric = typeof value === "string" ? BigInt(value) : BigInt(value);
+  if (numeric < 0n || numeric > ((1n << 256n) - 1n)) {
+    throw new RangeError(`${fieldName} must fit in u256, got: ${value}`);
+  }
+
+  const bytes = new Uint8Array(32);
+  let remaining = numeric;
+  for (let index = 31; index >= 0; index -= 1) {
+    bytes[index] = Number(remaining & 0xffn);
+    remaining >>= 8n;
+  }
+  return bytes;
+}
+
+function concatBytes(...parts: Uint8Array[]): Uint8Array {
+  const totalLength = parts.reduce((sum, part) => sum + part.length, 0);
+  const combined = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const part of parts) {
+    combined.set(part, offset);
+    offset += part.length;
+  }
+  return combined;
 }
 
 function toRlpAccessList(
@@ -334,56 +401,62 @@ export function hexBytes(bytes: Uint8Array): HexString {
 }
 
 /**
- * RLP-encode a `ShellTransactionRequest` and return its keccak256 hash.
+ * Compute the canonical Shell transaction signing hash.
  *
- * This is the signing hash that must be passed to `ShellSigner.buildSignedTransaction`
- * (or `signer.sign`). Shell Chain computes it identically on the node side as
- * `keccak256(RLP(tx))` — the same scheme as Ethereum EIP-1559 signing.
+ * Shell-chain v0.23.0 signs `blake3` over the structured preimage from
+ * `shell-chain/crates/core/src/transaction.rs::Transaction::signing_hash`:
  *
- * **Encoding order** (EIP-2718 type-2 fields):
- * chainId, nonce, to, value, data, gasLimit, maxFeePerGas, maxPriorityFeePerGas,
- * accessList, txType, blobFeeFlag, maxFeePerBlobGas, blobVersionedHashes
+ * `chain_id(8B BE) || nonce(8B BE) || to(32B|zero) || value(32B BE) || data ||`
+ * `gas_limit(8B BE) || max_fee_per_gas(8B BE) || max_priority_fee_per_gas(8B BE) ||`
+ * `sig_type(1B) || tx_type(1B)`
  *
- * @example
- * ```typescript
- * import { buildTransferTransaction, hashTransaction } from "shell-sdk/transactions";
+ * Blob transactions (`tx_type === 3`) append
+ * `max_fee_per_blob_gas(8B BE) || blob_hash_0(32B) || ...`.
  *
- * const tx     = buildTransferTransaction({ chainId: 424242, nonce: 0, to: "0x…", value: 1n });
- * const txHash = hashTransaction(tx);
- * const signed = await signer.buildSignedTransaction({ tx, txHash });
- * ```
+ * `access_list` is intentionally excluded because the chain's signing preimage
+ * does not include it.
  *
  * @param tx - The unsigned transaction to hash.
- * @returns 32-byte keccak256 hash as a `Uint8Array`.
+ * @param signatureType - Signature algorithm name or numeric id. Defaults to Dilithium3 (`0`).
+ * @returns 32-byte BLAKE3 signing hash as a `Uint8Array`.
  */
-export function hashTransaction(tx: ShellTransactionRequest): Uint8Array {
-  const fields = [
-    toRlpUint(tx.chain_id),
-    toRlpUint(tx.nonce),
-    tx.to ? bytesToHex(shellAddressToBytes(tx.to)) : "0x",
-    toRlpUint(tx.value),
-    tx.data,
-    toRlpUint(tx.gas_limit),
-    toRlpUint(tx.max_fee_per_gas),
-    toRlpUint(tx.max_priority_fee_per_gas),
-    toRlpAccessList(tx.access_list),
-    toRlpUint(tx.tx_type ?? DEFAULT_TX_TYPE),
-    toRlpUint(tx.max_fee_per_blob_gas != null ? 1 : 0),
-    toRlpUint(tx.max_fee_per_blob_gas ?? 0),
-    (tx.blob_versioned_hashes ?? []).map((hash) => hash as HexString),
-  ] as const;
+export function hashTransaction(
+  tx: ShellTransactionRequest,
+  signatureType: SignatureTypeName | number = "Dilithium3",
+): Uint8Array {
+  const txType = tx.tx_type ?? DEFAULT_TX_TYPE;
+  const preimageParts = [
+    encodeU64Be(tx.chain_id, "chain_id"),
+    encodeU64Be(tx.nonce, "nonce"),
+    tx.to ? shellAddressToBytes(tx.to) : new Uint8Array(32),
+    encodeU256Be(tx.value, "value"),
+    hexToBytes(tx.data),
+    encodeU64Be(tx.gas_limit, "gas_limit"),
+    encodeU64Be(tx.max_fee_per_gas, "max_fee_per_gas"),
+    encodeU64Be(tx.max_priority_fee_per_gas, "max_priority_fee_per_gas"),
+    new Uint8Array([signatureTypeToId(signatureType)]),
+    new Uint8Array([txType]),
+  ];
 
-  const rlpEncoded = toRlp(fields);
-  const hash = hexToBytes(keccak256(rlpEncoded));
-  return hash;
+  if (txType === 3) {
+    preimageParts.push(
+      encodeU64Be(tx.max_fee_per_blob_gas ?? 0, "max_fee_per_blob_gas"),
+      ...((tx.blob_versioned_hashes ?? []).map((hash, index) => {
+        const bytes = hexToBytes(hash);
+        if (bytes.length !== 32) {
+          throw new RangeError(`blob_versioned_hashes[${index}] must be 32 bytes, got ${bytes.length}`);
+        }
+        return bytes;
+      })),
+    );
+  }
+
+  return blake3(concatBytes(...preimageParts));
 }
 
 // ---------------------------------------------------------------------------
 // AA batch & sponsored transaction builders (v0.18.0)
 // ---------------------------------------------------------------------------
-
-/** `keccak256` domain prefix byte for the batch signing hash (must match chain). */
-const BATCH_SIGNING_HASH_DOMAIN = 0x42;
 
 /**
  * Options for {@link buildBatchTransaction}.
@@ -517,20 +590,23 @@ export function buildSponsoredTransaction(options: BuildSponsoredTransactionOpti
 }
 
 /**
- * Compute the `batch_signing_hash` for an AA bundle transaction.
+ * Compute the sender's canonical AA bundle signing hash.
  *
- * This is the hash that the **sender** must sign (not the plain `tx.hash()`).
- * The domain separation prevents replay attacks across tx types.
+ * Matches `shell-chain/crates/core/src/transaction.rs::SignedTransaction::batch_signing_hash`:
+ * `blake3( 0x7E || tx_signing_hash || rlp(aa_bundle_for_signing) )`.
  *
- * Domain: `keccak256( 0x42 || RLP(tx) || RLP(aa_bundle_signing_fields) )`
+ * The signing-form bundle omits `paymaster_signature`, `session_auth.root_signature`,
+ * and `session_auth.session_signature`, but still commits to `paymaster_context`.
  *
  * @param tx - The outer unsigned transaction (must have `tx_type = 0x7E`).
  * @param bundle - The AA bundle that will be attached.
- * @returns 32-byte keccak256 hash as a `Uint8Array`.
+ * @param signatureType - Signature algorithm name or numeric id. Defaults to Dilithium3 (`0`).
+ * @returns 32-byte BLAKE3 batch signing hash as a `Uint8Array`.
  */
 export function hashBatchTransaction(
   tx: ShellTransactionRequest,
   bundle: AaBundle,
+  signatureType: SignatureTypeName | number = "Dilithium3",
 ): Uint8Array {
   if (tx.tx_type !== AA_BUNDLE_TX_TYPE) {
     throw new Error(
@@ -538,53 +614,59 @@ export function hashBatchTransaction(
     );
   }
 
-  // Encode inner calls for signing (matches chain's encode_for_signing).
   const innerCallsRlp = bundle.inner_calls.map((call) => [
     call.to ? bytesToHex(shellAddressToBytes(call.to)) : "0x",
     toRlpUint(call.value),
     call.data,
     toRlpUint(call.gas_limit),
   ]);
-
-  // Paymaster: 20-byte address or empty bytes.
   const paymasterField = bundle.paymaster
     ? (bytesToHex(shellAddressToBytes(bundle.paymaster)) as HexString)
     : ("0x" as HexString);
-
-  // paymaster_context: raw bytes or empty.
   const paymasterContextField: HexString =
     bundle.paymaster_context && bundle.paymaster_context.length > 0
       ? (bytesToHex(new Uint8Array(bundle.paymaster_context)) as HexString)
       : ("0x" as HexString);
-
-  const txFields = [
-    toRlpUint(tx.chain_id),
-    toRlpUint(tx.nonce),
-    tx.to ? bytesToHex(shellAddressToBytes(tx.to)) : "0x",
-    toRlpUint(tx.value),
-    tx.data,
-    toRlpUint(tx.gas_limit),
-    toRlpUint(tx.max_fee_per_gas),
-    toRlpUint(tx.max_priority_fee_per_gas),
-    toRlpAccessList(tx.access_list),
-    toRlpUint(tx.tx_type ?? AA_BUNDLE_TX_TYPE),
-    toRlpUint(tx.max_fee_per_blob_gas != null ? 1 : 0),
-    toRlpUint(tx.max_fee_per_blob_gas ?? 0),
-    (tx.blob_versioned_hashes ?? []).map((hash) => hash as HexString),
-  ] as const;
-
   const bundleSigningFields = [innerCallsRlp, paymasterField, paymasterContextField] as const;
 
-  const domainBuf = new Uint8Array([BATCH_SIGNING_HASH_DOMAIN]);
-  const txRlp = hexToBytes(toRlp(txFields));
-  const bundleRlp = hexToBytes(toRlp(bundleSigningFields));
+  return blake3(
+    concatBytes(
+      new Uint8Array([BATCH_SIGNING_HASH_DOMAIN]),
+      hashTransaction(tx, signatureType),
+      hexToBytes(toRlp(bundleSigningFields)),
+    ),
+  );
+}
 
-  const combined = new Uint8Array(domainBuf.length + txRlp.length + bundleRlp.length);
-  combined.set(domainBuf, 0);
-  combined.set(txRlp, domainBuf.length);
-  combined.set(bundleRlp, domainBuf.length + txRlp.length);
+/**
+ * Compute the paymaster authorization hash for a sponsored AA bundle.
+ *
+ * Matches `shell-chain/crates/core/src/transaction.rs::SignedTransaction::paymaster_signing_hash`:
+ * `blake3( 0x7F || from || batch_signing_hash )`.
+ *
+ * @param from - Sender address bound into the paymaster authorization.
+ * @param tx - The outer unsigned AA transaction.
+ * @param bundle - AA bundle containing a paymaster address.
+ * @param signatureType - Signature algorithm name or numeric id. Defaults to Dilithium3 (`0`).
+ * @returns 32-byte BLAKE3 paymaster hash as a `Uint8Array`.
+ */
+export function hashPaymasterTransaction(
+  from: AddressLike,
+  tx: ShellTransactionRequest,
+  bundle: AaBundle,
+  signatureType: SignatureTypeName | number = "Dilithium3",
+): Uint8Array {
+  if (!bundle.paymaster) {
+    throw new Error("hashPaymasterTransaction: bundle.paymaster must be set");
+  }
 
-  return hexToBytes(keccak256(bytesToHex(combined)));
+  return blake3(
+    concatBytes(
+      new Uint8Array([PAYMASTER_SIGNING_HASH_DOMAIN]),
+      shellAddressToBytes(from),
+      hashBatchTransaction(tx, bundle, signatureType),
+    ),
+  );
 }
 
 /**

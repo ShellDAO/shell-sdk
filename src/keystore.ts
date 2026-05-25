@@ -152,11 +152,19 @@ function hexToBytes(hex: string): Uint8Array {
  * @throws {Error} If the KDF or cipher is unsupported.
  * @throws {Error} If decryption fails (wrong password or corrupt ciphertext).
  *
+ * Call `signer.dispose()` as soon as you are done signing so the in-memory
+ * secret key copy can be zeroed. For one-shot workflows, prefer
+ * {@link withDecryptedKeystoreSigner} to decrypt, sign, and dispose in one pass.
+ *
  * @example
  * ```typescript
  * const signer = await decryptKeystore(readFileSync("key.json", "utf8"), "my-passphrase");
- * console.log(signer.getAddress()); // 0x…
- * const hash = await provider.sendTransaction(await signer.buildSignedTransaction(…));
+ * try {
+ *   const signedTx = await signer.buildSignedTransaction({ tx, includePublicKey: true });
+ *   await provider.sendTransaction(signedTx);
+ * } finally {
+ *   signer.dispose();
+ * }
  * ```
  */
 export async function decryptKeystore(
@@ -183,10 +191,36 @@ export async function decryptKeystore(
   });
   const derivedKey = hexToBytes(derivedKeyHex);
 
-  const chacha = xchacha20poly1305(derivedKey, nonce);
-  // Plaintext is sk-only; public key comes from the JSON `public_key` field.
-  const secretKey = chacha.decrypt(ciphertext);
+  try {
+    const chacha = xchacha20poly1305(derivedKey, nonce);
+    // Plaintext is sk-only; public key comes from the JSON `public_key` field.
+    const secretKey = chacha.decrypt(ciphertext);
+    try {
+      const adapter = adapterFromKeyPair(parsed.signatureType, parsed.publicKey, secretKey);
+      return new ShellSigner(parsed.signatureType, adapter);
+    } finally {
+      secretKey.fill(0);
+    }
+  } finally {
+    derivedKey.fill(0);
+  }
+}
 
-  const adapter = adapterFromKeyPair(parsed.signatureType, parsed.publicKey, secretKey);
-  return new ShellSigner(parsed.signatureType, adapter);
+/**
+ * Decrypt a keystore, run a callback, then dispose the signer in a `finally` block.
+ *
+ * This is the preferred pattern for short-lived signing operations because the
+ * decrypted secret key only lives for the duration of the callback.
+ */
+export async function withDecryptedKeystoreSigner<T>(
+  input: string | ShellEncryptedKey,
+  password: string,
+  fn: (signer: ShellSigner) => Promise<T> | T,
+): Promise<T> {
+  const signer = await decryptKeystore(input, password);
+  try {
+    return await fn(signer);
+  } finally {
+    signer.dispose();
+  }
 }

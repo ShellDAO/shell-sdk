@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.9.2] — 2026-05-25
+
+### Fixed
+- Replace legacy `keccak256(RLP(tx))` signing helpers with the shell-chain v0.23.0 canonical BLAKE3 preimages for standard transactions and AA bundles.
+- Add `hashPaymasterTransaction()` plus Rust-compatible hash vectors for AA paymaster flows.
+- Add `ShellSigner.dispose()` / `withDecryptedKeystoreSigner()` and zero decrypted secret-key buffers after keystore decryption.
+
+### Changed
+- `ShellSigner.buildSignedTransaction()` now computes the correct signing hash automatically when `txHash` is omitted.
+
 ## [0.9.1] — 2026-05-25
 
 ### Changed

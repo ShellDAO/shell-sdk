@@ -7,7 +7,6 @@ import {
   buildTransferTransaction,
   createShellProvider,
   generateMlDsa65KeyPair,
-  hashTransaction,
 } from '../dist/index.js';
 import { createJsonRpcFetchMock } from './helpers.mjs';
 
@@ -29,7 +28,6 @@ test('browser integration: dist exports work with fetch-based provider', async (
   });
   const signed = await signer.buildSignedTransaction({
     tx,
-    txHash: hashTransaction(tx),
     includePublicKey: true,
   });
   const txHash = await provider.sendTransaction(signed);
