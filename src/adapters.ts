@@ -74,10 +74,16 @@ export function generateSlhDsaKeyPair(seed?: Uint8Array): SlhDsaKeyPair {
  * ```
  */
 export class MlDsa65Adapter implements SignerAdapter {
+  private readonly _publicKey: Uint8Array;
+  private _secretKey: Uint8Array | null;
+
   constructor(
-    private readonly _publicKey: Uint8Array,
-    private readonly _secretKey: Uint8Array,
-  ) {}
+    publicKey: Uint8Array,
+    secretKey: Uint8Array,
+  ) {
+    this._publicKey = new Uint8Array(publicKey);
+    this._secretKey = new Uint8Array(secretKey);
+  }
 
   /**
    * Generate a fresh ML-DSA-65 key pair and wrap it in an adapter.
@@ -86,7 +92,11 @@ export class MlDsa65Adapter implements SignerAdapter {
    */
   static generate(seed?: Uint8Array): MlDsa65Adapter {
     const kp = generateMlDsa65KeyPair(seed);
-    return new MlDsa65Adapter(kp.publicKey, kp.secretKey);
+    try {
+      return new MlDsa65Adapter(kp.publicKey, kp.secretKey);
+    } finally {
+      kp.secretKey.fill(0);
+    }
   }
 
   /**
@@ -100,14 +110,23 @@ export class MlDsa65Adapter implements SignerAdapter {
   }
 
   /** Return the raw ML-DSA-65 public key bytes (1952 bytes). */
-  getPublicKey(): Uint8Array { return this._publicKey; }
+  getPublicKey(): Uint8Array { return new Uint8Array(this._publicKey); }
+
+  /** Zero the in-memory secret key buffer. */
+  dispose(): void {
+    this._secretKey?.fill(0);
+    this._secretKey = null;
+  }
 
   /**
    * Sign `message` with ML-DSA-65 and return the raw signature bytes.
    *
-   * @param message - The bytes to sign (typically an RLP-encoded tx hash).
+   * @param message - The bytes to sign (typically a Shell signing hash).
    */
   async sign(message: Uint8Array): Promise<Uint8Array> {
+    if (!this._secretKey) {
+      throw new Error("adapter secret key has been disposed");
+    }
     return ml_dsa65.sign(message, this._secretKey);
   }
 }
@@ -125,10 +144,16 @@ export class MlDsa65Adapter implements SignerAdapter {
  * ```
  */
 export class SlhDsaAdapter implements SignerAdapter {
+  private readonly _publicKey: Uint8Array;
+  private _secretKey: Uint8Array | null;
+
   constructor(
-    private readonly _publicKey: Uint8Array,
-    private readonly _secretKey: Uint8Array,
-  ) {}
+    publicKey: Uint8Array,
+    secretKey: Uint8Array,
+  ) {
+    this._publicKey = new Uint8Array(publicKey);
+    this._secretKey = new Uint8Array(secretKey);
+  }
 
   /**
    * Generate a fresh SLH-DSA-SHA2-256f key pair and wrap it in an adapter.
@@ -137,7 +162,11 @@ export class SlhDsaAdapter implements SignerAdapter {
    */
   static generate(seed?: Uint8Array): SlhDsaAdapter {
     const kp = generateSlhDsaKeyPair(seed);
-    return new SlhDsaAdapter(kp.publicKey, kp.secretKey);
+    try {
+      return new SlhDsaAdapter(kp.publicKey, kp.secretKey);
+    } finally {
+      kp.secretKey.fill(0);
+    }
   }
 
   /**
@@ -151,14 +180,23 @@ export class SlhDsaAdapter implements SignerAdapter {
   }
 
   /** Return the raw SLH-DSA public key bytes (64 bytes). */
-  getPublicKey(): Uint8Array { return this._publicKey; }
+  getPublicKey(): Uint8Array { return new Uint8Array(this._publicKey); }
+
+  /** Zero the in-memory secret key buffer. */
+  dispose(): void {
+    this._secretKey?.fill(0);
+    this._secretKey = null;
+  }
 
   /**
    * Sign `message` with SLH-DSA-SHA2-256f and return the raw signature bytes.
    *
-   * @param message - The bytes to sign (typically an RLP-encoded tx hash).
+   * @param message - The bytes to sign (typically a Shell signing hash).
    */
   async sign(message: Uint8Array): Promise<Uint8Array> {
+    if (!this._secretKey) {
+      throw new Error("adapter secret key has been disposed");
+    }
     return slh_dsa_sha2_256f.sign(message, this._secretKey);
   }
 }

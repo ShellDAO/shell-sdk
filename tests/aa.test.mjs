@@ -8,6 +8,7 @@ import {
   buildInnerTransfer,
   buildInnerCall,
   hashBatchTransaction,
+  hashPaymasterTransaction,
   hexBytes,
   AA_BUNDLE_TX_TYPE,
   AA_MAX_INNER_CALLS,
@@ -77,7 +78,7 @@ test('hashBatchTransaction: returns 32-byte Uint8Array', () => {
   const { tx, aa_bundle } = buildBatchTransaction({ chainId: 1, nonce: 0, innerCalls: [MINIMAL_INNER_CALL] });
   const hash = hashBatchTransaction(tx, aa_bundle);
   assert.ok(hash instanceof Uint8Array, 'result must be Uint8Array');
-  assert.equal(hash.length, 32, 'hash must be 32 bytes (keccak256)');
+  assert.equal(hash.length, 32, 'hash must be 32 bytes (BLAKE3-256)');
 });
 
 test('hashBatchTransaction: rejects non-batch tx_type', () => {
@@ -117,16 +118,30 @@ test('hashBatchTransaction: paymaster changes the hash', () => {
   assert.notEqual(h1, h2, 'paymaster must change the hash');
 });
 
-// Fixed-vector test — regenerated if chain encoding changes (these are SDK internal vectors)
-test('hashBatchTransaction: known deterministic vector (chain_id=1, nonce=0, single null-to call)', () => {
+test('hashBatchTransaction: known Shell-chain vector (chain_id=1, nonce=0, single null-to call)', () => {
   const { tx, aa_bundle } = buildBatchTransaction({
     chainId: 1,
     nonce: 0,
     innerCalls: [{ to: null, value: '0x0', data: '0x1234', gas_limit: '0x5208' }],
   });
   const hash = hexBytes(hashBatchTransaction(tx, aa_bundle));
-  // Record the actual computed value (32-byte keccak256 — deterministic across Node versions).
-  assert.match(hash, /^0x[0-9a-f]{64}$/, 'hash must be 32-byte hex');
+  assert.equal(hash, '0xb51bf0c95c8d978c3b0eabaff6ecef7781af18ccea1c879b91dc766b9c89d3b8');
+});
+
+test('hashPaymasterTransaction: known Shell-chain vector', () => {
+  const { tx, aa_bundle } = buildSponsoredTransaction({
+    chainId: 1,
+    nonce: 0,
+    innerCalls: [MINIMAL_INNER_CALL],
+    paymaster: '0x0000000000000000000000000000000000000000000000000000000000000099',
+    paymasterSignature: new Uint8Array([1]),
+  });
+  const hash = hexBytes(hashPaymasterTransaction(
+    '0x0000000000000000000000000000000000000000000000000000000000000042',
+    tx,
+    aa_bundle,
+  ));
+  assert.equal(hash, '0x683de83ea8fe62b27c5383dc1ff33d803cc497e9434a08658f923a0bc71f7637');
 });
 
 // ---------------------------------------------------------------------------

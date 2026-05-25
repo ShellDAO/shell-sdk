@@ -7,17 +7,11 @@
 
 ---
 
-> **⚠️ v0.23.0 alignment status (in progress)**
+> **v0.23.0 aligned**
 >
-> Addresses, system-contract IDs, and adapter types are aligned with shell-chain v0.23.0
-> (32-byte `0x…` BLAKE3 addresses; `algo_id` byte `Dilithium3=0`, `MlDsa65=1`, `SphincsSha2256f=2`).
->
-> The transaction signing-hash helpers (`hashTransaction`, `hashBatchTransaction`)
-> still implement the pre-v0.23.0 `keccak256(RLP(tx))` scheme. Shell-chain v0.23.0
-> nodes expect `BLAKE3(structured preimage including sig_type)` instead. A
-> follow-up release will replace these helpers and regenerate the
-> `tests/fixtures/rust-compatibility.json` vectors against the v0.23.0 chain.
-> Do not rely on the `hashTransaction*` helpers against a v0.23.0 node yet.
+> Addresses, system-contract IDs, and signing hashes now match shell-chain v0.23.0:
+> 32-byte `0x…` BLAKE3 addresses, `algo_id` byte `Dilithium3=0`, `MlDsa65=1`,
+> `SphincsSha2256f=2`, and BLAKE3-based transaction / AA signing hashes.
 
 
 ## Table of Contents
@@ -84,7 +78,7 @@ Send a SHELL transfer in ~10 lines:
 import { MlDsa65Adapter } from "shell-sdk/adapters";
 import { createShellProvider } from "shell-sdk/provider";
 import { ShellSigner } from "shell-sdk/signer";
-import { buildTransferTransaction, hashTransaction } from "shell-sdk/transactions";
+import { buildTransferTransaction } from "shell-sdk/transactions";
 import { parseEther } from "viem";
 
 const adapter = MlDsa65Adapter.generate();
@@ -95,8 +89,7 @@ const provider = createShellProvider();
 const nonce    = await provider.client.getTransactionCount({ address: from });
 
 const tx       = buildTransferTransaction({ chainId: 424242, nonce, to: "0x…", value: parseEther("1") });
-const txHash   = hashTransaction(tx);
-const signed   = await signer.buildSignedTransaction({ tx, txHash });
+const signed   = await signer.buildSignedTransaction({ tx });
 const hash     = await provider.sendTransaction(signed);
 console.log("tx hash:", hash);
 ```
@@ -454,18 +447,19 @@ const signed = buildSignedTransaction({
 
 #### `hashTransaction`
 
-RLP-encode a `ShellTransactionRequest` using the Rust node's canonical field order and return its **keccak256** hash as a `Uint8Array`. This is the value you must pass as `txHash` to `signer.buildSignedTransaction`.
+Compute the canonical shell-chain v0.23.0 signing hash as **BLAKE3** over the structured preimage:
 
-Shell Chain signs the full unsigned transaction payload in this order:
+`chain_id(8B BE) || nonce(8B BE) || to(32B|zero) || value(32B BE) || data || gas_limit(8B BE) || max_fee_per_gas(8B BE) || max_priority_fee_per_gas(8B BE) || sig_type(1B) || tx_type(1B)`
 
-`[chainId, nonce, to, value, data, gasLimit, maxFeePerGas, maxPriorityFeePerGas, accessList, txType, blobFeeFlag, maxFeePerBlobGas, blobVersionedHashes]`
+For blob transactions (`tx_type === 3`), append `max_fee_per_blob_gas(8B BE)` and each 32-byte blob hash.
 
 ```typescript
 import { buildTransferTransaction, hashTransaction } from "shell-sdk/transactions";
 
 const tx     = buildTransferTransaction({ chainId: 424242, nonce: 0, to: "0x…", value: 1n });
-const txHash = hashTransaction(tx);              // Uint8Array (32 bytes)
+const txHash = hashTransaction(tx, signer.signatureType); // Uint8Array (32 bytes)
 const signed = await signer.buildSignedTransaction({ tx, txHash });
+// Or simply: await signer.buildSignedTransaction({ tx })
 ```
 
 ---
@@ -594,9 +588,8 @@ const tx = buildTransferTransaction({
   value: parseEther("0.5"),
 });
 
-// 5. RLP-encode and hash for signing
-//    (Shell uses the same EIP-1559 signing hash as Ethereum)
-const txHash = hashTransaction(tx);
+// 5. Compute the canonical BLAKE3 signing hash
+const txHash = hashTransaction(tx, signer.signatureType);
 
 // 6. Sign and build the complete signed transaction
 //    includePublicKey=true is required for accounts that haven't been seen on-chain yet
@@ -631,7 +624,7 @@ const tx = buildTransferTransaction({
   value: parseEther("10"),
 });
 
-const txHash = hashTransaction(tx);
+const txHash = hashTransaction(tx, signer.signatureType);
 const signed = await signer.buildSignedTransaction({ tx, txHash });
 const hash   = await provider.sendTransaction(signed);
 console.log(hash);
@@ -661,7 +654,7 @@ async function submitTransfer({ signer, to, value, rpcHttpUrl }: {
     to,
     value,
   });
-  const txHash = hashTransaction(tx);
+  const txHash = hashTransaction(tx, signer.signatureType);
   const signed = await signer.buildSignedTransaction({ tx, txHash, includePublicKey: nonce === 0 });
 
   return provider.sendTransaction(signed);
@@ -717,7 +710,7 @@ const tx = buildRotateKeyTransaction({
   algorithmId: newSigner.algorithmId, // 1 for MlDsa65
 });
 
-const txHash = hashTransaction(tx);
+const txHash = hashTransaction(tx, currentSigner.signatureType);
 
 // Sign with the CURRENT key
 const signed = await currentSigner.buildSignedTransaction({ tx, txHash });

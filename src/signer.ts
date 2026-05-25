@@ -15,6 +15,8 @@ import { deriveShellAddressFromPublicKey, normalizeShellAddress } from "./addres
 import {
   buildSignature,
   buildSignedTransaction,
+  hashBatchTransaction,
+  hashTransaction,
   type BuildSignedTransactionOptions,
 } from "./transactions.js";
 import type { SignedShellTransaction, SignatureTypeName } from "./types.js";
@@ -67,13 +69,16 @@ export interface SignerAdapter {
   /**
    * Sign a raw message (the transaction hash bytes) and return the signature.
    *
-   * @param message - The bytes to sign (typically an RLP-encoded tx hash).
+   * @param message - The bytes to sign (typically a Shell signing hash).
    * @returns The raw signature bytes.
    */
   sign(message: Uint8Array): Promise<Uint8Array>;
 
   /** Return the raw public key bytes for this signer. */
   getPublicKey(): Uint8Array;
+
+  /** Zero in-memory secret material when the signer is no longer needed. */
+  dispose?(): void;
 }
 
 /**
@@ -98,6 +103,7 @@ export class ShellSigner {
   readonly signatureType: SignatureTypeName;
   /** The underlying adapter that performs the actual cryptographic operations. */
   readonly adapter: SignerAdapter;
+  private disposed = false;
 
   /**
    * @param signatureType - The PQ algorithm name.
@@ -122,6 +128,15 @@ export class ShellSigner {
     return this.adapter.getPublicKey();
   }
 
+  /** Zero in-memory secret material held by the underlying adapter. */
+  dispose(): void {
+    if (this.disposed) {
+      return;
+    }
+    this.disposed = true;
+    this.adapter.dispose?.();
+  }
+
   /**
    * Derive and return the `0x…` hex address for this signer.
    *
@@ -138,6 +153,9 @@ export class ShellSigner {
    * @returns Raw signature bytes.
    */
   async sign(message: Uint8Array): Promise<Uint8Array> {
+    if (this.disposed) {
+      throw new Error("signer has been disposed");
+    }
     return this.adapter.sign(message);
   }
 
@@ -145,7 +163,8 @@ export class ShellSigner {
    * Sign a transaction hash and assemble a complete {@link SignedShellTransaction}.
    *
    * @param options.tx - The unsigned `ShellTransactionRequest` to embed.
-   * @param options.txHash - The bytes to sign (RLP-encoded EIP-1559 signing hash).
+   * @param options.txHash - Optional precomputed Shell signing hash. When omitted,
+   *   the SDK derives the correct BLAKE3 transaction or AA bundle hash automatically.
    * @param options.includePublicKey - When `true`, embeds `sender_pubkey` in the
    *   result. Required for accounts that have not yet appeared on-chain.
    * @returns A fully-signed transaction ready for {@link ShellProvider.sendTransaction}.
@@ -162,12 +181,20 @@ export class ShellSigner {
    */
   async buildSignedTransaction(
     options: Omit<BuildSignedTransactionOptions, "from" | "signature" | "signatureType"> & {
-      txHash: Uint8Array;
+      txHash?: Uint8Array;
       includePublicKey?: boolean;
       aaBundle?: import("./types.js").AaBundle;
     },
   ): Promise<SignedShellTransaction> {
-    const signature = await this.sign(options.txHash);
+    if (options.tx.tx_type === 0x7e && !options.aaBundle) {
+      throw new Error("aaBundle is required when signing AA bundle transactions");
+    }
+
+    const txHash = options.txHash
+      ?? (options.aaBundle
+        ? hashBatchTransaction(options.tx, options.aaBundle, this.signatureType)
+        : hashTransaction(options.tx, this.signatureType));
+    const signature = await this.sign(txHash);
 
     return buildSignedTransaction({
       from: normalizeShellAddress(this.getAddress()),
