@@ -137,3 +137,9 @@ export type {
   SignedShellTransaction,
   SignatureTypeName,
 } from "./types.js";
+export {
+  validateAddress,
+  validateNonNegativeBigInt,
+  validateNonNegativeInteger,
+  validateRpcUrl,
+} from "./validation.js";

@@ -41,6 +41,7 @@ import {
   encodeSetValidationCodeCalldata,
 } from "./system-contracts.js";
 import { shellAddressToBytes } from "./address.js";
+import { validateAddress, validateNonNegativeBigInt, validateNonNegativeInteger } from "./validation.js";
 
 /** Default transaction type: `2` (Shell PQTx format; encodes EIP-1559 fee fields, which are scaffolded and not yet enforced on-chain). */
 export const DEFAULT_TX_TYPE = 2;
@@ -199,6 +200,29 @@ function toRlpAccessList(
  * @returns A `ShellTransactionRequest` ready for signing.
  */
 export function buildTransaction(options: BuildTransactionOptions): ShellTransactionRequest {
+  // Validate inputs
+  validateNonNegativeInteger(options.chainId, "chainId");
+  validateNonNegativeInteger(options.nonce, "nonce");
+  validateAddress(options.to, "to");
+  if (options.value !== undefined) {
+    validateNonNegativeBigInt(options.value, "value");
+  }
+  if (options.gasLimit !== undefined) {
+    validateNonNegativeInteger(options.gasLimit, "gasLimit");
+  }
+  if (options.maxFeePerGas !== undefined) {
+    validateNonNegativeInteger(options.maxFeePerGas, "maxFeePerGas");
+  }
+  if (options.maxPriorityFeePerGas !== undefined) {
+    validateNonNegativeInteger(options.maxPriorityFeePerGas, "maxPriorityFeePerGas");
+  }
+  if (options.txType !== undefined) {
+    validateNonNegativeInteger(options.txType, "txType");
+  }
+  if (options.maxFeePerBlobGas !== undefined && options.maxFeePerBlobGas !== null) {
+    validateNonNegativeInteger(options.maxFeePerBlobGas, "maxFeePerBlobGas");
+  }
+
   return {
     chain_id: options.chainId,
     nonce: options.nonce,

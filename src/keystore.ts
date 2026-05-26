@@ -180,29 +180,37 @@ export async function decryptKeystore(
   const nonce = hexToBytes(ek.cipher_params.nonce);
   const ciphertext = hexToBytes(ek.ciphertext);
 
-  const derivedKeyHex = await argon2id({
-    password,
-    salt,
-    iterations: ek.kdf_params.t_cost,
-    memorySize: ek.kdf_params.m_cost,
-    parallelism: ek.kdf_params.p_cost,
-    hashLength: 32,
-    outputType: "hex",
-  });
-  const derivedKey = hexToBytes(derivedKeyHex);
+  // Convert password to Uint8Array for secure erasure
+  const passwordBytes = new TextEncoder().encode(password);
 
   try {
-    const chacha = xchacha20poly1305(derivedKey, nonce);
-    // Plaintext is sk-only; public key comes from the JSON `public_key` field.
-    const secretKey = chacha.decrypt(ciphertext);
+    const derivedKeyHex = await argon2id({
+      password,
+      salt,
+      iterations: ek.kdf_params.t_cost,
+      memorySize: ek.kdf_params.m_cost,
+      parallelism: ek.kdf_params.p_cost,
+      hashLength: 32,
+      outputType: "hex",
+    });
+    const derivedKey = hexToBytes(derivedKeyHex);
+
     try {
-      const adapter = adapterFromKeyPair(parsed.signatureType, parsed.publicKey, secretKey);
-      return new ShellSigner(parsed.signatureType, adapter);
+      const chacha = xchacha20poly1305(derivedKey, nonce);
+      // Plaintext is sk-only; public key comes from the JSON `public_key` field.
+      const secretKey = chacha.decrypt(ciphertext);
+      try {
+        const adapter = adapterFromKeyPair(parsed.signatureType, parsed.publicKey, secretKey);
+        return new ShellSigner(parsed.signatureType, adapter);
+      } finally {
+        secretKey.fill(0);
+      }
     } finally {
-      secretKey.fill(0);
+      derivedKey.fill(0);
     }
   } finally {
-    derivedKey.fill(0);
+    // Clear the password from memory
+    passwordBytes.fill(0);
   }
 }
 
