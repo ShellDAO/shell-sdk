@@ -37,6 +37,7 @@ import type {
   ShellWitnessRootResult,
   SignedShellTransaction,
 } from "./types.js";
+import { validateRpcUrl } from "./validation.js";
 
 /**
  * Pre-configured viem chain definition for Shell Devnet.
@@ -335,6 +336,8 @@ export function createShellPublicClient(
   const chain = options.chain ?? shellDevnet;
   const rpcHttpUrl = options.rpcHttpUrl ?? chain.rpcUrls.default.http[0];
 
+  validateRpcUrl(rpcHttpUrl);
+
   return createPublicClient({
     chain,
     transport: http(rpcHttpUrl),
@@ -364,6 +367,8 @@ export function createShellWsClient(options: CreateShellPublicClientOptions = {}
     throw new Error("chain does not define a default WebSocket RPC URL");
   }
 
+  validateRpcUrl(rpcWsUrl);
+
   return createPublicClient({
     chain,
     transport: webSocket(rpcWsUrl),
@@ -390,5 +395,8 @@ export function createShellProvider(options: CreateShellPublicClientOptions = {}
   const client = createShellPublicClient(options);
   const chain = options.chain ?? shellDevnet;
   const rpcHttpUrl = options.rpcHttpUrl ?? chain.rpcUrls.default.http[0];
+
+  validateRpcUrl(rpcHttpUrl);
+
   return new ShellProvider(client, rpcHttpUrl);
 }
