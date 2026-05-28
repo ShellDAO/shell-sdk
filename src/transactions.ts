@@ -25,8 +25,17 @@ import type {
 import { AA_BUNDLE_TX_TYPE, AA_MAX_INNER_CALLS } from "./types.js";
 export { AA_BUNDLE_TX_TYPE, AA_MAX_INNER_CALLS };
 
-const BATCH_SIGNING_HASH_DOMAIN = AA_BUNDLE_TX_TYPE;
-const PAYMASTER_SIGNING_HASH_DOMAIN = 0x7f;
+// Domain separator for batch (AA bundle) signing hash (matches node PQTX_BUNDLE_V1\0\0).
+const BATCH_SIGNING_HASH_DOMAIN = new Uint8Array([
+  0x50, 0x51, 0x54, 0x58, 0x5f, 0x42, 0x55, 0x4e,
+  0x44, 0x4c, 0x45, 0x5f, 0x56, 0x31, 0x00, 0x00,
+]); // b"PQTX_BUNDLE_V1\0\0"
+
+// Domain separator for paymaster signing hash (matches node PQTX_PAYMASTER_V).
+const PAYMASTER_SIGNING_HASH_DOMAIN = new Uint8Array([
+  0x50, 0x51, 0x54, 0x58, 0x5f, 0x50, 0x41, 0x59,
+  0x4d, 0x41, 0x53, 0x54, 0x45, 0x52, 0x5f, 0x56,
+]); // b"PQTX_PAYMASTER_V"
 
 const SIGNATURE_TYPE_IDS: Record<SignatureTypeName, number> = {
   "ML-DSA-65": 1,
@@ -430,7 +439,7 @@ export function hexBytes(bytes: Uint8Array): HexString {
  * Shell-chain v0.23.0 signs `blake3` over the structured preimage from
  * `shell-chain/crates/core/src/transaction.rs::Transaction::signing_hash`:
  *
- * `chain_id(8B BE) || nonce(8B BE) || to(32B|zero) || value(32B BE) || data ||`
+ * `PQTX_SIGNING_V1\0(16B) || chain_id(8B BE) || nonce(8B BE) || to(32B|zero) || value(32B BE) || data ||`
  * `gas_limit(8B BE) || max_fee_per_gas(8B BE) || max_priority_fee_per_gas(8B BE) ||`
  * `sig_type(1B) || tx_type(1B)`
  *
@@ -444,12 +453,20 @@ export function hexBytes(bytes: Uint8Array): HexString {
  * @param signatureType - Signature algorithm name or numeric id. Defaults to Dilithium3 (`0`).
  * @returns 32-byte BLAKE3 signing hash as a `Uint8Array`.
  */
+
+/** Domain separator prepended to every transaction signing preimage (matches node constant). */
+const PQTX_SIGNING_DOMAIN = new Uint8Array([
+  0x50, 0x51, 0x54, 0x58, 0x5f, 0x53, 0x49, 0x47,
+  0x4e, 0x49, 0x4e, 0x47, 0x5f, 0x56, 0x31, 0x00,
+]); // b"PQTX_SIGNING_V1\0"
+
 export function hashTransaction(
   tx: ShellTransactionRequest,
   signatureType: SignatureTypeName | number = "Dilithium3",
 ): Uint8Array {
   const txType = tx.tx_type ?? DEFAULT_TX_TYPE;
   const preimageParts = [
+    PQTX_SIGNING_DOMAIN,
     encodeU64Be(tx.chain_id, "chain_id"),
     encodeU64Be(tx.nonce, "nonce"),
     tx.to ? shellAddressToBytes(tx.to) : new Uint8Array(32),
@@ -617,7 +634,7 @@ export function buildSponsoredTransaction(options: BuildSponsoredTransactionOpti
  * Compute the sender's canonical AA bundle signing hash.
  *
  * Matches `shell-chain/crates/core/src/transaction.rs::SignedTransaction::batch_signing_hash`:
- * `blake3( 0x7E || tx_signing_hash || rlp(aa_bundle_for_signing) )`.
+ * `blake3( PQTX_BUNDLE_V1\0\0(16B) || tx_signing_hash || rlp(aa_bundle_for_signing) )`.
  *
  * The signing-form bundle omits `paymaster_signature`, `session_auth.root_signature`,
  * and `session_auth.session_signature`, but still commits to `paymaster_context`.
@@ -655,7 +672,7 @@ export function hashBatchTransaction(
 
   return blake3(
     concatBytes(
-      new Uint8Array([BATCH_SIGNING_HASH_DOMAIN]),
+      BATCH_SIGNING_HASH_DOMAIN,
       hashTransaction(tx, signatureType),
       hexToBytes(toRlp(bundleSigningFields)),
     ),
@@ -666,7 +683,7 @@ export function hashBatchTransaction(
  * Compute the paymaster authorization hash for a sponsored AA bundle.
  *
  * Matches `shell-chain/crates/core/src/transaction.rs::SignedTransaction::paymaster_signing_hash`:
- * `blake3( 0x7F || from || batch_signing_hash )`.
+ * `blake3( PQTX_PAYMASTER_V(16B) || from || batch_signing_hash )`.
  *
  * @param from - Sender address bound into the paymaster authorization.
  * @param tx - The outer unsigned AA transaction.
@@ -686,7 +703,7 @@ export function hashPaymasterTransaction(
 
   return blake3(
     concatBytes(
-      new Uint8Array([PAYMASTER_SIGNING_HASH_DOMAIN]),
+      PAYMASTER_SIGNING_HASH_DOMAIN,
       shellAddressToBytes(from),
       hashBatchTransaction(tx, bundle, signatureType),
     ),
