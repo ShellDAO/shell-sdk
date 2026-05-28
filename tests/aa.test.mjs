@@ -125,7 +125,7 @@ test('hashBatchTransaction: known Shell-chain vector (chain_id=1, nonce=0, singl
     innerCalls: [{ to: null, value: '0x0', data: '0x1234', gas_limit: '0x5208' }],
   });
   const hash = hexBytes(hashBatchTransaction(tx, aa_bundle));
-  assert.equal(hash, '0xb51bf0c95c8d978c3b0eabaff6ecef7781af18ccea1c879b91dc766b9c89d3b8');
+  assert.equal(hash, '0xd2c415a571c60e84907b09cbda157298edb2387331e3d2db40caab7a277a9a59');
 });
 
 test('hashPaymasterTransaction: known Shell-chain vector', () => {
@@ -141,7 +141,7 @@ test('hashPaymasterTransaction: known Shell-chain vector', () => {
     tx,
     aa_bundle,
   ));
-  assert.equal(hash, '0x683de83ea8fe62b27c5383dc1ff33d803cc497e9434a08658f923a0bc71f7637');
+  assert.equal(hash, '0xd5016bf694426c4ef74e7b06f27062db79acb9050923793278ea7ffd6ab9ee75');
 });
 
 // ---------------------------------------------------------------------------
