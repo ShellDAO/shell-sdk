@@ -86,17 +86,52 @@ export function validateRpcUrl(urlString: string): void {
     throw new Error(`Insecure RPC URL: ${isHttp ? "http" : "ws"} only allowed for localhost`);
   }
 
-  // Check for private IP ranges
-  if (!isLocal && isPrivateIp(hostname)) {
+  // Check for private IP ranges (IPv4 and IPv6)
+  if (!isLocal && (isPrivateIp(hostname) || isPrivateIpv6(hostname))) {
     throw new Error(`RPC URL cannot point to private IP range: ${hostname}`);
   }
 }
 
 /**
- * Check if a hostname is in a private IP range.
+ * Check if a hostname is in a private IPv6 range.
+ *
+ * Covers: loopback (::1), link-local (fe80::/10), unique-local (fc00::/7),
+ * and IPv4-mapped addresses (::ffff:x.x.x.x) whose IPv4 part is private.
+ *
+ * @param hostname - The raw hostname string (brackets already stripped by URL).
+ * @returns true if the hostname is a private or link-local IPv6 address.
+ */
+function isPrivateIpv6(hostname: string): boolean {
+  // url.hostname retains brackets for IPv6, e.g. [fe80::1]; strip them.
+  const stripped = hostname.startsWith("[") && hostname.endsWith("]")
+    ? hostname.slice(1, -1)
+    : hostname;
+  if (!stripped.includes(":")) return false;
+  const lower = stripped.toLowerCase();
+
+  // Loopback
+  if (lower === "::1") return true;
+
+  // Link-local fe80::/10 covers fe80:: – febf:: (second byte 0x80–0xBF)
+  if (/^fe[89ab][0-9a-f]:/i.test(lower)) return true;
+
+  // Unique-local fc00::/7: first byte is 0xfc or 0xfd
+  if (/^f[cd][0-9a-f]{2}:/i.test(lower)) return true;
+
+  // IPv4-mapped ::ffff:x.x.x.x — Node.js normalises to hex groups (e.g.
+  // ::ffff:a9fe:a9fe for 169.254.169.254).  Block all IPv4-mapped addresses;
+  // a private IPv4 address expressed this way bypasses the IPv4 checker.
+  if (lower.startsWith("::ffff:")) return true;
+
+  return false;
+}
+
+
+/**
+ * Check if a hostname is in a private IPv4 range.
  *
  * @param hostname - The hostname to check.
- * @returns true if the hostname is a private IP address.
+ * @returns true if the hostname is a private IPv4 address.
  */
 function isPrivateIp(hostname: string): boolean {
   // Try to resolve as IP address
@@ -124,6 +159,13 @@ function isPrivateIp(hostname: string): boolean {
 
   // 0.0.0.0/8
   if (parts[0] === 0) return true;
+
+  // 169.254.0.0/16 (link-local — includes the cloud metadata endpoint
+  // 169.254.169.254, the most common SSRF target)
+  if (parts[0] === 169 && parts[1] === 254) return true;
+
+  // 100.64.0.0/10 (CGNAT / shared address space, RFC 6598)
+  if (parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127) return true;
 
   // 255.255.255.255 (broadcast)
   if (parts[0] === 255 && parts[1] === 255 && parts[2] === 255 && parts[3] === 255) return true;

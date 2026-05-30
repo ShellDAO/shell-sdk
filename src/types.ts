@@ -54,9 +54,9 @@ export interface ShellTransactionRequest {
 /**
  * The name of a supported post-quantum signature algorithm.
  *
- * - `"ML-DSA-65"` — NIST FIPS 204 ML-DSA-65 (canonical name, algorithm ID 0); preferred.
- * - `"Dilithium3"` — Compatibility alias for `"ML-DSA-65"` (same wire format, algorithm ID 0).
- * - `"MlDsa65"` — Legacy camelCase alias for `"ML-DSA-65"` (algorithm ID 0); still accepted.
+ * - `"ML-DSA-65"` — NIST FIPS 204 ML-DSA-65 (canonical name, algorithm ID 1); preferred.
+ * - `"Dilithium3"` — Round-3 Dilithium compatibility scheme (algorithm ID 0).
+ * - `"MlDsa65"` — Legacy camelCase alias for `"ML-DSA-65"` (algorithm ID 1); still accepted.
  * - `"SphincsSha2256f"` — NIST FIPS 205 SLH-DSA-SHA2-256f (algorithm ID 2).
  */
 export type SignatureTypeName = "ML-DSA-65" | "Dilithium3" | "MlDsa65" | "SphincsSha2256f";
@@ -173,7 +173,7 @@ export const AA_SESSION_KEY_GAS_SURCHARGE = 20_000;
  * ## Spec (AA_PHASE2_SPEC.md §4)
  *
  * 1. `session_pubkey` is authorized by the root key's `root_signature` over
- *    `auth_hash = blake3(0x81 || session_pubkey || target(20B) || value_cap(32B BE) || expiry_block(8B BE) || chain_id(8B BE))`.
+ *    `auth_hash = blake3(PQTX_SESSION_V1\0 (16B) || session_pubkey || target(32B|zero) || value_cap(32B BE) || expiry_block(8B BE) || chain_id(8B BE))`.
  * 2. The transaction is signed by `session_pubkey` via `session_signature`.
  * 3. `expiry_block` must be > current block at validation time.
  * 4. Σ(inner_call.value) ≤ `value_cap`.
@@ -183,7 +183,7 @@ export const AA_SESSION_KEY_GAS_SURCHARGE = 20_000;
  * ```typescript
  * const sessionAuth: SessionAuth = {
  *   session_pubkey: Array.from(sessionPubkeyBytes),
- *   session_algo: 0, // ML-DSA-65
+ *   session_algo: 1, // ML-DSA-65
  *   target: null,
  *   value_cap: "0xde0b6b3a7640000",
  *   expiry_block: 500,
@@ -195,7 +195,7 @@ export const AA_SESSION_KEY_GAS_SURCHARGE = 20_000;
 export interface SessionAuth {
   /** Raw bytes of the session public key. */
   session_pubkey: number[];
-  /** Algorithm ID of the session key (Dilithium3/ML-DSA-65 = 0, SphincsSha2256f = 2). */
+  /** Algorithm ID of the session key (Dilithium3 = 0, ML-DSA-65 = 1, SphincsSha2256f = 2). */
   session_algo: number;
   /** If set, every inner call in the bundle must target this address. */
   target?: AddressLike | null;
@@ -205,7 +205,7 @@ export interface SessionAuth {
   expiry_block: number;
   /**
    * Root account's PQ signature over the session key authorization hash.
-   * `auth_hash = blake3(0x81 || session_pubkey || target || value_cap || expiry_block || chain_id)`.
+   * `auth_hash = blake3(PQTX_SESSION_V1\0 (16B) || session_pubkey || target(32B|zero) || value_cap || expiry_block || chain_id)`.
    */
   root_signature: number[];
   /** Session key's PQ signature over the tx `sender_signing_hash()`. */

@@ -180,20 +180,23 @@ export async function decryptKeystore(
   const nonce = hexToBytes(ek.cipher_params.nonce);
   const ciphertext = hexToBytes(ek.ciphertext);
 
-  // Convert password to Uint8Array for secure erasure
+  // Convert password to Uint8Array so the sensitive bytes can be zeroed after
+  // use. (The original immutable string cannot be wiped, but we avoid keeping a
+  // mutable copy alive and feed the byte view directly into the KDF.)
   const passwordBytes = new TextEncoder().encode(password);
 
   try {
-    const derivedKeyHex = await argon2id({
-      password,
+    // Derive as binary (not hex) so the key material exists only as a clearable
+    // Uint8Array and never as an immutable hex string.
+    const derivedKey = await argon2id({
+      password: passwordBytes,
       salt,
       iterations: ek.kdf_params.t_cost,
       memorySize: ek.kdf_params.m_cost,
       parallelism: ek.kdf_params.p_cost,
       hashLength: 32,
-      outputType: "hex",
+      outputType: "binary",
     });
-    const derivedKey = hexToBytes(derivedKeyHex);
 
     try {
       const chacha = xchacha20poly1305(derivedKey, nonce);
