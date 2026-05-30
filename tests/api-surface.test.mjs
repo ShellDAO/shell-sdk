@@ -98,3 +98,38 @@ test('ShellRpcTransaction allows null decodedInput for non-settlement txs', () =
   assert.equal(transferTx.decodedInput, null);
 });
 
+
+// ---------------------------------------------------------------------------
+// validateRpcUrl — SSRF guard (IPv4 + IPv6)
+// ---------------------------------------------------------------------------
+
+test('validateRpcUrl accepts valid https URLs', () => {
+  assert.doesNotThrow(() => root.validateRpcUrl('https://mainnet.shell.org'));
+  assert.doesNotThrow(() => root.validateRpcUrl('https://rpc.example.com:8545'));
+  assert.doesNotThrow(() => root.validateRpcUrl('wss://rpc.example.com:8547'));
+});
+
+test('validateRpcUrl accepts http/ws for localhost', () => {
+  assert.doesNotThrow(() => root.validateRpcUrl('http://localhost:8545'));
+  assert.doesNotThrow(() => root.validateRpcUrl('http://127.0.0.1:8545'));
+  assert.doesNotThrow(() => root.validateRpcUrl('ws://localhost:8547'));
+  assert.doesNotThrow(() => root.validateRpcUrl('http://[::1]:8545'));
+});
+
+test('validateRpcUrl blocks IPv4 private ranges', () => {
+  assert.throws(() => root.validateRpcUrl('https://10.0.0.1:8545'),    /private IP/);
+  assert.throws(() => root.validateRpcUrl('https://172.16.0.1:8545'),  /private IP/);
+  assert.throws(() => root.validateRpcUrl('https://192.168.1.1:8545'), /private IP/);
+  assert.throws(() => root.validateRpcUrl('https://169.254.169.254'),  /private IP/);
+});
+
+test('validateRpcUrl blocks IPv6 link-local and unique-local addresses', () => {
+  // Link-local fe80::/10
+  assert.throws(() => root.validateRpcUrl('https://[fe80::1]:8545'),   /private IP/);
+  assert.throws(() => root.validateRpcUrl('https://[fe80::dead:beef]:8545'), /private IP/);
+  // Unique-local fc00::/7
+  assert.throws(() => root.validateRpcUrl('https://[fc00::1]:8545'),   /private IP/);
+  assert.throws(() => root.validateRpcUrl('https://[fd00::1]:8545'),   /private IP/);
+  // IPv4-mapped link-local
+  assert.throws(() => root.validateRpcUrl('https://[::ffff:169.254.169.254]'), /private IP/);
+});
