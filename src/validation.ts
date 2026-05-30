@@ -125,6 +125,13 @@ function isPrivateIp(hostname: string): boolean {
   // 0.0.0.0/8
   if (parts[0] === 0) return true;
 
+  // 169.254.0.0/16 (link-local — includes the cloud metadata endpoint
+  // 169.254.169.254, the most common SSRF target)
+  if (parts[0] === 169 && parts[1] === 254) return true;
+
+  // 100.64.0.0/10 (CGNAT / shared address space, RFC 6598)
+  if (parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127) return true;
+
   // 255.255.255.255 (broadcast)
   if (parts[0] === 255 && parts[1] === 255 && parts[2] === 255 && parts[3] === 255) return true;
 
