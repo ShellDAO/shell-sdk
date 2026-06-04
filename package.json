@@ -42,6 +42,10 @@
     "./types": {
       "types": "./dist/types.d.ts",
       "import": "./dist/types.js"
+    },
+    "./hdwallet": {
+      "types": "./dist/hdwallet.d.ts",
+      "import": "./dist/hdwallet.js"
     }
   },
   "files": [
