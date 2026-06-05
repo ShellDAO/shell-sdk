@@ -134,7 +134,10 @@ export function mnemonicToSeed(mnemonic: string, passphrase = ""): Uint8Array {
     .join(" ");
   const mnemonicBytes = new TextEncoder().encode(normalized);
   const saltBytes = new TextEncoder().encode("mnemonic" + passphrase);
-  return pbkdf2(sha512, mnemonicBytes, saltBytes, { c: 2048, dkLen: 64 });
+  const seed = pbkdf2(sha512, mnemonicBytes, saltBytes, { c: 2048, dkLen: 64 });
+  mnemonicBytes.fill(0);
+  saltBytes.fill(0);
+  return seed;
 }
 
 // ── HD tree ───────────────────────────────────────────────────────────────────
