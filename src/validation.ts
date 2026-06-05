@@ -29,8 +29,8 @@ export function validateNonNegativeBigInt(value: bigint, fieldName: string): voi
  * @throws {Error} If the value is not a non-negative integer.
  */
 export function validateNonNegativeInteger(value: number, fieldName: string): void {
-  if (!Number.isInteger(value) || value < 0) {
-    throw new Error(`${fieldName} must be a non-negative integer, got ${value}`);
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${fieldName} must be a non-negative safe integer (≤ 2^53-1), got ${value}`);
   }
 }
 
