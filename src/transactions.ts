@@ -69,7 +69,7 @@ export const DEFAULT_MAX_PRIORITY_FEE_PER_GAS = 100_000_000;
 
 /** Options accepted by {@link buildTransaction}. */
 export interface BuildTransactionOptions {
-  /** EIP-155 chain ID (Shell Chain). Devnet = 424242. */
+  /** EIP-155 chain ID (Shell Chain). Default devnet = 1337. */
   chainId: number;
   /** Sender account nonce. */
   nonce: number;
@@ -131,7 +131,7 @@ function toRlpUint(value: number | bigint | string): HexString {
 
 function signatureTypeToId(signatureType: SignatureTypeName | number): number {
   if (typeof signatureType === "number") {
-    if (!Number.isInteger(signatureType) || signatureType < 0 || signatureType > 255) {
+    if (!Number.isSafeInteger(signatureType) || signatureType < 0 || signatureType > 255) {
       throw new RangeError(`signatureType id must be a byte, got: ${signatureType}`);
     }
     return signatureType;

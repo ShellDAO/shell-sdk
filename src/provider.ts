@@ -40,15 +40,16 @@ import type {
 import { validateRpcUrl } from "./validation.js";
 
 /**
- * Pre-configured viem chain definition for Shell Devnet.
+ * Pre-configured viem chain definition for Shell local dev / testnet.
  *
- * - Chain ID: `424242`
+ * - Chain ID: `1337` (shell-chain default — override via `chain` option for
+ *   other deployments)
  * - HTTP RPC: `http://127.0.0.1:8545`
  * - WebSocket RPC: `ws://127.0.0.1:8546`
  * - Native currency: SHELL (18 decimals)
  */
 export const shellDevnet = defineChain({
-  id: 424242,
+  id: 1337,
   name: "Shell Devnet",
   nativeCurrency: {
     decimals: 18,
