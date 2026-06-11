@@ -54,6 +54,11 @@ export const ALGO_MLDSA65 = 1;
 /** Algorithm path level value for SLH-DSA-SHA2-256f (raw, applied as hardened). */
 export const ALGO_SLH_DSA = 2;
 
+/** AA Phase 2 session-key account level index (raw, applied as hardened). Path: `m/1'/1'/k'`. */
+export const HD_SESSION_ACCOUNT = 1;
+/** AA Phase 2 session-key subtree level index (raw, applied as hardened). Path: `m/1'/1'/k'`. */
+export const HD_SESSION_SUBTREE = 1;
+
 // ── Expected key sizes (NORMATIVE) ───────────────────────────────────────────
 
 /** Expected ML-DSA-65 public key length in bytes (FIPS 204). */
@@ -273,6 +278,60 @@ export function deriveAccount(
 ): HdAccount {
   const algoPathValue = algo === "ml-dsa-65" ? ALGO_MLDSA65 : ALGO_SLH_DSA;
   const pathComponents = [HD_PURPOSE, HD_COIN_TYPE, algoPathValue, accountIndex, changeIndex, addressIndex];
+  const path = formatPath(pathComponents);
+
+  const master = masterNodeFromSeed(seed512);
+  const leaf = deriveAtPath(master, pathComponents);
+
+  if (algo === "ml-dsa-65") {
+    return deriveMlDsa65Account(leaf, path);
+  } else {
+    return deriveSlhDsaAccount(leaf, path);
+  }
+}
+
+/**
+ * Derive an AA Phase 2 session key from a BIP-39 seed.
+ *
+ * Path: `m/1'/1'/k'` (all hardened), where k = `sessionIndex`.
+ *
+ * Session keys are time-bounded delegated signing keys used in AA bundles.
+ * They are intentionally separated from the primary account key tree
+ * (`m/9000'/8888'/...`) to prevent namespace collisions.
+ *
+ * ## Key Space
+ * - `m/1'/1'/0'` — first session key
+ * - `m/1'/1'/1'` — second session key
+ * - Up to 2^31 session keys per seed
+ *
+ * ## Guarantees
+ * - **Deterministic**: same `(seed512, algo, sessionIndex)` always yields the same key pair
+ * - **Isolated**: cannot be confused with primary account keys
+ * - **Cross-algorithm safe**: different `algo` values produce different keys at the same index
+ *
+ * @param seed512 - 64-byte seed (from {@link mnemonicToSeed}).
+ * @param algo - Key algorithm: `"ml-dsa-65"` or `"slh-dsa-sha2-256f"`.
+ * @param sessionIndex - Session key index (0-based; up to 2^31-1).
+ * @returns {@link HdAccount} for the session key.
+ *
+ * @example
+ * ```typescript
+ * const seed = mnemonicToSeed(mnemonic);
+ * const session0 = deriveSessionKey(seed, "ml-dsa-65", 0);
+ * // session0.path === "m/1'/1'/0'"
+ * const session1 = deriveSessionKey(seed, "ml-dsa-65", 1);
+ * // session0.publicKey !== session1.publicKey
+ * ```
+ */
+export function deriveSessionKey(
+  seed512: Uint8Array,
+  algo: HdAlgo,
+  sessionIndex: number,
+): HdAccount {
+  if (!Number.isInteger(sessionIndex) || sessionIndex < 0 || sessionIndex >= HARDENED_OFFSET) {
+    throw new Error(`sessionIndex must be a non-negative integer < 2^31, got ${sessionIndex}`);
+  }
+  const pathComponents = [HD_SESSION_ACCOUNT, HD_SESSION_SUBTREE, sessionIndex];
   const path = formatPath(pathComponents);
 
   const master = masterNodeFromSeed(seed512);
