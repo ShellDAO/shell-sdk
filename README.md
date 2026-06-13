@@ -7,7 +7,7 @@
 
 ---
 
-> **v0.24.2 aligned**
+> **v0.24.3 aligned**
 >
 > Addresses, system-contract IDs, and signing hashes match shell-chain v0.24.x:
 > 32-byte `0x…` BLAKE3 addresses, `algo_id` byte `Dilithium3=0`, `MlDsa65=1`,
