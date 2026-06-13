@@ -632,6 +632,50 @@ console.log(hash);
 
 ---
 
+### SG3 smart contract + PQVM full flow (source → compile → deploy → write → read)
+
+The SDK includes an SG3 end-to-end test for contract execution on PQVM:
+
+1. Compile `contracts/PqvmCounter.sol` with `solc`
+2. Deploy contract with SDK signer + `shell_sendTransaction`
+3. Execute state-changing calls (`setNumber`, `increment`)
+4. Verify reads via `eth_call` (`getNumber`)
+
+#### Required environment
+
+| Variable | Description |
+|---|---|
+| `SHELL_SDK_E2E_SG3=1` | Enables SG3 E2E test |
+| `SHELL_SDK_RPC_URL` | SG3 RPC URL (e.g. `http://47.237.195.95:8545`) |
+| `SHELL_SDK_CHAIN_ID` | Chain ID for SG3 (default in test: `10`) |
+| `SHELL_SDK_E2E_KEYSTORE_PATH` or `SHELL_SDK_E2E_KEYSTORE_JSON` | Funded test keystore |
+| `SHELL_SDK_E2E_KEYSTORE_PASSWORD` | Keystore password |
+| `SHELL_SDK_E2E_FAUCET_URL` *(optional)* | Faucet endpoint for low-balance top-up |
+
+#### Run
+
+```bash
+npm install
+npm run test:e2e:sg3
+```
+
+This command runs:
+
+```bash
+npm run build
+npm run contract:compile
+SHELL_SDK_E2E_SG3=1 node --test tests/pqvm.contract.sg3.e2e.test.mjs
+```
+
+#### Troubleshooting
+
+- `missing keystore`: set `SHELL_SDK_E2E_KEYSTORE_PATH` or `SHELL_SDK_E2E_KEYSTORE_JSON`.
+- `insufficient balance`: fund test account or set `SHELL_SDK_E2E_FAUCET_URL`.
+- `rpc request failed`: verify SG3 RPC reachability and chain health.
+- `deploy transaction failed` / `increment transaction failed`: check node logs and receipt status.
+
+---
+
 ### Wallet extension background flow
 
 This is the recommended shape for a Chrome extension background worker: keep the decrypted signer only in memory, fetch the latest nonce from RPC, and use the stable root entrypoint for the common path.
