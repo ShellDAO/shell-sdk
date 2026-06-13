@@ -7,7 +7,7 @@ this submodule.
 ## What this repo is
 
 TypeScript client SDK for **shell-chain** — a post-quantum-native Layer 1
-node. The SDK currently ships at **v0.8.x** and tracks the **v0.22.x**
+node. The SDK currently ships at **v0.9.x** and tracks the **v0.24.x**
 shell-chain RPC surface.
 
 Provides:

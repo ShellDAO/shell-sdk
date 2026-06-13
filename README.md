@@ -7,9 +7,9 @@
 
 ---
 
-> **v0.23.0 aligned**
+> **v0.24.2 aligned**
 >
-> Addresses, system-contract IDs, and signing hashes now match shell-chain v0.23.0:
+> Addresses, system-contract IDs, and signing hashes match shell-chain v0.24.x:
 > 32-byte `0x…` BLAKE3 addresses, `algo_id` byte `Dilithium3=0`, `MlDsa65=1`,
 > `SphincsSha2256f=2`, and BLAKE3-based transaction / AA signing hashes.
 
@@ -447,7 +447,7 @@ const signed = buildSignedTransaction({
 
 #### `hashTransaction`
 
-Compute the canonical shell-chain v0.23.0 signing hash as **BLAKE3** over the structured preimage:
+Compute the canonical shell-chain v0.24.x signing hash as **BLAKE3** over the structured preimage:
 
 `chain_id(8B BE) || nonce(8B BE) || to(32B|zero) || value(32B BE) || data || gas_limit(8B BE) || max_fee_per_gas(8B BE) || max_priority_fee_per_gas(8B BE) || sig_type(1B) || tx_type(1B)`
 
