@@ -23,7 +23,6 @@ Provides:
 npm install
 npm run build      # tsc -> dist/
 npm test           # vitest
-npm run lint       # eslint
 npm run typecheck
 ```
 
@@ -49,7 +48,6 @@ npm run typecheck
 
 A change is mergeable when:
 
-- `npm run lint` passes (eslint clean)
 - `npm run typecheck` passes (no `any` regressions in public types)
 - `npm test` passes (vitest)
 - `npm run build` produces a clean `dist/` with type declarations

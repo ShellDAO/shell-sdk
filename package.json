@@ -39,6 +39,10 @@
       "types": "./dist/system-contracts.d.ts",
       "import": "./dist/system-contracts.js"
     },
+    "./session": {
+      "types": "./dist/session.d.ts",
+      "import": "./dist/session.js"
+    },
     "./types": {
       "types": "./dist/types.d.ts",
       "import": "./dist/types.js"
