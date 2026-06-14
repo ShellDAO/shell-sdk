@@ -58,7 +58,6 @@ export const ALGO_SLH_DSA = 2;
 export const HD_SESSION_ACCOUNT = 1;
 /** AA Phase 2 session-key subtree level index (raw, applied as hardened). Path: `m/1'/1'/k'`. */
 export const HD_SESSION_SUBTREE = 1;
-
 // ── Expected key sizes (NORMATIVE) ───────────────────────────────────────────
 
 /** Expected ML-DSA-65 public key length in bytes (FIPS 204). */
