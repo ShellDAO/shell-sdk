@@ -27,6 +27,8 @@ import {
 import type {
   ShellEstimateBatchRequest,
   ShellEstimateBatchResult,
+  ShellEstimatePaymasterGasRequest,
+  ShellEstimatePaymasterGasResult,
   ShellIsSponsoredResult,
   ShellNodeInfo,
   ShellPaymasterPolicy,
@@ -40,15 +42,16 @@ import type {
 import { validateRpcUrl } from "./validation.js";
 
 /**
- * Pre-configured viem chain definition for Shell Devnet.
+ * Pre-configured viem chain definition for Shell local dev / testnet.
  *
- * - Chain ID: `424242`
+ * - Chain ID: `1337` (shell-chain default — override via `chain` option for
+ *   other deployments)
  * - HTTP RPC: `http://127.0.0.1:8545`
  * - WebSocket RPC: `ws://127.0.0.1:8546`
  * - Native currency: SHELL (18 decimals)
  */
 export const shellDevnet = defineChain({
-  id: 424242,
+  id: 1337,
   name: "Shell Devnet",
   nativeCurrency: {
     decimals: 18,
@@ -65,12 +68,42 @@ export const shellDevnet = defineChain({
 
 /** Options accepted by the provider and client factory functions. */
 export interface CreateShellPublicClientOptions {
-  /** Override the viem chain config. Defaults to {@link shellDevnet}. */
-  chain?: Chain;
+  /** Override the chain config. Defaults to {@link shellDevnet}. */
+  chain?: ShellChainConfig;
   /** Override the HTTP RPC URL. Defaults to the chain's first HTTP URL. */
   rpcHttpUrl?: string;
   /** Override the WebSocket RPC URL. Defaults to the chain's first WS URL. */
   rpcWsUrl?: string;
+}
+
+/**
+ * Chain config accepted by the SDK public factory APIs.
+ *
+ * This intentionally mirrors the subset of viem's `Chain` shape consumed by
+ * the SDK instead of exporting viem's full generic type. Consumers often use a
+ * workspace-linked `shell-sdk` package, and leaking the SDK's own viem type
+ * instance into `.d.ts` files makes otherwise identical chain objects from the
+ * app's viem dependency fail assignment.
+ */
+export interface ShellChainConfig {
+  id: number;
+  name: string;
+  nativeCurrency: {
+    decimals: number;
+    name: string;
+    symbol: string;
+  };
+  rpcUrls: {
+    default: {
+      http: readonly string[];
+      webSocket?: readonly string[];
+    };
+    [key: string]: {
+      http: readonly string[];
+      webSocket?: readonly string[];
+    };
+  };
+  [key: string]: unknown;
 }
 
 /** A typed alias for a viem `PublicClient`. */
@@ -272,6 +305,22 @@ export class ShellProvider {
   }
 
   /**
+   * Query contract-paymaster validation gas capability.
+   *
+   * Calls `shell_estimatePaymasterGas`. Current nodes return
+   * `simulation_status: "cap_only"` and expose only the protocol cap; clients
+   * must gate sponsored contract-paymaster UX on the returned status.
+   *
+   * @param request - Paymaster, sender, optional inner-call bytes and context.
+   * @returns Versioned paymaster gas capability/estimate response.
+   */
+  async estimatePaymasterGas(
+    request: ShellEstimatePaymasterGasRequest,
+  ): Promise<ShellEstimatePaymasterGasResult> {
+    return this.request("shell_estimatePaymasterGas", [request]);
+  }
+
+  /**
    * Fetch the paymaster policy for an address.
    *
    * Calls `shell_getPaymasterPolicy`. Any address returns a default `eoa-open`
@@ -339,7 +388,7 @@ export function createShellPublicClient(
   validateRpcUrl(rpcHttpUrl);
 
   return createPublicClient({
-    chain,
+    chain: chain as Chain,
     transport: http(rpcHttpUrl),
   });
 }
@@ -370,7 +419,7 @@ export function createShellWsClient(options: CreateShellPublicClientOptions = {}
   validateRpcUrl(rpcWsUrl);
 
   return createPublicClient({
-    chain,
+    chain: chain as Chain,
     transport: webSocket(rpcWsUrl),
   });
 }

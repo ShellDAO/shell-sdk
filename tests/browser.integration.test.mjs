@@ -32,13 +32,23 @@ test('browser integration: dist exports work with fetch-based provider', async (
   });
   const txHash = await provider.sendTransaction(signed);
   const pqPubkey = await provider.getPqPubkey(signer.getAddress());
+  const paymasterGas = await provider.estimatePaymasterGas({
+    paymaster: '0x' + '22'.repeat(32),
+    sender: signer.getAddress(),
+    inner_calls_data: '0x',
+    max_fee_per_gas: '0x3b9aca00',
+    paymaster_context: '0x01',
+  });
 
   assert.equal(txHash, '0x' + 'ab'.repeat(32));
   assert.equal(pqPubkey, '0x' + '11'.repeat(32));
+  assert.equal(paymasterGas.simulation_status, 'cap_only');
+  assert.equal(paymasterGas.paymaster_gas_cap, '0xc350');
+  assert.equal(paymasterGas.within_cap, null);
   assert.equal(typeof signer.getAddress(), 'string');
   assert.ok(signer.getAddress().startsWith('0x'), 'signer address must be 0x hex format');
   assert.deepEqual(
     calls.map((call) => call.method),
-    ['shell_sendTransaction', 'shell_getPqPubkey'],
+    ['shell_sendTransaction', 'shell_getPqPubkey', 'shell_estimatePaymasterGas'],
   );
 });

@@ -39,9 +39,17 @@
       "types": "./dist/system-contracts.d.ts",
       "import": "./dist/system-contracts.js"
     },
+    "./session": {
+      "types": "./dist/session.d.ts",
+      "import": "./dist/session.js"
+    },
     "./types": {
       "types": "./dist/types.d.ts",
       "import": "./dist/types.js"
+    },
+    "./hdwallet": {
+      "types": "./dist/hdwallet.d.ts",
+      "import": "./dist/hdwallet.js"
     }
   },
   "files": [
@@ -52,6 +60,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "clean": "rm -rf dist",
+    "contract:compile": "node scripts/compile-contract-fixture.mjs",
+    "test:e2e:sg3": "npm run build && npm run contract:compile && SHELL_SDK_E2E_SG3=1 node --test tests/pqvm.contract.sg3.e2e.test.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test tests/*.test.mjs"
   },
@@ -80,6 +90,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "solc": "^0.8.30",
     "typescript": "^5.9.0"
   }
 }

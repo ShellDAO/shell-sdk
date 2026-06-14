@@ -7,7 +7,7 @@ this submodule.
 ## What this repo is
 
 TypeScript client SDK for **shell-chain** — a post-quantum-native Layer 1
-node. The SDK currently ships at **v0.8.x** and tracks the **v0.22.x**
+node. The SDK currently ships at **v0.9.x** and tracks the **v0.24.x**
 shell-chain RPC surface.
 
 Provides:
@@ -23,7 +23,6 @@ Provides:
 npm install
 npm run build      # tsc -> dist/
 npm test           # vitest
-npm run lint       # eslint
 npm run typecheck
 ```
 
@@ -49,7 +48,6 @@ npm run typecheck
 
 A change is mergeable when:
 
-- `npm run lint` passes (eslint clean)
 - `npm run typecheck` passes (no `any` regressions in public types)
 - `npm test` passes (vitest)
 - `npm run build` produces a clean `dist/` with type declarations
