@@ -480,6 +480,55 @@ export interface ShellEstimateBatchResult {
 }
 
 /**
+ * Request body for `shell_estimatePaymasterGas`.
+ */
+export interface ShellEstimatePaymasterGasRequest {
+  /** Paymaster contract address to query. */
+  paymaster: AddressLike;
+  /** Bundle sender address. */
+  sender: AddressLike;
+  /** Raw inner-call bytes forwarded to the future validator simulation. */
+  inner_calls_data?: HexString | null;
+  /** Max fee per gas as a hex wei quantity. */
+  max_fee_per_gas?: string | null;
+  /** Opaque context bytes forwarded to `validatePaymasterOp`. */
+  paymaster_context?: HexString | null;
+}
+
+export type ShellPaymasterSimulationStatus = "cap_only" | "simulated";
+
+/**
+ * Response from `shell_estimatePaymasterGas`.
+ *
+ * Current Shell Chain nodes return `simulation_status: "cap_only"`, which is
+ * a versioned partial response exposing only the protocol gas cap. Clients must
+ * not treat `validation_gas` or `within_cap` as available unless the status is
+ * upgraded to `"simulated"`.
+ */
+export interface ShellEstimatePaymasterGasResult {
+  /** Paymaster address echoed by the node. */
+  paymaster: AddressLike;
+  /** Sender address echoed by the node. */
+  sender: AddressLike;
+  /** Estimated validation gas as hex, or null for cap-only responses. */
+  validation_gas: string | null;
+  /** Protocol gas cap as hex. */
+  paymaster_gas_cap: string;
+  /** Whether validation gas is within cap, or null for cap-only responses. */
+  within_cap: boolean | null;
+  /** Capability status for this response. */
+  simulation_status: ShellPaymasterSimulationStatus;
+  /** Version of the response contract. */
+  simulation_version: number;
+  /** Node capability string. */
+  capability: "paymaster_cap_only" | "paymaster_simulation";
+  /** Machine-readable or human-readable reason when partial. */
+  reason?: string;
+  /** Additional operator/client guidance. */
+  note?: string;
+}
+
+/**
  * Paymaster policy returned by `shell_getPaymasterPolicy`.
  */
 export interface ShellPaymasterPolicy {

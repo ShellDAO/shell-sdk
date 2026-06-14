@@ -48,6 +48,16 @@ export function createJsonRpcFetchMock() {
       shell_getPqPubkey: '0x' + '11'.repeat(32),
       shell_sendTransaction: '0x' + 'ab'.repeat(32),
       shell_getTransactionsByAddress: { transactions: [], total: 0 },
+      shell_estimatePaymasterGas: {
+        paymaster: '0x' + '22'.repeat(32),
+        sender: '0x' + '33'.repeat(32),
+        validation_gas: null,
+        paymaster_gas_cap: '0xc350',
+        within_cap: null,
+        simulation_status: 'cap_only',
+        simulation_version: 1,
+        capability: 'paymaster_cap_only',
+      },
     };
 
     if (body.method === 'eth_chainId') {
