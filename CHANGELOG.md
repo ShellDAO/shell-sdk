@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.10.0] — 2026-06-15
+
+### Added
+
+- PQ-HD wallet derivation helpers and canonical test vectors.
+- Session-key authorization helpers and exports for AA session flows.
+- Contract compile fixture support and PQVM contract integration fixtures.
+- Additional public exports for `./session` and `./hdwallet`.
+
+### Changed
+
+- Aligns SDK public API and documentation with `shell-chain v0.24.x`.
+- Keeps `v0.9.x` signing-hash compatibility while adding new PQ-HD/session
+  functionality as a minor-version feature release.
+
 ## [0.9.2] — 2026-05-25
 
 ### Fixed
