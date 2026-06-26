@@ -665,6 +665,70 @@ export interface ShellTxByAddressPage {
   transactions: ShellRpcTransactionSummary[];
 }
 
+export interface ShellTxByAddressV2Options {
+  fromBlock?: number | HexString;
+  toBlock?: number | HexString;
+  cursor?: string | null;
+  limit?: number;
+  direction?: "asc" | "desc";
+  detail?: "summary" | "full" | "hashes" | "none";
+  includeTotal?: boolean;
+}
+
+/** Cursor-paginated response from `shell_getTransactionsByAddressV2`. */
+export interface ShellTxByAddressV2Page {
+  address: AddressLike;
+  fromBlock: HexString;
+  toBlock: HexString;
+  limit: number;
+  direction: "asc" | "desc";
+  total?: number | null;
+  nextCursor?: string | null;
+  hasMore: boolean;
+  items: Array<ShellRpcTransactionSummary | ShellRpcTransaction | HexString>;
+}
+
+export interface ShellRpcCapabilities {
+  rpcVersion: string;
+  methods: string[];
+  maxPageSize: number;
+  maxBlocksRange: number;
+  maxTxSummaryPerBlock: number;
+  supportsCursorPagination: boolean;
+  supportsAddressHistoryIndex: boolean;
+  witnessStore: boolean;
+  storageProfile?: unknown;
+  fallbackMethods: string[];
+}
+
+export interface ShellTransactionSummaryResult {
+  transaction?: ShellRpcTransactionSummary | ShellRpcTransaction | null;
+  receipt?: ShellRpcReceipt | null;
+  status?: HexString | null;
+  gasUsed?: HexString | null;
+  logCount?: number | null;
+  timestamp?: HexString | null;
+}
+
+export interface ShellChainSnapshot {
+  chainId: HexString;
+  head?: unknown;
+  finalized?: unknown;
+  finalityLag: number;
+  pendingTransactions: HexString;
+  peerCount: number;
+  isMining: boolean;
+  uptime: number;
+  baseFee: HexString;
+  gasPrice: HexString;
+  totalTransactions: number;
+  gasUsedTotal: HexString;
+  avgBlockTime: number;
+  consensus: unknown;
+  validators: unknown;
+  storageProfile?: unknown;
+}
+
 /** Parameters for `shell_sendTransaction`. */
 export interface ShellSendTransactionParams {
   signedTransaction: SignedShellTransaction;

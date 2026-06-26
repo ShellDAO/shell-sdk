@@ -30,11 +30,16 @@ import type {
   ShellEstimatePaymasterGasRequest,
   ShellEstimatePaymasterGasResult,
   ShellIsSponsoredResult,
+  ShellChainSnapshot,
   ShellNodeInfo,
   ShellPaymasterPolicy,
+  ShellRpcCapabilities,
   ShellRpcReceipt,
   ShellStorageProfile,
   ShellTxByAddressPage,
+  ShellTxByAddressV2Options,
+  ShellTxByAddressV2Page,
+  ShellTransactionSummaryResult,
   ShellWitnessBundle,
   ShellWitnessRootResult,
   SignedShellTransaction,
@@ -230,6 +235,68 @@ export class ShellProvider {
       options.page ?? null,
       options.limit ?? null,
     ]);
+  }
+
+  /**
+   * Fetch cursor-paginated transaction history for an address.
+   *
+   * Calls `shell_getTransactionsByAddressV2` and falls back to
+   * `shell_getTransactionsByAddress` for the first page on older nodes.
+   */
+  async getTransactionsByAddressV2(
+    address: string,
+    options: ShellTxByAddressV2Options = {},
+  ): Promise<ShellTxByAddressV2Page> {
+    try {
+      return await this.request("shell_getTransactionsByAddressV2", [
+        address,
+        {
+          fromBlock: options.fromBlock ?? null,
+          toBlock: options.toBlock ?? null,
+          cursor: options.cursor ?? null,
+          limit: options.limit ?? null,
+          direction: options.direction ?? "desc",
+          detail: options.detail ?? "summary",
+          includeTotal: options.includeTotal ?? false,
+        },
+      ]);
+    } catch (error) {
+      if (options.cursor) {
+        throw error;
+      }
+      const legacy = await this.getTransactionsByAddress(address, {
+        fromBlock: options.fromBlock,
+        toBlock: options.toBlock,
+        page: 0,
+        limit: options.limit,
+      });
+      return {
+        address: legacy.address,
+        fromBlock: legacy.fromBlock ?? legacy.from_block ?? "0x0",
+        toBlock: legacy.toBlock ?? legacy.to_block ?? "0x0",
+        limit: legacy.limit,
+        direction: options.direction ?? "desc",
+        total: legacy.total,
+        nextCursor: null,
+        hasMore: legacy.transactions.length < legacy.total,
+        items: legacy.transactions,
+      };
+    }
+  }
+
+  async rpcCapabilities(): Promise<ShellRpcCapabilities> {
+    return this.request("shell_rpcCapabilities", []);
+  }
+
+  async getChainSnapshot(options: Record<string, unknown> = {}): Promise<ShellChainSnapshot> {
+    return this.request("shell_getChainSnapshot", [options]);
+  }
+
+  async getTransactionSummary(
+    txHash: string,
+    options: { includeReceipt?: boolean } = {},
+  ): Promise<ShellTransactionSummaryResult> {
+    return this.request("shell_getTransactionSummary", [txHash, options]);
   }
 
   /**
