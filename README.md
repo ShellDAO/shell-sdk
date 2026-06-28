@@ -576,6 +576,33 @@ const value = await readContract({
 console.log({ contract: deployed.contractAddress, value });
 ```
 
+The package also ships a Node CLI that uses the same public API:
+
+```bash
+npx shell-sdk contract compile \
+  --source contracts/PqvmCounter.sol \
+  --contract PqvmCounter \
+  --out artifacts/PqvmCounter.json
+
+npx shell-sdk contract deploy \
+  --artifact artifacts/PqvmCounter.json \
+  --keystore my-key.json \
+  --password "$SHELL_KEYSTORE_PASSWORD" \
+  --rpc http://127.0.0.1:8545 \
+  --chain-id 1337
+
+npx shell-sdk contract write \
+  --artifact artifacts/PqvmCounter.json \
+  --address 0x... \
+  --function setNumber \
+  --args '["7n"]'
+
+npx shell-sdk contract read \
+  --artifact artifacts/PqvmCounter.json \
+  --address 0x... \
+  --function getNumber
+```
+
 ---
 
 ### System contracts

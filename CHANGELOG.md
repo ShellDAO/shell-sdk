@@ -10,6 +10,9 @@
   `encodeFunctionData`, and `decodeFunctionResult`.
 - Public `shell-sdk/contracts/compiler` Node-only API for Solidity artifacts:
   `compileSolidity`, `loadContractArtifact`, and `saveContractArtifact`.
+- `shell-sdk` CLI with `contract compile`, `contract deploy`,
+  `contract write`, `contract read`, and `contract smoke` commands backed by
+  the public contract APIs.
 - Contract API unit tests covering deployment shape, write calls, read calls,
   receipt timeout behavior, Shell 32-byte contract address validation, and
   Solidity compilation.
