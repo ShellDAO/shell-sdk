@@ -3,12 +3,14 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { decodeFunctionResult, encodeFunctionData, parseAbi } from 'viem';
+import { parseAbi } from 'viem';
 
 import {
-  buildTransaction,
   createShellProvider,
   decryptKeystore,
+  deployContract,
+  readContract,
+  writeContract,
 } from '../dist/index.js';
 import { compileContractFixture } from '../scripts/compile-contract-fixture.mjs';
 
@@ -49,24 +51,10 @@ async function rpcRequest(url, method, params) {
   return body.result;
 }
 
-async function waitForReceipt(url, txHash, timeoutMs = 240_000, pollMs = 2_000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const receipt = await rpcRequest(url, 'eth_getTransactionReceipt', [txHash]);
-    if (receipt) {
-      return receipt;
-    }
-    await new Promise((resolve) => setTimeout(resolve, pollMs));
-  }
-  throw new Error(`timeout waiting for receipt: ${txHash}`);
-}
-
 async function sendWithRetries({
   label,
-  provider,
   signer,
-  buildTx,
-  includePublicKey = false,
+  send,
   maxAttempts = 4,
 }) {
   let lastError = null;
@@ -74,23 +62,12 @@ async function sendWithRetries({
     try {
       const pendingNonceHex = await rpcRequest(RPC_URL, 'eth_getTransactionCount', [signer.getAddress(), 'pending']);
       const nonce = Number(BigInt(pendingNonceHex));
-      const tx = buildTx(nonce, attempt);
-      const signed = await signer.buildSignedTransaction({ tx, includePublicKey });
-      const hash = await provider.sendTransaction(signed);
-      const receipt = await waitForReceipt(RPC_URL, hash, 120_000, 2_000);
-      if (receipt.status !== '0x1') {
-        throw new Error(`${label} reverted, txHash=${hash}`);
-      }
-      return { nonce, hash, receipt };
+      return await send(nonce, attempt);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const duplicate = message.match(/duplicate transaction (0x[a-f0-9]{64})/i);
       if (duplicate) {
-        const duplicateHash = duplicate[1];
-        const receipt = await waitForReceipt(RPC_URL, duplicateHash, 120_000, 2_000);
-        if (receipt.status === '0x1') {
-          return { nonce: -1, hash: duplicateHash, receipt };
-        }
+        throw new Error(`${label} hit duplicate transaction outside SDK retry path: ${duplicate[1]}`);
       }
       lastError = error;
     }
@@ -153,65 +130,84 @@ contractTest('sg3 pqvm smart contract flow: compile -> deploy -> write -> read',
     `insufficient balance for e2e deploy, balance=${balance.toString()} min=${MIN_BALANCE_WEI.toString()}`,
   );
 
-  const { receipt: deployReceipt } = await sendWithRetries({
+  const deploy = await sendWithRetries({
     label: 'contract deploy',
-    provider,
     signer,
-    includePublicKey: true,
-    buildTx: (nonce, attempt) => buildTransaction({
+    send: (nonce, attempt) => deployContract({
+      provider,
+      signer,
       chainId: CHAIN_ID,
+      artifact,
       nonce,
-      to: null,
-      data: artifact.bytecode,
+      includePublicKey: true,
       gasLimit: 1_500_000,
       maxFeePerGas: MAX_FEE_PER_GAS + (attempt - 1) * 500_000_000,
       maxPriorityFeePerGas: MAX_PRIORITY_FEE_PER_GAS * attempt,
+      wait: true,
+      timeoutMs: 120_000,
+      pollIntervalMs: 2_000,
     }),
   });
+  const deployReceipt = deploy.receipt;
   assert.ok(deployReceipt.contractAddress, 'missing deployed contract address');
-  const contractAddress = deployReceipt.contractAddress;
+  const contractAddress = deploy.contractAddress;
   assert.match(contractAddress, /^0x[0-9a-fA-F]{64}$/, 'contract address must be 32-byte shell address');
 
-  const setData = encodeFunctionData({ abi: ABI, functionName: 'setNumber', args: [7n] });
   await sendWithRetries({
     label: 'setNumber',
-    provider,
     signer,
-    buildTx: (nonce, attempt) => buildTransaction({
+    send: (nonce, attempt) => writeContract({
+      provider,
+      signer,
       chainId: CHAIN_ID,
       nonce,
-      to: contractAddress,
-      data: setData,
+      address: contractAddress,
+      abi: ABI,
+      functionName: 'setNumber',
+      args: [7n],
       gasLimit: 120_000,
       maxFeePerGas: MAX_FEE_PER_GAS + (attempt - 1) * 500_000_000,
       maxPriorityFeePerGas: MAX_PRIORITY_FEE_PER_GAS * attempt,
+      wait: true,
+      timeoutMs: 120_000,
+      pollIntervalMs: 2_000,
     }),
   });
 
-  const getData = encodeFunctionData({ abi: ABI, functionName: 'getNumber', args: [] });
-  const afterSetHex = await rpcRequest(RPC_URL, 'eth_call', [{ to: contractAddress, data: getData }, 'latest']);
-  assert.ok(afterSetHex, 'missing eth_call data for getNumber');
-  const setValue = decodeFunctionResult({ abi: ABI, functionName: 'getNumber', data: afterSetHex });
+  const setValue = await readContract({
+    provider,
+    address: contractAddress,
+    abi: ABI,
+    functionName: 'getNumber',
+  });
   assert.equal(setValue, 7n, 'unexpected state after setNumber');
 
-  const incData = encodeFunctionData({ abi: ABI, functionName: 'increment', args: [] });
   await sendWithRetries({
     label: 'increment',
-    provider,
     signer,
-    buildTx: (nonce, attempt) => buildTransaction({
+    send: (nonce, attempt) => writeContract({
+      provider,
+      signer,
       chainId: CHAIN_ID,
       nonce,
-      to: contractAddress,
-      data: incData,
+      address: contractAddress,
+      abi: ABI,
+      functionName: 'increment',
+      args: [],
       gasLimit: 120_000,
       maxFeePerGas: MAX_FEE_PER_GAS + (attempt - 1) * 500_000_000,
       maxPriorityFeePerGas: MAX_PRIORITY_FEE_PER_GAS * attempt,
+      wait: true,
+      timeoutMs: 120_000,
+      pollIntervalMs: 2_000,
     }),
   });
 
-  const afterIncHex = await rpcRequest(RPC_URL, 'eth_call', [{ to: contractAddress, data: getData }, 'latest']);
-  assert.ok(afterIncHex, 'missing eth_call data after increment');
-  const incValue = decodeFunctionResult({ abi: ABI, functionName: 'getNumber', data: afterIncHex });
+  const incValue = await readContract({
+    provider,
+    address: contractAddress,
+    abi: ABI,
+    functionName: 'getNumber',
+  });
   assert.equal(incValue, 8n, 'unexpected state after increment');
 });
