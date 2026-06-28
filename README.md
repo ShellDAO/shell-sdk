@@ -289,6 +289,13 @@ const tx = await provider.getTransactionSummary(txHash, { includeReceipt: true }
 const validators = await provider.getValidatorSnapshot({ proposerWindow: 200 });
 ```
 
+RPC v2 list methods clamp page/range sizes to 100 items. The default
+transaction detail is `summary`, which omits calldata, signatures, proof bytes,
+and full logs. Request `detail: "full"` or `includeReceipt: true` only when the
+client needs the larger payload. `getTransactionsByAddressV2` can fall back to
+the legacy first page on older nodes, but cursor requests intentionally fail if
+the node does not support v2 cursor pagination.
+
 **Custom endpoint:**
 
 ```typescript
