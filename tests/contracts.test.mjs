@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { parseAbi } from 'viem';
+import { parseAbi, toFunctionSelector } from 'viem';
 
 import {
   buildContractCallTransaction,
@@ -21,6 +21,13 @@ const ABI = parseAbi([
   'constructor(uint256 initial)',
   'function setNumber(uint256 newNumber)',
   'function getNumber() view returns (uint256)',
+]);
+const NO_CONSTRUCTOR_ABI = parseAbi([
+  'function getNumber() view returns (uint256)',
+]);
+const NFT_ABI = parseAbi([
+  'function mint(address to,string uri) returns (uint256 tokenId)',
+  'function ownerOf(uint256 tokenId) view returns (address)',
 ]);
 
 function makeReceipt(overrides = {}) {
@@ -144,7 +151,7 @@ test('deployContract sends, waits, and validates 32-byte contract address', asyn
       provider,
       signer,
       chainId: 1337,
-      artifact: { contractName: 'Counter', abi: ABI, bytecode: '0x60006000' },
+      artifact: { contractName: 'Counter', abi: NO_CONSTRUCTOR_ABI, bytecode: '0x60006000' },
       wait: true,
       pollIntervalMs: 0,
     });
@@ -211,6 +218,32 @@ test('readContract uses eth_call and decodes result', async () => {
 
   assert.equal(calls[0].method, 'eth_call');
   assert.equal(calls[0].params[0].to, CONTRACT);
+});
+
+test('Shell contract ABI keeps address keyword while encoding 32-byte addresses', () => {
+  const encoded = encodeFunctionData({
+    abi: NFT_ABI,
+    functionName: 'mint',
+    args: [ADDRESS, 'ipfs://example/1.json'],
+  });
+
+  assert.equal(encoded.slice(0, 10), toFunctionSelector('mint(address,string)'));
+  assert.notEqual(encoded.slice(0, 10), toFunctionSelector('mint(bytes32,string)'));
+  assert.ok(encoded.includes(ADDRESS.slice(2)), 'full 32-byte Shell address should be encoded');
+  assert.throws(
+    () => encodeFunctionData({ abi: NFT_ABI, functionName: 'mint', args: ['0x' + '11'.repeat(20), 'x'] }),
+    /Shell address/,
+  );
+});
+
+test('Shell contract ABI decodes address returns as 32-byte addresses', () => {
+  const decoded = decodeFunctionResult({
+    abi: NFT_ABI,
+    functionName: 'ownerOf',
+    data: ADDRESS,
+  });
+
+  assert.equal(decoded, ADDRESS);
 });
 
 test('waitForTransactionReceipt times out clearly', async () => {

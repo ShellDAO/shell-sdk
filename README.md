@@ -517,9 +517,10 @@ Node scripts because it imports `solc`.
 | `waitForTransactionReceipt(opts)` | Poll `eth_getTransactionReceipt` with timeout handling |
 | `encodeFunctionData(opts)` / `decodeFunctionResult(opts)` | Stable SDK wrappers around viem ABI helpers |
 
-Shell contract addresses are 32-byte Shell addresses, not Ethereum 20-byte
-addresses. Token/NFT examples that store owners should use Shell-native
-`bytes32` owners or an explicit adapter layer.
+Shell contract addresses are 32-byte Shell addresses. Contract source should
+use Solidity's `address` keyword for account and owner fields; the Shell SDK
+contract helpers encode and decode ABI `address` values as 32-byte Shell
+addresses for this chain.
 
 ```typescript
 import { readFile } from "node:fs/promises";

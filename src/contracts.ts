@@ -9,8 +9,11 @@
  */
 import {
   decodeFunctionResult as viemDecodeFunctionResult,
+  decodeAbiParameters,
+  encodeAbiParameters,
   encodeDeployData,
   encodeFunctionData as viemEncodeFunctionData,
+  toFunctionSelector,
   type Abi,
   type Hex,
 } from "viem";
@@ -141,6 +144,24 @@ interface JsonRpcFailure {
 
 type JsonRpcResponse<T> = JsonRpcSuccess<T> | JsonRpcFailure;
 
+interface AbiParameterLike {
+  name?: string;
+  type: string;
+  components?: AbiParameterLike[];
+}
+
+interface AbiFunctionLike {
+  type: "function";
+  name: string;
+  inputs?: AbiParameterLike[];
+  outputs?: AbiParameterLike[];
+}
+
+interface AbiConstructorLike {
+  type: "constructor";
+  inputs?: AbiParameterLike[];
+}
+
 function normalizeHexData(value: string, fieldName: string): HexString {
   if (!/^0x[0-9a-fA-F]*$/.test(value)) {
     throw new Error(`${fieldName} must be 0x-prefixed hex data`);
@@ -164,6 +185,108 @@ function normalizeArtifact(artifact: ShellContractArtifact): ShellContractArtifa
       ? normalizeHexData(artifact.deployedBytecode, "artifact.deployedBytecode")
       : undefined,
   };
+}
+
+function transformShellAddressType(type: string): string {
+  return type.replace(/^address(?=(\[|$))/, "bytes32");
+}
+
+function transformShellAddressParameter(parameter: AbiParameterLike): AbiParameterLike {
+  return {
+    ...parameter,
+    type: transformShellAddressType(parameter.type),
+    components: parameter.components?.map(transformShellAddressParameter),
+  };
+}
+
+function hasShellAddressParameter(parameters: readonly AbiParameterLike[] = []): boolean {
+  return parameters.some((parameter) => {
+    if (/^address(?=(\[|$))/.test(parameter.type)) {
+      return true;
+    }
+    return hasShellAddressParameter(parameter.components ?? []);
+  });
+}
+
+function normalizeShellAddressWord(value: unknown, fieldName: string): HexString {
+  if (typeof value !== "string" || !isShellAddress(value)) {
+    throw new Error(`${fieldName} must be a Shell address (0x + 64 hex chars)`);
+  }
+  return value.toLowerCase() as HexString;
+}
+
+function transformShellAddressValue(parameter: AbiParameterLike, value: unknown, fieldName: string): unknown {
+  if (/^address\[/.test(parameter.type)) {
+    if (!Array.isArray(value)) {
+      throw new Error(`${fieldName} must be an array of Shell addresses`);
+    }
+    return value.map((item, index) => transformShellAddressValue(
+      { ...parameter, type: parameter.type.replace(/^address\[[^\]]*\]/, "address") },
+      item,
+      `${fieldName}[${index}]`,
+    ));
+  }
+  if (parameter.type === "address") {
+    return normalizeShellAddressWord(value, fieldName);
+  }
+  return value;
+}
+
+function findFunctionAbi(abi: Abi, functionName: string, argCount: number): AbiFunctionLike {
+  const matches = (abi as readonly unknown[]).filter((entry): entry is AbiFunctionLike => {
+    const candidate = entry as Partial<AbiFunctionLike>;
+    return candidate.type === "function"
+      && candidate.name === functionName
+      && (candidate.inputs?.length ?? 0) === argCount;
+  });
+  if (matches.length === 0) {
+    throw new Error(`function ${functionName}(${argCount} args) not found in ABI`);
+  }
+  if (matches.length > 1) {
+    throw new Error(`ambiguous overloaded function ${functionName}; use an ABI with one matching overload`);
+  }
+  return matches[0];
+}
+
+function findFunctionAbiByName(abi: Abi, functionName: string): AbiFunctionLike {
+  const matches = (abi as readonly unknown[]).filter((entry): entry is AbiFunctionLike => {
+    const candidate = entry as Partial<AbiFunctionLike>;
+    return candidate.type === "function" && candidate.name === functionName;
+  });
+  if (matches.length === 0) {
+    throw new Error(`function ${functionName} not found in ABI`);
+  }
+  if (matches.length > 1) {
+    throw new Error(`ambiguous overloaded function ${functionName}; use an ABI with one matching overload`);
+  }
+  return matches[0];
+}
+
+function findConstructorAbi(abi: Abi, argCount: number): AbiConstructorLike | null {
+  const constructor = (abi as readonly unknown[]).find((entry): entry is AbiConstructorLike => {
+    const candidate = entry as Partial<AbiConstructorLike>;
+    return candidate.type === "constructor";
+  });
+  if (!constructor) {
+    return null;
+  }
+  if ((constructor.inputs?.length ?? 0) !== argCount) {
+    throw new Error(`constructor expects ${constructor.inputs?.length ?? 0} args, got ${argCount}`);
+  }
+  return constructor;
+}
+
+function encodeShellAddressArgs(parameters: readonly AbiParameterLike[], args: readonly unknown[]): HexString {
+  const transformedParameters = parameters.map(transformShellAddressParameter);
+  const transformedArgs = parameters.map((parameter, index) => transformShellAddressValue(
+    parameter,
+    args[index],
+    parameter.name || `arg${index}`,
+  ));
+  return normalizeHexData(
+    encodeAbiParameters(transformedParameters as never, transformedArgs as never),
+    "encoded ABI parameters",
+  );
 }
 
 async function rpcRequest<T>(provider: ShellProvider, method: string, params: unknown[]): Promise<T> {
@@ -192,20 +315,41 @@ async function getPendingNonce(provider: ShellProvider, address: AddressLike): P
 }
 
 export function encodeFunctionData(parameters: EncodeContractFunctionDataOptions): HexString {
+  const fn = findFunctionAbi(parameters.abi, parameters.functionName, parameters.args?.length ?? 0);
+  if (hasShellAddressParameter(fn.inputs ?? [])) {
+    const selector = toFunctionSelector(fn as never);
+    const encodedArgs = encodeShellAddressArgs(fn.inputs ?? [], parameters.args ?? []);
+    return normalizeHexData(`${selector}${encodedArgs.slice(2)}`, "encoded function data");
+  }
   return normalizeHexData(viemEncodeFunctionData(parameters as never), "encoded function data");
 }
 
 export function decodeFunctionResult(parameters: DecodeContractFunctionResultOptions): unknown {
+  const fn = findFunctionAbiByName(parameters.abi, parameters.functionName);
+  if (hasShellAddressParameter(fn.outputs ?? [])) {
+    const decoded = decodeAbiParameters(
+      (fn.outputs ?? []).map(transformShellAddressParameter) as never,
+      parameters.data,
+    ) as readonly unknown[];
+    return decoded.length === 1 ? decoded[0] : decoded;
+  }
   return viemDecodeFunctionResult(parameters as never);
 }
 
 export function buildDeployTransaction(options: BuildDeployTransactionOptions): ShellTransactionRequest {
   const artifact = normalizeArtifact(options.artifact);
-  const data = encodeDeployData({
-    abi: artifact.abi,
-    bytecode: artifact.bytecode as Hex,
-    args: options.constructorArgs ?? [],
-  } as never);
+  const constructorArgs = options.constructorArgs ?? [];
+  const constructorAbi = findConstructorAbi(artifact.abi, constructorArgs.length);
+  const data = constructorAbi && hasShellAddressParameter(constructorAbi.inputs ?? [])
+    ? normalizeHexData(
+      `${artifact.bytecode}${encodeShellAddressArgs(constructorAbi.inputs ?? [], constructorArgs).slice(2)}`,
+      "deploy data",
+    )
+    : encodeDeployData({
+      abi: artifact.abi,
+      bytecode: artifact.bytecode as Hex,
+      args: constructorArgs,
+    } as never);
 
   return buildTransaction({
     chainId: options.chainId,
