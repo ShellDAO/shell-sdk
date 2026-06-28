@@ -688,6 +688,61 @@ export interface ShellTxByAddressV2Page {
   items: Array<ShellRpcTransactionSummary | ShellRpcTransaction | HexString>;
 }
 
+export type ShellRpcListDirection = "asc" | "desc";
+export type ShellRpcV2TxDetail = "none" | "hashes" | "summary" | "full";
+
+/** Options for `shell_getBlocksRange`. */
+export interface ShellBlocksRangeOptions {
+  direction?: ShellRpcListDirection;
+  limit?: number;
+  txDetail?: ShellRpcV2TxDetail;
+  txLimit?: number;
+}
+
+/** Compact block shape returned by Shell RPC v2 aggregate endpoints. */
+export interface ShellRpcBlock {
+  number?: HexString | null;
+  hash?: HexString | null;
+  parentHash?: HexString | null;
+  timestamp?: HexString | null;
+  miner?: AddressLike | null;
+  proposer?: AddressLike | null;
+  gasUsed?: HexString | null;
+  gasLimit?: HexString | null;
+  baseFeePerGas?: HexString | null;
+  transactionCount?: number;
+  transactions?: Array<ShellRpcTransactionSummary | ShellRpcTransaction | HexString>;
+  [key: string]: unknown;
+}
+
+/** Response from `shell_getBlocksRange`. */
+export interface ShellBlocksRange {
+  start: string;
+  direction: ShellRpcListDirection;
+  limit: number;
+  blocks: ShellRpcBlock[];
+  nextStart?: HexString | null;
+}
+
+/** Options for `shell_getAddressSummary`. */
+export interface ShellAddressSummaryOptions {
+  recentLimit?: number;
+  includeTotal?: boolean;
+}
+
+/** Account state plus a small cursor-paginated recent transaction page. */
+export interface ShellAddressSummary {
+  address: AddressLike;
+  balance: HexString;
+  nonce: HexString;
+  exists: boolean;
+  hasCode: boolean;
+  codeHash?: HexString | null;
+  pqPubkeyRegistered: boolean;
+  totalTransactions?: number | null;
+  recentTransactions: ShellTxByAddressV2Page;
+}
+
 export interface ShellRpcCapabilities {
   rpcVersion: string;
   methods: string[];
@@ -727,6 +782,29 @@ export interface ShellChainSnapshot {
   consensus: unknown;
   validators: unknown;
   storageProfile?: unknown;
+}
+
+export interface ShellValidatorSnapshotOptions {
+  proposerWindow?: number;
+}
+
+export interface ShellProposerStats {
+  address: AddressLike;
+  blocksProposed: number;
+  lastSeenBlock: number;
+  [key: string]: unknown;
+}
+
+/** Validator/proposer aggregate returned by `shell_getValidatorSnapshot`. */
+export interface ShellValidatorSnapshot {
+  validators: unknown;
+  currentProposer: unknown;
+  blockNumber: number;
+  epoch: unknown;
+  epochLength: unknown;
+  epochProgress: unknown;
+  proposerWindow: number;
+  proposerStats: ShellProposerStats[];
 }
 
 /** Parameters for `shell_sendTransaction`. */

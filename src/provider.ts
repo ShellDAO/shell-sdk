@@ -30,6 +30,10 @@ import type {
   ShellEstimatePaymasterGasRequest,
   ShellEstimatePaymasterGasResult,
   ShellIsSponsoredResult,
+  ShellAddressSummary,
+  ShellAddressSummaryOptions,
+  ShellBlocksRange,
+  ShellBlocksRangeOptions,
   ShellChainSnapshot,
   ShellNodeInfo,
   ShellPaymasterPolicy,
@@ -40,6 +44,8 @@ import type {
   ShellTxByAddressV2Options,
   ShellTxByAddressV2Page,
   ShellTransactionSummaryResult,
+  ShellValidatorSnapshot,
+  ShellValidatorSnapshotOptions,
   ShellWitnessBundle,
   ShellWitnessRootResult,
   SignedShellTransaction,
@@ -292,11 +298,50 @@ export class ShellProvider {
     return this.request("shell_getChainSnapshot", [options]);
   }
 
+  async getBlocksRange(
+    start: string | number,
+    options: ShellBlocksRangeOptions = {},
+  ): Promise<ShellBlocksRange> {
+    const startParam = typeof start === "number" ? `0x${start.toString(16)}` : start;
+    return this.request("shell_getBlocksRange", [
+      startParam,
+      {
+        direction: options.direction ?? "desc",
+        limit: options.limit ?? null,
+        txDetail: options.txDetail ?? "summary",
+        txLimit: options.txLimit ?? null,
+      },
+    ]);
+  }
+
+  async getAddressSummary(
+    address: string,
+    options: ShellAddressSummaryOptions = {},
+  ): Promise<ShellAddressSummary> {
+    return this.request("shell_getAddressSummary", [
+      address,
+      {
+        recentLimit: options.recentLimit ?? null,
+        includeTotal: options.includeTotal ?? false,
+      },
+    ]);
+  }
+
   async getTransactionSummary(
     txHash: string,
     options: { includeReceipt?: boolean } = {},
   ): Promise<ShellTransactionSummaryResult> {
     return this.request("shell_getTransactionSummary", [txHash, options]);
+  }
+
+  async getValidatorSnapshot(
+    options: ShellValidatorSnapshotOptions = {},
+  ): Promise<ShellValidatorSnapshot> {
+    return this.request("shell_getValidatorSnapshot", [
+      {
+        proposerWindow: options.proposerWindow ?? null,
+      },
+    ]);
   }
 
   /**
