@@ -237,6 +237,13 @@ import { shellDevnet } from "shell-sdk/provider";
 | `getPqPubkey(address)` | `shell_getPqPubkey` → hex public key or `null` |
 | `sendTransaction(signed)` | `shell_sendTransaction` → tx hash string |
 | `getTransactionsByAddress(address, opts)` | `shell_getTransactionsByAddress` with optional `fromBlock/toBlock/page/limit`; pin `toBlock` from page 0 for stable full-history pagination |
+| `rpcCapabilities()` | `shell_rpcCapabilities` → supported Shell RPC v2 methods and node limits |
+| `getChainSnapshot(opts?)` | `shell_getChainSnapshot` → compact chain/node/consensus dashboard snapshot |
+| `getBlocksRange(start, opts?)` | `shell_getBlocksRange` → bounded block list with configurable transaction detail |
+| `getAddressSummary(address, opts?)` | `shell_getAddressSummary` → balance/nonce/code/pubkey state plus recent transaction page |
+| `getTransactionsByAddressV2(address, opts?)` | `shell_getTransactionsByAddressV2` cursor pagination; falls back to legacy first-page history on older nodes |
+| `getTransactionSummary(txHash, opts?)` | `shell_getTransactionSummary` → compact transaction and optional receipt metadata |
+| `getValidatorSnapshot(opts?)` | `shell_getValidatorSnapshot` → validator/proposer aggregate and proposer window stats |
 | `getBlockReceipts(block)` | `eth_getBlockReceipts` → `ShellRpcReceipt[]` |
 | `getNodeInfo()` | `shell_getNodeInfo` → `ShellNodeInfo` (version, block height, peer count, storage profile) |
 | `getWitness(blockNumberOrHash)` | `shell_getWitness` → `ShellWitnessBundle` or `null` if pruned |
@@ -257,12 +264,29 @@ const balance = await provider.client.getBalance({ address: "0x…" });
 const pubkeyHex = await provider.getPqPubkey("0x…");
 const txHash    = await provider.sendTransaction(signedTx);
 
-const history = await provider.getTransactionsByAddress("0x…", { page: 0, limit: 20 });
-const older = await provider.getTransactionsByAddress("0x…", {
-  page: 1,
+// Shell RPC v2 aggregate methods reduce fan-out for explorer, wallet and ops UI.
+const capabilities = await provider.rpcCapabilities();
+const snapshot = await provider.getChainSnapshot();
+const latestBlocks = await provider.getBlocksRange("latest", {
+  direction: "desc",
   limit: 20,
-  toBlock: history.toBlock ?? history.to_block,
+  txDetail: "summary",
+  txLimit: 10,
 });
+const account = await provider.getAddressSummary("0x…", {
+  recentLimit: 10,
+  includeTotal: false,
+});
+const firstPage = await provider.getTransactionsByAddressV2("0x…", {
+  limit: 50,
+  direction: "desc",
+  detail: "summary",
+});
+const nextPage = firstPage.nextCursor
+  ? await provider.getTransactionsByAddressV2("0x…", { cursor: firstPage.nextCursor })
+  : null;
+const tx = await provider.getTransactionSummary(txHash, { includeReceipt: true });
+const validators = await provider.getValidatorSnapshot({ proposerWindow: 200 });
 ```
 
 **Custom endpoint:**
