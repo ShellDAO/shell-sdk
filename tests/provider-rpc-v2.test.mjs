@@ -72,6 +72,43 @@ test('getTransactionsByAddressV2 with a cursor does not fall back to page offset
   assert.deepEqual(calls.map((call) => call.method), ['shell_getTransactionsByAddressV2']);
 });
 
+test('getTransactionsByAddressV2 does not fall back for non-method-not-found errors', async () => {
+  const calls = [];
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    calls.push(body);
+    return rpc({ jsonrpc: '2.0', id: body.id, error: { code: -32602, message: 'invalid params' } });
+  };
+
+  const provider = createShellProvider({ rpcHttpUrl: 'https://rpc.devnet.shell.local' });
+
+  await assert.rejects(
+    provider.getTransactionsByAddressV2('0x' + '44'.repeat(32), { limit: 25 }),
+    /invalid params/,
+  );
+  assert.deepEqual(calls.map((call) => call.method), ['shell_getTransactionsByAddressV2']);
+});
+
+test('getTransactionsByAddressV2 legacy fallback rejects ascending order', async () => {
+  const calls = [];
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    calls.push(body);
+    return rpc({ jsonrpc: '2.0', id: body.id, error: { code: -32601, message: 'Method not found' } });
+  };
+
+  const provider = createShellProvider({ rpcHttpUrl: 'https://rpc.devnet.shell.local' });
+
+  await assert.rejects(
+    provider.getTransactionsByAddressV2('0x' + '44'.repeat(32), {
+      limit: 25,
+      direction: 'asc',
+    }),
+    /ascending cursor pagination/,
+  );
+  assert.deepEqual(calls.map((call) => call.method), ['shell_getTransactionsByAddressV2']);
+});
+
 function rpc(payload) {
   return new Response(JSON.stringify(payload), {
     status: 200,

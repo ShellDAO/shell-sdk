@@ -393,9 +393,10 @@ export async function waitForTransactionReceipt(
   options: WaitForTransactionReceiptOptions,
 ): Promise<ShellRpcReceipt> {
   const timeoutMs = options.timeoutMs ?? 120_000;
-  const pollIntervalMs = options.pollIntervalMs ?? 2_000;
+  const requestedPollIntervalMs = options.pollIntervalMs ?? 2_000;
   validateNonNegativeInteger(timeoutMs, "timeoutMs");
-  validateNonNegativeInteger(pollIntervalMs, "pollIntervalMs");
+  validateNonNegativeInteger(requestedPollIntervalMs, "pollIntervalMs");
+  const pollIntervalMs = Math.max(requestedPollIntervalMs, 100);
 
   const deadline = Date.now() + timeoutMs;
   while (Date.now() <= deadline) {

@@ -294,9 +294,10 @@ const validators = await provider.getValidatorSnapshot({ proposerWindow: 200 });
 RPC v2 list methods clamp page/range sizes to 100 items. The default
 transaction detail is `summary`, which omits calldata, signatures, proof bytes,
 and full logs. Request `detail: "full"` or `includeReceipt: true` only when the
-client needs the larger payload. `getTransactionsByAddressV2` can fall back to
-the legacy first page on older nodes, but cursor requests intentionally fail if
-the node does not support v2 cursor pagination.
+client needs the larger payload. `getTransactionsByAddressV2` falls back only
+when an older node returns `method not found`, and only for the first descending
+page. Cursor requests and ascending history require v2 support and fail clearly
+on legacy nodes.
 
 **Custom endpoint:**
 
@@ -520,7 +521,9 @@ Node scripts because it imports `solc`.
 Shell contract addresses are 32-byte Shell addresses. Contract source should
 use Solidity's `address` keyword for account and owner fields; the Shell SDK
 contract helpers encode and decode ABI `address` values as 32-byte Shell
-addresses for this chain.
+addresses for this chain. Receipt polling defaults to 2 seconds and clamps
+custom `pollIntervalMs` values below 100ms to 100ms so clients do not spin on
+pending transactions.
 
 ```typescript
 import { readFile } from "node:fs/promises";
