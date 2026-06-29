@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.11.0] — 2026-06-28
+
+### Added
+
+- Public `shell-sdk/contracts` runtime API for smart contract development:
+  `buildDeployTransaction`, `deployContract`, `buildContractCallTransaction`,
+  `writeContract`, `readContract`, `waitForTransactionReceipt`,
+  `encodeFunctionData`, and `decodeFunctionResult`.
+- Public `shell-sdk/contracts/compiler` Node-only API for Solidity artifacts:
+  `compileSolidity`, `loadContractArtifact`, and `saveContractArtifact`.
+- `shell-sdk` CLI with `contract compile`, `contract deploy`,
+  `contract write`, `contract read`, and `contract smoke` commands backed by
+  the public contract APIs.
+- Contract API unit tests covering deployment shape, write calls, read calls,
+  receipt timeout behavior, Shell 32-byte contract address validation, and
+  Solidity compilation.
+
+### Changed
+
+- SG3 PQVM contract e2e now exercises the public contract APIs instead of
+  duplicating compile/deploy/write/read plumbing in the test.
+- `solc` is an optional dependency used only by the Node compiler subpath, so
+  browser consumers can import runtime contract helpers without bundling the
+  Solidity compiler.
+
 ## [0.10.0] — 2026-06-15
 
 ### Added

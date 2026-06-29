@@ -26,6 +26,7 @@
   - [Provider / RPC](#provider--rpc)
   - [Signer & Adapters](#signer--adapters)
   - [Transaction builders](#transaction-builders)
+  - [Contract development](#contract-development)
   - [System contracts](#system-contracts)
   - [Keystore](#keystore)
 - [End-to-end examples](#end-to-end-examples)
@@ -46,6 +47,7 @@
 - **Shell addresses** — `0x`-prefixed 64-character lowercase hex (full 32-byte BLAKE3) derived from PQ public keys
 - **Native account abstraction** — key rotation and custom validation code via system contracts
 - **viem integration** — standard Ethereum JSON-RPC methods via a typed `PublicClient`
+- **Smart contract helpers** — compile Solidity, deploy Shell contracts, write transactions, read with `eth_call`, and wait for receipts
 - **Shell-specific RPC** — `shell_getPqPubkey`, `shell_sendTransaction`, `shell_getTransactionsByAddress`, `shell_getNodeInfo`, `shell_getWitness`
 - **Reward-aware history types** — block/address transaction summaries expose readable `shellType`, `rewardKind`, and STARK reward metadata (`rewardLayer`, `rewardSourceHash`, `originalSize`, `compressedSize`)
 - **Node introspection** — `getNodeInfo()` returns version, block height, peer count, and storage profile; `getWitness()` fetches raw PQ signatures for any block
@@ -495,6 +497,115 @@ const signed = await signer.buildSignedTransaction({ tx, txHash });
 
 ---
 
+### Contract development
+
+Runtime helpers are available from `shell-sdk/contracts`; Node-only Solidity
+compiler helpers are available from `shell-sdk/contracts/compiler`.
+
+Use `contracts` in browser and Node apps. Use `contracts/compiler` only from
+Node scripts because it imports `solc`.
+
+| Helper | Description |
+|---|---|
+| `compileSolidity(opts)` | Node-only Solidity compile helper that returns a normalized Shell artifact |
+| `loadContractArtifact(path)` / `saveContractArtifact(path, artifact)` | Node-only artifact IO helpers |
+| `buildDeployTransaction(opts)` | Build a Shell contract creation tx (`to: null`) |
+| `deployContract(opts)` | Build, sign, broadcast, optionally wait, and validate the 32-byte contract address |
+| `buildContractCallTransaction(opts)` | Build a Shell transaction targeting a deployed contract |
+| `writeContract(opts)` | Build, sign, broadcast, and optionally wait for a state-changing call |
+| `readContract(opts)` | Encode calldata, call `eth_call`, and decode the ABI result |
+| `waitForTransactionReceipt(opts)` | Poll `eth_getTransactionReceipt` with timeout handling |
+| `encodeFunctionData(opts)` / `decodeFunctionResult(opts)` | Stable SDK wrappers around viem ABI helpers |
+
+Shell contract addresses are 32-byte Shell addresses. Contract source should
+use Solidity's `address` keyword for account and owner fields; the Shell SDK
+contract helpers encode and decode ABI `address` values as 32-byte Shell
+addresses for this chain.
+
+```typescript
+import { readFile } from "node:fs/promises";
+import { createShellProvider, decryptKeystore } from "shell-sdk";
+import {
+  deployContract,
+  readContract,
+  writeContract,
+} from "shell-sdk/contracts";
+import {
+  compileSolidity,
+} from "shell-sdk/contracts/compiler";
+
+const rpcHttpUrl = process.env.SHELL_RPC_URL ?? "http://127.0.0.1:8545";
+const chainId = Number(process.env.SHELL_CHAIN_ID ?? "1337");
+const keystore = JSON.parse(await readFile(process.env.SHELL_KEYSTORE_PATH!, "utf8"));
+const signer = await decryptKeystore(keystore, process.env.SHELL_KEYSTORE_PASSWORD!);
+const provider = createShellProvider({ rpcHttpUrl });
+
+const artifact = await compileSolidity({
+  sources: [{ path: "contracts/PqvmCounter.sol" }],
+  contractName: "PqvmCounter",
+  outputPath: "artifacts/PqvmCounter.json",
+});
+
+const deployed = await deployContract({
+  provider,
+  signer,
+  chainId,
+  artifact,
+  gasLimit: 1_500_000,
+  wait: true,
+});
+
+await writeContract({
+  provider,
+  signer,
+  chainId,
+  address: deployed.contractAddress!,
+  abi: artifact.abi,
+  functionName: "setNumber",
+  args: [7n],
+  gasLimit: 120_000,
+  wait: true,
+});
+
+const value = await readContract({
+  provider,
+  address: deployed.contractAddress!,
+  abi: artifact.abi,
+  functionName: "getNumber",
+});
+
+console.log({ contract: deployed.contractAddress, value });
+```
+
+The package also ships a Node CLI that uses the same public API:
+
+```bash
+npx shell-sdk contract compile \
+  --source contracts/PqvmCounter.sol \
+  --contract PqvmCounter \
+  --out artifacts/PqvmCounter.json
+
+npx shell-sdk contract deploy \
+  --artifact artifacts/PqvmCounter.json \
+  --keystore my-key.json \
+  --password "$SHELL_KEYSTORE_PASSWORD" \
+  --rpc http://127.0.0.1:8545 \
+  --chain-id 1337
+
+npx shell-sdk contract write \
+  --artifact artifacts/PqvmCounter.json \
+  --address 0x... \
+  --function setNumber \
+  --args '["7n"]'
+
+npx shell-sdk contract read \
+  --artifact artifacts/PqvmCounter.json \
+  --address 0x... \
+  --function getNumber
+```
+
+---
+
 ### System contracts
 
 `import { … } from "shell-sdk/system-contracts"`
@@ -665,7 +776,9 @@ console.log(hash);
 
 ### SG3 smart contract + PQVM full flow (source → compile → deploy → write → read)
 
-The SDK includes an SG3 end-to-end test for contract execution on PQVM:
+The SDK includes an SG3 end-to-end test for contract execution on PQVM. The
+test uses the public `shell-sdk/contracts` and `shell-sdk/contracts/compiler`
+APIs:
 
 1. Compile `contracts/PqvmCounter.sol` with `solc`
 2. Deploy contract with SDK signer + `shell_sendTransaction`
@@ -693,7 +806,6 @@ npm run test:e2e:sg3
 This command runs:
 
 ```bash
-npm run build
 npm run contract:compile
 SHELL_SDK_E2E_SG3=1 node --test tests/pqvm.contract.sg3.e2e.test.mjs
 ```

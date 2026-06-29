@@ -1,11 +1,14 @@
 {
   "name": "shell-sdk",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "TypeScript SDK for Shell Chain — build quantum-safe dApps before Q-Day.",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "shell-sdk": "./dist/cli.js"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -35,6 +38,14 @@
       "types": "./dist/transactions.d.ts",
       "import": "./dist/transactions.js"
     },
+    "./contracts": {
+      "types": "./dist/contracts.d.ts",
+      "import": "./dist/contracts.js"
+    },
+    "./contracts/compiler": {
+      "types": "./dist/contracts-compiler.d.ts",
+      "import": "./dist/contracts-compiler.js"
+    },
     "./system-contracts": {
       "types": "./dist/system-contracts.d.ts",
       "import": "./dist/system-contracts.js"
@@ -60,8 +71,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "clean": "rm -rf dist",
-    "contract:compile": "node scripts/compile-contract-fixture.mjs",
-    "test:e2e:sg3": "npm run build && npm run contract:compile && SHELL_SDK_E2E_SG3=1 node --test tests/pqvm.contract.sg3.e2e.test.mjs",
+    "contract:compile": "npm run build && node scripts/compile-contract-fixture.mjs",
+    "test:e2e:sg3": "npm run contract:compile && SHELL_SDK_E2E_SG3=1 node --test tests/pqvm.contract.sg3.e2e.test.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test tests/*.test.mjs"
   },
@@ -90,6 +101,14 @@
   },
   "overrides": {
     "ws": "^8.21.0"
+  },
+  "peerDependencies": {
+    "solc": "^0.8.30"
+  },
+  "peerDependenciesMeta": {
+    "solc": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

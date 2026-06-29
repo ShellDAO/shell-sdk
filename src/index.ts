@@ -72,6 +72,27 @@ export {
   type BuildSponsoredTransactionOptions,
 } from "./transactions.js";
 export {
+  buildContractCallTransaction,
+  buildDeployTransaction,
+  decodeFunctionResult,
+  deployContract,
+  encodeFunctionData,
+  readContract,
+  waitForTransactionReceipt,
+  writeContract,
+  type BuildContractCallTransactionOptions,
+  type BuildDeployTransactionOptions,
+  type ContractReadOptions,
+  type ContractWriteOptions,
+  type ContractWriteResult,
+  type DecodeContractFunctionResultOptions,
+  type DeployContractOptions,
+  type DeployContractResult,
+  type EncodeContractFunctionDataOptions,
+  type ShellContractArtifact,
+  type WaitForTransactionReceiptOptions,
+} from "./contracts.js";
+export {
   assertSignerMatchesKeystore,
   decryptKeystore,
   exportEncryptedKeyJson,
