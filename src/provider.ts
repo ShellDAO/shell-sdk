@@ -52,6 +52,23 @@ import type {
 } from "./types.js";
 import { validateRpcUrl } from "./validation.js";
 
+class RpcRequestError extends Error {
+  readonly code: number;
+
+  constructor(code: number, message: string) {
+    super(`[${code}] ${message}`);
+    this.name = "RpcRequestError";
+    this.code = code;
+  }
+}
+
+function isMethodNotFoundError(error: unknown): boolean {
+  if (error instanceof RpcRequestError) {
+    return error.code === -32601;
+  }
+  return error instanceof Error && /method not found/i.test(error.message);
+}
+
 /**
  * Pre-configured viem chain definition for Shell local dev / testnet.
  *
@@ -178,7 +195,7 @@ export class ShellProvider {
 
     const body = (await response.json()) as JsonRpcResponse<T>;
     if ("error" in body && body.error) {
-      throw new Error(`[${body.error.code}] ${body.error.message}`);
+      throw new RpcRequestError(body.error.code, body.error.message);
     }
 
     return body.result;
@@ -270,6 +287,14 @@ export class ShellProvider {
       if (options.cursor) {
         throw error;
       }
+      if (!isMethodNotFoundError(error)) {
+        throw error;
+      }
+      if (options.direction === "asc") {
+        throw new Error(
+          "shell_getTransactionsByAddressV2 is required for ascending cursor pagination; legacy fallback only supports descending first-page history",
+        );
+      }
       const legacy = await this.getTransactionsByAddress(address, {
         fromBlock: options.fromBlock,
         toBlock: options.toBlock,
@@ -281,7 +306,7 @@ export class ShellProvider {
         fromBlock: legacy.fromBlock ?? legacy.from_block ?? "0x0",
         toBlock: legacy.toBlock ?? legacy.to_block ?? "0x0",
         limit: legacy.limit,
-        direction: options.direction ?? "desc",
+        direction: "desc",
         total: legacy.total,
         nextCursor: null,
         hasMore: legacy.transactions.length < legacy.total,
