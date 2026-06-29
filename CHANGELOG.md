@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.11.1] — 2026-06-29
+
+### Fixed
+
+- Limited `getTransactionsByAddressV2` legacy fallback to older nodes that
+  return `method not found`.
+- Rejected ascending cursor history on legacy nodes instead of returning
+  mislabeled descending data.
+- Clamped receipt polling intervals below 100ms to avoid tight RPC loops.
+
 ## [0.11.0] — 2026-06-28
 
 ### Added
