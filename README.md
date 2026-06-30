@@ -777,9 +777,9 @@ console.log(hash);
 
 ---
 
-### SG3 smart contract + PQVM full flow (source → compile → deploy → write → read)
+### Testnet smart contract + PQVM full flow (source → compile → deploy → write → read)
 
-The SDK includes an SG3 end-to-end test for contract execution on PQVM. The
+The SDK includes an optional testnet end-to-end test for contract execution on PQVM. The
 test uses the public `shell-sdk/contracts` and `shell-sdk/contracts/compiler`
 APIs:
 
@@ -792,9 +792,9 @@ APIs:
 
 | Variable | Description |
 |---|---|
-| `SHELL_SDK_E2E_SG3=1` | Enables SG3 E2E test |
-| `SHELL_SDK_RPC_URL` | SG3 RPC URL (e.g. `http://47.237.195.95:8545`) |
-| `SHELL_SDK_CHAIN_ID` | Chain ID for SG3 (default in test: `10`) |
+| `SHELL_SDK_E2E_TESTNET=1` | Enables the testnet E2E test |
+| `SHELL_SDK_RPC_URL` | Testnet RPC URL |
+| `SHELL_SDK_CHAIN_ID` | Testnet chain ID |
 | `SHELL_SDK_E2E_KEYSTORE_PATH` or `SHELL_SDK_E2E_KEYSTORE_JSON` | Funded test keystore |
 | `SHELL_SDK_E2E_KEYSTORE_PASSWORD` | Keystore password |
 | `SHELL_SDK_E2E_FAUCET_URL` *(optional)* | Faucet endpoint for low-balance top-up |
@@ -803,21 +803,21 @@ APIs:
 
 ```bash
 npm install
-npm run test:e2e:sg3
+npm run test:e2e:testnet
 ```
 
 This command runs:
 
 ```bash
 npm run contract:compile
-SHELL_SDK_E2E_SG3=1 node --test tests/pqvm.contract.sg3.e2e.test.mjs
+SHELL_SDK_E2E_TESTNET=1 node --test tests/pqvm.contract.testnet.e2e.test.mjs
 ```
 
 #### Troubleshooting
 
 - `missing keystore`: set `SHELL_SDK_E2E_KEYSTORE_PATH` or `SHELL_SDK_E2E_KEYSTORE_JSON`.
 - `insufficient balance`: fund test account or set `SHELL_SDK_E2E_FAUCET_URL`.
-- `rpc request failed`: verify SG3 RPC reachability and chain health.
+- `rpc request failed`: verify RPC reachability and chain health.
 - `deploy transaction failed` / `increment transaction failed`: check node logs and receipt status.
 
 ---

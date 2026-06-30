@@ -14,8 +14,8 @@ import {
 } from '../dist/index.js';
 import { compileContractFixture } from '../scripts/compile-contract-fixture.mjs';
 
-const ENABLED = process.env.SHELL_SDK_E2E_SG3 === '1';
-const RPC_URL = process.env.SHELL_SDK_RPC_URL ?? 'http://47.237.195.95:8545';
+const ENABLED = process.env.SHELL_SDK_E2E_TESTNET === '1';
+const RPC_URL = process.env.SHELL_SDK_RPC_URL;
 const CHAIN_ID = Number(process.env.SHELL_SDK_CHAIN_ID ?? '10');
 const MIN_BALANCE_WEI = BigInt(process.env.SHELL_SDK_MIN_BALANCE_WEI ?? '10000000000000000');
 const MAX_FEE_PER_GAS = Number(process.env.SHELL_SDK_MAX_FEE_PER_GAS ?? '2000000000');
@@ -106,7 +106,8 @@ async function topupViaFaucet(address) {
 
 const contractTest = ENABLED ? test : test.skip;
 
-contractTest('sg3 pqvm smart contract flow: compile -> deploy -> write -> read', async () => {
+contractTest('testnet pqvm smart contract flow: compile -> deploy -> write -> read', async () => {
+  assert.ok(RPC_URL, 'SHELL_SDK_RPC_URL is required');
   assert.ok(KEYSTORE_PASSWORD, 'SHELL_SDK_E2E_KEYSTORE_PASSWORD is required');
   assert.ok(Number.isSafeInteger(CHAIN_ID) && CHAIN_ID > 0, 'SHELL_SDK_CHAIN_ID must be positive');
 
