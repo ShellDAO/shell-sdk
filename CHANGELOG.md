@@ -29,7 +29,7 @@
 
 ### Changed
 
-- SG3 PQVM contract e2e now exercises the public contract APIs instead of
+- Testnet PQVM contract e2e now exercises the public contract APIs instead of
   duplicating compile/deploy/write/read plumbing in the test.
 - `solc` is an optional dependency used only by the Node compiler subpath, so
   browser consumers can import runtime contract helpers without bundling the
