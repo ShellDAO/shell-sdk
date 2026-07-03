@@ -19,6 +19,8 @@ export {
   createShellWsClient,
   ShellProvider,
   shellDevnet,
+  type ShellChainConfig,
+  type ShellPublicClient,
   type CreateShellPublicClientOptions,
 } from "./provider.js";
 export {
