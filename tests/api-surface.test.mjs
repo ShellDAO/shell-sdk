@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import * as root from '../dist/index.js';
@@ -33,6 +34,13 @@ test('subpath exports retain advanced helpers', () => {
   assert.equal(typeof transactions.hexBytes, 'function');
   assert.equal(typeof signer.KEY_TYPE_TO_SIGNATURE_TYPE, 'object');
   assert.equal(typeof signer.SIGNATURE_TYPE_IDS, 'object');
+});
+
+test('root type declarations re-export provider public types', async () => {
+  const declarations = await readFile(new URL('../dist/index.d.ts', import.meta.url), 'utf8');
+
+  assert.match(declarations, /type ShellChainConfig/);
+  assert.match(declarations, /type ShellPublicClient/);
 });
 
 test('formatShellRpcTxType labels starkReward correctly', () => {
