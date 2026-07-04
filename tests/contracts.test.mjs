@@ -50,7 +50,7 @@ function makeReceipt(overrides = {}) {
   };
 }
 
-function makeProvider({ receipt = makeReceipt(), callResult = '0x' } = {}) {
+function makeProvider({ receipt = makeReceipt(), callResult = '0x', nonce = '0x0' } = {}) {
   const calls = [];
   const provider = {
     rpcHttpUrl: 'http://127.0.0.1:8545',
@@ -64,7 +64,7 @@ function makeProvider({ receipt = makeReceipt(), callResult = '0x' } = {}) {
     const body = JSON.parse(init.body);
     calls.push(body);
     if (body.method === 'eth_getTransactionCount') {
-      return makeResponse({ jsonrpc: '2.0', id: body.id, result: '0x0' });
+      return makeResponse({ jsonrpc: '2.0', id: body.id, result: nonce });
     }
     if (body.method === 'eth_getTransactionReceipt') {
       return makeResponse({ jsonrpc: '2.0', id: body.id, result: receipt });
@@ -167,6 +167,44 @@ test('deployContract sends, waits, and validates 32-byte contract address', asyn
     'shell_sendTransaction',
     'eth_getTransactionReceipt',
   ]);
+});
+
+test('deployContract rejects malformed pending nonce quantities before signing', async () => {
+  const { provider, fetchMock } = makeProvider({ nonce: '0x01' });
+  const signer = makeSigner();
+
+  await withFetchMock(fetchMock, async () => {
+    await assert.rejects(
+      deployContract({
+        provider,
+        signer,
+        chainId: 1337,
+        artifact: { contractName: 'Counter', abi: NO_CONSTRUCTOR_ABI, bytecode: '0x60006000' },
+      }),
+      /canonical 0x-prefixed JSON-RPC quantity/,
+    );
+  });
+
+  assert.equal(signer.signed.length, 0);
+});
+
+test('deployContract rejects pending nonces outside JavaScript safe integer range', async () => {
+  const { provider, fetchMock } = makeProvider({ nonce: '0x20000000000000' });
+  const signer = makeSigner();
+
+  await withFetchMock(fetchMock, async () => {
+    await assert.rejects(
+      deployContract({
+        provider,
+        signer,
+        chainId: 1337,
+        artifact: { contractName: 'Counter', abi: NO_CONSTRUCTOR_ABI, bytecode: '0x60006000' },
+      }),
+      /non-negative safe integer/,
+    );
+  });
+
+  assert.equal(signer.signed.length, 0);
 });
 
 test('writeContract sends contract call and waits for receipt', async () => {
