@@ -139,20 +139,45 @@ export type ShellPublicClient = PublicClient;
 
 export type ShellBlockRangeBound = number | `0x${string}`;
 
-interface JsonRpcSuccess<T> {
-  result: T;
-  error?: undefined;
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
-interface JsonRpcFailure {
-  result?: undefined;
-  error: {
-    code: number;
-    message: string;
-  };
-}
+async function parseJsonRpcResponse<T>(response: Response): Promise<T> {
+  const text = await response.text();
+  if (!text) {
+    throw new Error("rpc response body is empty");
+  }
 
-type JsonRpcResponse<T> = JsonRpcSuccess<T> | JsonRpcFailure;
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    throw new Error("rpc response body is not valid JSON");
+  }
+
+  if (!isRecord(body)) {
+    throw new Error("rpc response body must be a JSON-RPC object");
+  }
+
+  if ("error" in body && body.error !== undefined) {
+    const error = body.error;
+    if (
+      !isRecord(error) ||
+      typeof error.code !== "number" ||
+      typeof error.message !== "string"
+    ) {
+      throw new Error("rpc error response is malformed");
+    }
+    throw new RpcRequestError(error.code, error.message);
+  }
+
+  if (!("result" in body)) {
+    throw new Error("rpc response body is missing result");
+  }
+
+  return body.result as T;
+}
 
 /**
  * RPC client for Shell Chain.
@@ -193,12 +218,7 @@ export class ShellProvider {
       throw new Error(`rpc request failed: ${response.status} ${response.statusText}`);
     }
 
-    const body = (await response.json()) as JsonRpcResponse<T>;
-    if ("error" in body && body.error) {
-      throw new RpcRequestError(body.error.code, body.error.message);
-    }
-
-    return body.result;
+    return parseJsonRpcResponse<T>(response);
   }
 
   /**
