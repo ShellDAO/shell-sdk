@@ -309,9 +309,18 @@ async function rpcRequest<T>(provider: ShellProvider, method: string, params: un
 
 async function getPendingNonce(provider: ShellProvider, address: AddressLike): Promise<number> {
   const nonceHex = await rpcRequest<HexString>(provider, "eth_getTransactionCount", [address, "pending"]);
-  const nonce = Number(BigInt(nonceHex));
-  validateNonNegativeInteger(nonce, "nonce");
-  return nonce;
+  return parseRpcQuantityToSafeInteger(nonceHex, "nonce");
+}
+
+function parseRpcQuantityToSafeInteger(value: string, fieldName: string): number {
+  if (!/^0x(?:0|[1-9a-fA-F][0-9a-fA-F]*)$/.test(value)) {
+    throw new Error(`${fieldName} must be a canonical 0x-prefixed JSON-RPC quantity, got ${value}`);
+  }
+  const parsed = BigInt(value);
+  if (parsed > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error(`${fieldName} must be a non-negative safe integer (≤ 2^53-1), got ${value}`);
+  }
+  return Number(parsed);
 }
 
 export function encodeFunctionData(parameters: EncodeContractFunctionDataOptions): HexString {
