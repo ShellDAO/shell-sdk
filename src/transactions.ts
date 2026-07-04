@@ -723,6 +723,20 @@ function toHexGasLimit(gasLimit: number): HexQuantity {
   return ("0x" + gasLimit.toString(16)) as HexQuantity;
 }
 
+function toHexValue(value: bigint, fieldName: string): HexString {
+  validateNonNegativeBigInt(value, fieldName);
+  if (value > (1n << 256n) - 1n) {
+    throw new RangeError(`${fieldName} must fit in u256, got: ${value}`);
+  }
+  return `0x${value.toString(16)}` as HexString;
+}
+
+function validateHexData(data: HexString, fieldName: string): void {
+  if (!/^0x(?:[0-9a-fA-F]{2})*$/.test(data)) {
+    throw new Error(`${fieldName} must be 0x-prefixed byte-aligned hex data`);
+  }
+}
+
 /**
  * Convenience helper: build a minimal `AaInnerCall` for a SHELL token transfer.
  *
@@ -736,7 +750,13 @@ export function buildInnerTransfer(
   value: bigint,
   gasLimit = 21_000,
 ): AaInnerCall {
-  return { to, value: ("0x" + value.toString(16)) as HexString, data: "0x", gas_limit: toHexGasLimit(gasLimit) };
+  validateAddress(to, "to");
+  return {
+    to,
+    value: toHexValue(value, "value"),
+    data: "0x",
+    gas_limit: toHexGasLimit(gasLimit),
+  };
 }
 
 /**
@@ -754,7 +774,14 @@ export function buildInnerCall(
   gasLimit: number,
   value = 0n,
 ): AaInnerCall {
-  return { to, value: ("0x" + value.toString(16)) as HexString, data, gas_limit: toHexGasLimit(gasLimit) };
+  validateAddress(to, "to");
+  validateHexData(data, "data");
+  return {
+    to,
+    value: toHexValue(value, "value"),
+    data,
+    gas_limit: toHexGasLimit(gasLimit),
+  };
 }
 
 // ---------------------------------------------------------------------------

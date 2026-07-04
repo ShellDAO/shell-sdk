@@ -162,8 +162,23 @@ test('buildInnerTransfer: rejects negative gasLimit', () => {
   assert.throws(() => buildInnerTransfer('0x0000000000000000000000000000000000000000000000000000000000000042', 0n, -1), /non-negative safe integer/);
 });
 
+test('buildInnerTransfer: rejects invalid recipient and value', () => {
+  assert.throws(() => buildInnerTransfer('0x1234', 0n, 21_000), /valid Shell address/);
+  assert.throws(() => buildInnerTransfer('0x0000000000000000000000000000000000000000000000000000000000000042', -1n, 21_000), /non-negative bigint/);
+  assert.throws(
+    () => buildInnerTransfer('0x0000000000000000000000000000000000000000000000000000000000000042', 1n << 256n, 21_000),
+    /fit in u256/,
+  );
+});
+
 test('buildInnerCall: rejects non-integer gasLimit', () => {
   assert.throws(() => buildInnerCall('0x0000000000000000000000000000000000000000000000000000000000000042', '0x', 21_000.5), /non-negative safe integer/);
+});
+
+test('buildInnerCall: rejects invalid calldata and value', () => {
+  assert.throws(() => buildInnerCall('0x0000000000000000000000000000000000000000000000000000000000000042', '0xabc', 21_000), /byte-aligned hex data/);
+  assert.throws(() => buildInnerCall('0x0000000000000000000000000000000000000000000000000000000000000042', 'not-hex', 21_000), /byte-aligned hex data/);
+  assert.throws(() => buildInnerCall('0x0000000000000000000000000000000000000000000000000000000000000042', '0x', 21_000, -1n), /non-negative bigint/);
 });
 
 // ---------------------------------------------------------------------------
