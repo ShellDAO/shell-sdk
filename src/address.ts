@@ -101,7 +101,7 @@ export function deriveShellAddressFromPublicKey(
   publicKey: Uint8Array,
   algorithmId: number,
 ): string {
-  if (algorithmId < 0 || algorithmId > 255) {
+  if (!Number.isInteger(algorithmId) || algorithmId < 0 || algorithmId > 255) {
     throw new Error(`invalid algorithm id: ${algorithmId}`);
   }
 
