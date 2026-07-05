@@ -247,9 +247,9 @@ import { shellDevnet } from "shell-sdk/provider";
 | `getTransactionSummary(txHash, opts?)` | `shell_getTransactionSummary` → compact transaction and optional receipt metadata |
 | `getValidatorSnapshot(opts?)` | `shell_getValidatorSnapshot` → validator/proposer aggregate and proposer window stats; `proposerWindow` defaults to 200 and accepts 1..1000 |
 | `getBlockReceipts(block)` | `eth_getBlockReceipts` → `ShellRpcReceipt[]` |
-| `getNodeInfo()` | `shell_getNodeInfo` → `ShellNodeInfo` (version, block height, peer count, storage profile) |
+| `getNodeInfo()` | `shell_getNodeInfo` → `ShellNodeInfo` (version, block height, peer count) |
 | `getWitness(blockNumberOrHash)` | `shell_getWitness` → `ShellWitnessBundle` or `null` if pruned |
-| `getStorageProfile()` | Convenience wrapper around `getNodeInfo()` → `ShellStorageProfile \| undefined` |
+| `getStorageProfile()` | `shell_getStorageProfile` → canonical `ShellStorageProfile \| undefined` |
 
 **Examples:**
 

@@ -40,6 +40,7 @@ import type {
   ShellRpcCapabilities,
   ShellRpcReceipt,
   ShellStorageProfile,
+  ShellStorageProfileInfo,
   ShellTxByAddressPage,
   ShellTxByAddressV2Options,
   ShellTxByAddressV2Page,
@@ -67,6 +68,13 @@ function isMethodNotFoundError(error: unknown): boolean {
     return error.code === -32601;
   }
   return error instanceof Error && /method not found/i.test(error.message);
+}
+
+function isStorageProfileUnavailableError(error: unknown): boolean {
+  if (isMethodNotFoundError(error)) {
+    return true;
+  }
+  return error instanceof Error && /storage profile not configured/i.test(error.message);
 }
 
 const MAX_VALIDATOR_SNAPSHOT_PROPOSER_WINDOW = 1000;
@@ -446,14 +454,21 @@ export class ShellProvider {
   /**
    * Fetch the active storage profile of the connected node.
    *
-   * Convenience wrapper around {@link getNodeInfo}.
+   * Calls `shell_getStorageProfile` and returns its canonical profile name.
    *
-   * @returns Storage profile string (`"archive"`, `"full"`, or `"light"`), or
+   * @returns Storage profile string (`"archive"`, `"full"`, or `"pruned"`), or
    *   `undefined` if the node does not report it.
    */
   async getStorageProfile(): Promise<ShellStorageProfile | undefined> {
-    const info = await this.getNodeInfo();
-    return info.storage_profile;
+    try {
+      const info = await this.request<ShellStorageProfileInfo>("shell_getStorageProfile", []);
+      return info.profile;
+    } catch (error) {
+      if (isStorageProfileUnavailableError(error)) {
+        return undefined;
+      }
+      throw error;
+    }
   }
 
   // ── AA methods (v0.18.0) ──────────────────────────────────────────────────

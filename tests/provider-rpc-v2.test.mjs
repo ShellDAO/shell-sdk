@@ -127,6 +127,49 @@ test('getValidatorSnapshot rejects proposer windows outside node bounds before R
   assert.deepEqual(calls, []);
 });
 
+test('getStorageProfile reads the canonical shell_getStorageProfile descriptor', async () => {
+  const calls = [];
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    calls.push(body);
+    return rpc({
+      jsonrpc: '2.0',
+      id: body.id,
+      result: {
+        profile: 'pruned',
+        bodyRetention: 4096,
+        witnessRetention: 64,
+        keepRecent: 4096,
+        proofReplacementGrace: 128,
+        statePruningExperimental: false,
+      },
+    });
+  };
+
+  const provider = createShellProvider({ rpcHttpUrl: 'https://rpc.devnet.shell.local' });
+
+  assert.equal(await provider.getStorageProfile(), 'pruned');
+  assert.deepEqual(calls.map((call) => call.method), ['shell_getStorageProfile']);
+});
+
+test('getStorageProfile returns undefined when the node has no profile descriptor', async () => {
+  const calls = [];
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    calls.push(body);
+    return rpc({
+      jsonrpc: '2.0',
+      id: body.id,
+      error: { code: -32003, message: 'storage profile not configured on this node' },
+    });
+  };
+
+  const provider = createShellProvider({ rpcHttpUrl: 'https://rpc.devnet.shell.local' });
+
+  assert.equal(await provider.getStorageProfile(), undefined);
+  assert.deepEqual(calls.map((call) => call.method), ['shell_getStorageProfile']);
+});
+
 function rpc(payload) {
   return new Response(JSON.stringify(payload), {
     status: 200,

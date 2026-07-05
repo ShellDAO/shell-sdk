@@ -163,6 +163,7 @@ export type {
   ShellSendTransactionParams,
   ShellSignature,
   ShellStorageProfile,
+  ShellStorageProfileInfo,
   ShellTransactionRequest,
   ShellTxByAddressPage,
   ShellTxByAddressV2Options,
