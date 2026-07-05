@@ -69,6 +69,27 @@ function isMethodNotFoundError(error: unknown): boolean {
   return error instanceof Error && /method not found/i.test(error.message);
 }
 
+const MAX_VALIDATOR_SNAPSHOT_PROPOSER_WINDOW = 1000;
+
+function validatorSnapshotOptions(options: ShellValidatorSnapshotOptions): {
+  proposerWindow: number | null;
+} {
+  const proposerWindow = options.proposerWindow;
+  if (proposerWindow == null) {
+    return { proposerWindow: null };
+  }
+  if (
+    !Number.isSafeInteger(proposerWindow) ||
+    proposerWindow < 1 ||
+    proposerWindow > MAX_VALIDATOR_SNAPSHOT_PROPOSER_WINDOW
+  ) {
+    throw new Error(
+      `proposerWindow must be a safe integer in [1, ${MAX_VALIDATOR_SNAPSHOT_PROPOSER_WINDOW}], got ${proposerWindow}`,
+    );
+  }
+  return { proposerWindow };
+}
+
 /**
  * Pre-configured viem chain definition for Shell local dev / testnet.
  *
@@ -382,11 +403,7 @@ export class ShellProvider {
   async getValidatorSnapshot(
     options: ShellValidatorSnapshotOptions = {},
   ): Promise<ShellValidatorSnapshot> {
-    return this.request("shell_getValidatorSnapshot", [
-      {
-        proposerWindow: options.proposerWindow ?? null,
-      },
-    ]);
+    return this.request("shell_getValidatorSnapshot", [validatorSnapshotOptions(options)]);
   }
 
   /**

@@ -109,6 +109,24 @@ test('getTransactionsByAddressV2 legacy fallback rejects ascending order', async
   assert.deepEqual(calls.map((call) => call.method), ['shell_getTransactionsByAddressV2']);
 });
 
+test('getValidatorSnapshot rejects proposer windows outside node bounds before RPC', async () => {
+  const calls = [];
+  globalThis.fetch = async (_url, init) => {
+    calls.push(JSON.parse(init.body));
+    return rpc({ jsonrpc: '2.0', id: 1, result: {} });
+  };
+
+  const provider = createShellProvider({ rpcHttpUrl: 'https://rpc.devnet.shell.local' });
+
+  for (const proposerWindow of [0, -1, 1001, 1.5, Number.NaN]) {
+    await assert.rejects(
+      provider.getValidatorSnapshot({ proposerWindow }),
+      /proposerWindow must be a safe integer in \[1, 1000\]/,
+    );
+  }
+  assert.deepEqual(calls, []);
+});
+
 function rpc(payload) {
   return new Response(JSON.stringify(payload), {
     status: 200,

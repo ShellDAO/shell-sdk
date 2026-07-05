@@ -785,6 +785,7 @@ export interface ShellChainSnapshot {
 }
 
 export interface ShellValidatorSnapshotOptions {
+  /** Recent proposer stats window. The node defaults to 200 and accepts 1..1000. */
   proposerWindow?: number;
 }
 

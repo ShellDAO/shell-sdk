@@ -245,7 +245,7 @@ import { shellDevnet } from "shell-sdk/provider";
 | `getAddressSummary(address, opts?)` | `shell_getAddressSummary` → balance/nonce/code/pubkey state plus recent transaction page |
 | `getTransactionsByAddressV2(address, opts?)` | `shell_getTransactionsByAddressV2` cursor pagination; falls back to legacy first-page history on older nodes |
 | `getTransactionSummary(txHash, opts?)` | `shell_getTransactionSummary` → compact transaction and optional receipt metadata |
-| `getValidatorSnapshot(opts?)` | `shell_getValidatorSnapshot` → validator/proposer aggregate and proposer window stats |
+| `getValidatorSnapshot(opts?)` | `shell_getValidatorSnapshot` → validator/proposer aggregate and proposer window stats; `proposerWindow` defaults to 200 and accepts 1..1000 |
 | `getBlockReceipts(block)` | `eth_getBlockReceipts` → `ShellRpcReceipt[]` |
 | `getNodeInfo()` | `shell_getNodeInfo` → `ShellNodeInfo` (version, block height, peer count, storage profile) |
 | `getWitness(blockNumberOrHash)` | `shell_getWitness` → `ShellWitnessBundle` or `null` if pruned |
@@ -297,7 +297,8 @@ and full logs. Request `detail: "full"` or `includeReceipt: true` only when the
 client needs the larger payload. `getTransactionsByAddressV2` falls back only
 when an older node returns `method not found`, and only for the first descending
 page. Cursor requests and ascending history require v2 support and fail clearly
-on legacy nodes.
+on legacy nodes. `getValidatorSnapshot` validates `proposerWindow` locally so
+clients do not send values outside the node's 1..1000 proposer stats window.
 
 **Custom endpoint:**
 
