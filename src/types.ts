@@ -585,13 +585,27 @@ export interface ShellWitnessRootResult {
 // ---------------------------------------------------------------------------
 
 /**
- * Node storage profile as advertised via the `StorageCapability` P2P message.
+ * Node storage profile name.
  *
  * - `"archive"` — all TX bodies and PQ witnesses kept forever; STARK proofs never replace witnesses.
  * - `"full"` — TX bodies kept forever; PQ witnesses replaced by STARK proofs when they arrive.
- * - `"light"` — rolling ~4096-block window; older data pruned.
+ * - `"pruned"` — canonical RPC name for the rolling ~4096-block window.
+ * - `"light"` — legacy CLI/P2P alias for the rolling profile.
  */
-export type ShellStorageProfile = "archive" | "full" | "light";
+export type ShellStorageProfile = "archive" | "full" | "pruned" | "light";
+
+/**
+ * Effective storage profile descriptor returned by `shell_getStorageProfile`
+ * and embedded in capability/snapshot responses.
+ */
+export interface ShellStorageProfileInfo {
+  profile: Exclude<ShellStorageProfile, "light">;
+  bodyRetention: number;
+  witnessRetention: number;
+  keepRecent: number;
+  proofReplacementGrace: number;
+  statePruningExperimental: boolean;
+}
 
 /**
  * Response from `shell_getNodeInfo`.
@@ -752,7 +766,7 @@ export interface ShellRpcCapabilities {
   supportsCursorPagination: boolean;
   supportsAddressHistoryIndex: boolean;
   witnessStore: boolean;
-  storageProfile?: unknown;
+  storageProfile?: ShellStorageProfileInfo;
   fallbackMethods: string[];
 }
 
@@ -781,7 +795,7 @@ export interface ShellChainSnapshot {
   avgBlockTime: number;
   consensus: unknown;
   validators: unknown;
-  storageProfile?: unknown;
+  storageProfile?: ShellStorageProfileInfo;
 }
 
 export interface ShellValidatorSnapshotOptions {
