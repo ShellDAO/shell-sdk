@@ -482,7 +482,7 @@ const signed = buildSignedTransaction({
 
 #### `hashTransaction`
 
-Compute the canonical shell-chain v0.24.x signing hash as **BLAKE3** over the structured preimage:
+Compute the canonical shell-chain v0.25.x signing hash as **BLAKE3** over the structured preimage:
 
 `chain_id(8B BE) || nonce(8B BE) || to(32B|zero) || value(32B BE) || data || gas_limit(8B BE) || max_fee_per_gas(8B BE) || max_priority_fee_per_gas(8B BE) || sig_type(1B) || tx_type(1B)`
 

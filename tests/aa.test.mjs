@@ -13,6 +13,7 @@ import {
   AA_BUNDLE_TX_TYPE,
   AA_MAX_INNER_CALLS,
 } from '../dist/transactions.js';
+import { AA_MAX_PAYMASTER_CONTEXT } from '../dist/types.js';
 
 // ---------------------------------------------------------------------------
 // Helper
@@ -50,6 +51,10 @@ test('buildBatchTransaction: rejects too many innerCalls', () => {
 test('buildBatchTransaction: sets tx_type to AA_BUNDLE_TX_TYPE', () => {
   const { tx } = buildBatchTransaction({ chainId: 1, nonce: 0, innerCalls: [MINIMAL_INNER_CALL] });
   assert.equal(tx.tx_type, AA_BUNDLE_TX_TYPE, 'tx_type must be 0x7E');
+});
+
+test('AA constants: paymaster context cap matches shell-chain', () => {
+  assert.equal(AA_MAX_PAYMASTER_CONTEXT, 4096);
 });
 
 test('buildBatchTransaction: aa_bundle contains inner_calls', () => {

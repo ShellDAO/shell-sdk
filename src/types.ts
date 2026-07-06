@@ -138,7 +138,7 @@ export interface AaBundle {
   /**
    * Opaque context bytes forwarded to `IPaymaster.validatePaymasterOp`.
    * Required for contract paymaster. Mutually exclusive with `paymaster_signature`.
-   * Max 256 bytes.
+   * Max 4096 bytes.
    */
   paymaster_context?: number[] | null;
   /**
@@ -154,9 +154,9 @@ export interface AaBundle {
 // ---------------------------------------------------------------------------
 
 /**
- * Maximum length of `paymaster_context` bytes (256 bytes).
+ * Maximum length of `paymaster_context` bytes (4096 bytes).
  */
-export const AA_MAX_PAYMASTER_CONTEXT = 256;
+export const AA_MAX_PAYMASTER_CONTEXT = 4096;
 
 /**
  * Extra PQ verify gas cost per session key authorization (2 × PQ_VERIFY_GAS = 20 000).
