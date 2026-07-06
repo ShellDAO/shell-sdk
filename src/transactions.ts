@@ -798,7 +798,7 @@ export interface BuildContractPaymasterTransactionOptions extends BuildBatchTran
   paymaster: AddressLike;
   /**
    * Opaque context bytes forwarded to `IPaymaster.validatePaymasterOp`.
-   * Max 256 bytes.
+   * Max 4096 bytes.
    */
   paymasterContext: Uint8Array | number[];
 }
