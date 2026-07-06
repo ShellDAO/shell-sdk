@@ -25,19 +25,31 @@ import {
 } from "viem";
 
 import type {
+  ShellAlgorithmRegistryEntry,
+  ShellBlockWitnessesResult,
   ShellEstimateBatchRequest,
   ShellEstimateBatchResult,
   ShellEstimatePaymasterGasRequest,
   ShellEstimatePaymasterGasResult,
+  ShellFinalityInfo,
+  ShellFinalityProof,
+  ShellGovernanceInfo,
   ShellIsSponsoredResult,
   ShellAddressSummary,
   ShellAddressSummaryOptions,
   ShellBlocksRange,
   ShellBlocksRangeOptions,
   ShellChainSnapshot,
+  ShellChainStats,
+  ShellConsensusInfo,
+  HexQuantity,
+  ShellNetworkStats,
   ShellNodeInfo,
   ShellPaymasterPolicy,
+  ShellProofAmendmentResult,
+  ShellRpcBlock,
   ShellRpcCapabilities,
+  ShellRpcV2TxDetail,
   ShellRpcReceipt,
   ShellStorageProfile,
   ShellStorageProfileInfo,
@@ -45,13 +57,14 @@ import type {
   ShellTxByAddressV2Options,
   ShellTxByAddressV2Page,
   ShellTransactionSummaryResult,
+  ShellValidatorStatus,
   ShellValidatorSnapshot,
   ShellValidatorSnapshotOptions,
   ShellWitnessBundle,
   ShellWitnessRootResult,
   SignedShellTransaction,
 } from "./types.js";
-import { validateRpcUrl } from "./validation.js";
+import { validateAddress, validateHash, validateNonNegativeInteger, validateRpcUrl } from "./validation.js";
 
 class RpcRequestError extends Error {
   readonly code: number;
@@ -75,6 +88,33 @@ function isStorageProfileUnavailableError(error: unknown): boolean {
     return true;
   }
   return error instanceof Error && /storage profile not configured/i.test(error.message);
+}
+
+function toRpcQuantity(value: HexQuantity | bigint | number, fieldName: string): HexQuantity {
+  if (typeof value === "bigint") {
+    if (value < 0n) {
+      throw new RangeError(`${fieldName} must be non-negative`);
+    }
+    return `0x${value.toString(16)}` as HexQuantity;
+  }
+  if (typeof value === "number") {
+    validateNonNegativeInteger(value, fieldName);
+    return `0x${value.toString(16)}` as HexQuantity;
+  }
+  if (/^0x(?:0|[1-9a-fA-F][0-9a-fA-F]*)$/.test(value)) {
+    return value.toLowerCase() as HexQuantity;
+  }
+  throw new Error(`${fieldName} must be a canonical 0x-prefixed JSON-RPC quantity`);
+}
+
+function toBlockNumberParam(value: string | number, fieldName: string): string {
+  if (typeof value === "number") {
+    return toRpcQuantity(value, fieldName);
+  }
+  if (/^0x(?:0|[1-9a-fA-F][0-9a-fA-F]*)$/.test(value) || /^(latest|earliest|pending)$/.test(value)) {
+    return value;
+  }
+  throw new Error(`${fieldName} must be a block tag or canonical 0x-prefixed JSON-RPC quantity`);
 }
 
 const MAX_VALIDATOR_SNAPSHOT_PROPOSER_WINDOW = 1000;
@@ -368,17 +408,35 @@ export class ShellProvider {
     return this.request("shell_rpcCapabilities", []);
   }
 
+  async pendingCount(): Promise<string> {
+    return this.request("shell_pendingCount", []);
+  }
+
   async getChainSnapshot(options: Record<string, unknown> = {}): Promise<ShellChainSnapshot> {
     return this.request("shell_getChainSnapshot", [options]);
+  }
+
+  async getShellBlockByNumber(
+    number: string | number,
+    txDetail: ShellRpcV2TxDetail = "summary",
+  ): Promise<ShellRpcBlock | null> {
+    return this.request("shell_getBlockByNumber", [toBlockNumberParam(number, "number"), txDetail]);
+  }
+
+  async getShellBlockByHash(
+    hash: string,
+    txDetail: ShellRpcV2TxDetail = "summary",
+  ): Promise<ShellRpcBlock | null> {
+    validateHash(hash, "hash");
+    return this.request("shell_getBlockByHash", [hash, txDetail]);
   }
 
   async getBlocksRange(
     start: string | number,
     options: ShellBlocksRangeOptions = {},
   ): Promise<ShellBlocksRange> {
-    const startParam = typeof start === "number" ? `0x${start.toString(16)}` : start;
     return this.request("shell_getBlocksRange", [
-      startParam,
+      toBlockNumberParam(start, "start"),
       {
         direction: options.direction ?? "desc",
         limit: options.limit ?? null,
@@ -392,6 +450,7 @@ export class ShellProvider {
     address: string,
     options: ShellAddressSummaryOptions = {},
   ): Promise<ShellAddressSummary> {
+    validateAddress(address, "address");
     return this.request("shell_getAddressSummary", [
       address,
       {
@@ -405,6 +464,7 @@ export class ShellProvider {
     txHash: string,
     options: { includeReceipt?: boolean } = {},
   ): Promise<ShellTransactionSummaryResult> {
+    validateHash(txHash, "txHash");
     return this.request("shell_getTransactionSummary", [txHash, options]);
   }
 
@@ -412,6 +472,49 @@ export class ShellProvider {
     options: ShellValidatorSnapshotOptions = {},
   ): Promise<ShellValidatorSnapshot> {
     return this.request("shell_getValidatorSnapshot", [validatorSnapshotOptions(options)]);
+  }
+
+  async getValidators(): Promise<string[]> {
+    return this.request("shell_getValidators", []);
+  }
+
+  async getValidatorStatus(address: string): Promise<ShellValidatorStatus> {
+    validateAddress(address, "address");
+    return this.request("shell_getValidatorStatus", [address]);
+  }
+
+  async getGovernanceInfo(): Promise<ShellGovernanceInfo> {
+    return this.request("shell_getGovernanceInfo", []);
+  }
+
+  async estimateGovernanceGas(operation: string): Promise<string> {
+    return this.request("shell_estimateGovernanceGas", [operation]);
+  }
+
+  async encodeAddValidator(address: string): Promise<string> {
+    validateAddress(address, "address");
+    return this.request("shell_encodeAddValidator", [address]);
+  }
+
+  async encodeRemoveValidator(address: string): Promise<string> {
+    validateAddress(address, "address");
+    return this.request("shell_encodeRemoveValidator", [address]);
+  }
+
+  async proposeAddValidator(address: string): Promise<string> {
+    validateAddress(address, "address");
+    return this.request("shell_proposeAddValidator", [address]);
+  }
+
+  async proposeRemoveValidator(address: string): Promise<string> {
+    validateAddress(address, "address");
+    return this.request("shell_proposeRemoveValidator", [address]);
+  }
+
+  async proposeSetValidatorWeight(address: string, weight: number): Promise<string> {
+    validateAddress(address, "address");
+    validateNonNegativeInteger(weight, "weight");
+    return this.request("shell_proposeSetValidatorWeight", [address, weight]);
   }
 
   /**
@@ -437,6 +540,31 @@ export class ShellProvider {
     return this.request("shell_getNodeInfo", []);
   }
 
+  async getNetworkStats(): Promise<ShellNetworkStats> {
+    return this.request("shell_getNetworkStats", []);
+  }
+
+  async getChainStats(): Promise<ShellChainStats> {
+    return this.request("shell_getChainStats", []);
+  }
+
+  async getFinalityInfo(): Promise<ShellFinalityInfo> {
+    return this.request("shell_getFinalityInfo", []);
+  }
+
+  async getFinalityProof(blockHash: string): Promise<ShellFinalityProof> {
+    validateHash(blockHash, "blockHash");
+    return this.request("shell_finalityProof", [blockHash]);
+  }
+
+  async consensusInfo(): Promise<ShellConsensusInfo> {
+    return this.request("shell_consensusInfo", []);
+  }
+
+  async transactionCount(): Promise<string> {
+    return this.request("shell_transactionCount", []);
+  }
+
   /**
    * Fetch the PQ witness bundle for a block.
    *
@@ -449,6 +577,25 @@ export class ShellProvider {
    */
   async getWitness(blockNumberOrHash: string): Promise<ShellWitnessBundle | null> {
     return this.request("shell_getWitness", [blockNumberOrHash]);
+  }
+
+  async getBlockWitnesses(blockNumberOrHash: string): Promise<ShellBlockWitnessesResult> {
+    return this.request("shell_getBlockWitnesses", [blockNumberOrHash]);
+  }
+
+  async getProofAmendment(blockHash: string): Promise<ShellProofAmendmentResult> {
+    validateHash(blockHash, "blockHash");
+    return this.request("shell_getProofAmendment", [blockHash]);
+  }
+
+  async getAlgorithmRegistry(): Promise<ShellAlgorithmRegistryEntry[]> {
+    return this.request("shell_getAlgorithmRegistry", []);
+  }
+
+  /** Dev/testnet-only balance mutation RPC. Production nodes should reject it. */
+  async setBalance(address: string, balance: HexQuantity | bigint | number): Promise<boolean> {
+    validateAddress(address, "address");
+    return this.request("shell_setBalance", [address, toRpcQuantity(balance, "balance")]);
   }
 
   /**

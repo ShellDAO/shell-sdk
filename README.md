@@ -7,9 +7,9 @@
 
 ---
 
-> **v0.24.3 aligned**
+> **v0.25.x aligned**
 >
-> Addresses, system-contract IDs, and signing hashes match shell-chain v0.24.x:
+> Addresses, system-contract IDs, and signing hashes match shell-chain v0.25.x:
 > 32-byte `0x…` BLAKE3 addresses, `algo_id` byte `Dilithium3=0`, `MlDsa65=1`,
 > `SphincsSha2256f=2`, and BLAKE3-based transaction / AA signing hashes.
 
@@ -48,7 +48,7 @@
 - **Native account abstraction** — key rotation and custom validation code via system contracts
 - **viem integration** — standard Ethereum JSON-RPC methods via a typed `PublicClient`
 - **Smart contract helpers** — compile Solidity, deploy Shell contracts, write transactions, read with `eth_call`, and wait for receipts
-- **Shell-specific RPC** — `shell_getPqPubkey`, `shell_sendTransaction`, `shell_getTransactionsByAddress`, `shell_getNodeInfo`, `shell_getWitness`
+- **Shell-specific RPC** — `shell_getPqPubkey`, `shell_sendTransaction`, RPC v2 snapshot/range/summary helpers, governance/status wrappers, and witness/STARK proof inspection
 - **Reward-aware history types** — block/address transaction summaries expose readable `shellType`, `rewardKind`, and STARK reward metadata (`rewardLayer`, `rewardSourceHash`, `originalSize`, `compressedSize`)
 - **Node introspection** — `getNodeInfo()` returns version, block height, peer count, and storage profile; `getWitness()` fetches raw PQ signatures for any block
 - **Encrypted keystore** — argon2id KDF + xchacha20-poly1305 cipher; compatible with the Shell CLI
