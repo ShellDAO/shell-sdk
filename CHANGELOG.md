@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.12.0] — 2026-07-07
+
+### Added
+
+- Added typed wrappers for shell-chain v0.25 node RPCs, including block
+  lookup, validator/governance status, finality, consensus, witness, proof
+  amendment, algorithm registry, pending-count, and dev/testnet balance helper
+  methods.
+- Exported the corresponding public result types from the package root.
+
+### Fixed
+
+- Encoded dev/testnet balance mutation values as canonical JSON-RPC quantities.
+- Validated Shell addresses, block hashes, transaction hashes, block numbers,
+  and validator weights before sending typed wrapper requests.
+- Updated README compatibility notes for shell-chain v0.25.x.
+
 ## [0.11.1] — 2026-06-29
 
 ### Fixed
