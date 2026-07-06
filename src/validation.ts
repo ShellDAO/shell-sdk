@@ -50,6 +50,19 @@ export function validateAddress(address: string | null, fieldName: string): void
 }
 
 /**
+ * Validate that a value is a 32-byte `0x`-prefixed hash.
+ *
+ * @param hash - The hash to validate.
+ * @param fieldName - Human-readable field name for error messages.
+ * @throws {Error} If the value is not a 32-byte hex hash.
+ */
+export function validateHash(hash: string, fieldName: string): void {
+  if (!/^0x[0-9a-fA-F]{64}$/.test(hash)) {
+    throw new Error(`${fieldName} must be a valid 32-byte hash (0x + 64 hex chars), got ${hash}`);
+  }
+}
+
+/**
  * Validate that an RPC URL is secure.
  *
  * Rules:

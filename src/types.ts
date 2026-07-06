@@ -580,6 +580,143 @@ export interface ShellWitnessRootResult {
   match: boolean;
 }
 
+/** Result returned by `shell_getBlockWitnesses`. */
+export interface ShellBlockWitnessesResult {
+  blockHash: HexString;
+  witnessRoot: HexString | null;
+  witnessRootVerified?: boolean | null;
+  witnessCount: number | null;
+  witnesses: Array<{
+    txIndex: number;
+    sigType: SignatureTypeName | string;
+    signature: HexString;
+    pubkey?: HexString;
+  }> | null;
+  error?: string;
+}
+
+/** Validator status returned by `shell_getValidatorStatus`. */
+export interface ShellValidatorStatus {
+  address?: AddressLike;
+  isValidator?: boolean;
+  is_validator?: boolean;
+  [key: string]: unknown;
+}
+
+/** Governance summary returned by `shell_getGovernanceInfo`. */
+export interface ShellGovernanceInfo {
+  validatorCount?: number;
+  validator_count?: number;
+  validators?: AddressLike[];
+  systemContractAddress?: AddressLike;
+  system_contract_address?: AddressLike;
+  proposalGasLimit?: number;
+  gasLimit?: HexString | string | number;
+  gas_limit?: HexString | string | number;
+  [key: string]: unknown;
+}
+
+/** Network dashboard payload returned by `shell_getNetworkStats`. */
+export interface ShellNetworkStats {
+  peerCount?: number;
+  peer_count?: number;
+  listeningAddress?: string;
+  listenAddr?: string;
+  listen_addr?: string;
+  protocolVersion?: string;
+  protocols?: string[];
+  [key: string]: unknown;
+}
+
+/** Chain dashboard payload returned by `shell_getChainStats`. */
+export interface ShellChainStats {
+  blockHeight?: number;
+  block_height?: number;
+  totalTransactions?: number;
+  total_transactions?: number;
+  avgBlockTime?: number;
+  avg_block_time?: number;
+  gasUsedTotal?: HexString;
+  latestBaseFee?: HexString;
+  [key: string]: unknown;
+}
+
+/** Finality status returned by `shell_getFinalityInfo`. */
+export interface ShellFinalityInfo {
+  lastFinalizedBlock?: HexString;
+  lastFinalizedHash?: HexString;
+  currentHead?: HexString;
+  finalityLag?: number;
+  pendingAttestations?: number;
+  finalizedBlock?: HexString | number | null;
+  finalized_block?: HexString | number | null;
+  headBlock?: HexString | number | null;
+  head_block?: HexString | number | null;
+  pending_attestations?: number;
+  [key: string]: unknown;
+}
+
+/** Commit certificate returned by `shell_finalityProof`. */
+export interface ShellFinalityProof {
+  blockHash: HexString;
+  certificate: Record<AddressLike, HexString> | null;
+  [key: string]: unknown;
+}
+
+/** Consensus engine status returned by `shell_consensusInfo`. */
+export interface ShellConsensusInfo {
+  engine?: string;
+  validators?: Array<{ address: AddressLike; weight?: number | string; [key: string]: unknown }>;
+  current_proposer?: AddressLike | null;
+  currentProposer?: AddressLike | null;
+  block_number?: number;
+  blockNumber?: number;
+  epoch?: number | string;
+  epoch_length?: number | string;
+  epochLength?: number | string;
+  epoch_progress?: number | string;
+  epochProgress?: number | string;
+  [key: string]: unknown;
+}
+
+/** STARK proof amendment returned by `shell_getProofAmendment`. */
+export interface ShellProofAmendment {
+  block_hash?: HexString;
+  blockHash?: HexString;
+  block_number?: number;
+  blockNumber?: number;
+  start_block?: number;
+  end_block?: number;
+  source_hash?: HexString;
+  source_block?: number;
+  target_hash?: HexString;
+  targetHash?: HexString;
+  target_block?: number;
+  targetBlock?: number;
+  source_count?: number;
+  layer?: number;
+  proof_entries?: number;
+  original_size?: number | null;
+  compressed_size?: number | null;
+  proof_version?: number;
+  prover?: AddressLike;
+  settlement_tx_hash?: HexString | null;
+  proof?: HexString | null;
+  [key: string]: unknown;
+}
+
+export type ShellProofAmendmentResult = ShellProofAmendment | null;
+
+export type ShellAlgorithmStatus = "active" | "deprecated" | "pending_activation";
+
+/** One algorithm registry row returned by `shell_getAlgorithmRegistry`. */
+export interface ShellAlgorithmRegistryEntry {
+  algo: SignatureTypeName | string;
+  status: ShellAlgorithmStatus | string;
+  description?: string;
+  [key: string]: unknown;
+}
+
 // ---------------------------------------------------------------------------
 // Node / storage types (carried over from 0.3.x, updated)
 // ---------------------------------------------------------------------------
