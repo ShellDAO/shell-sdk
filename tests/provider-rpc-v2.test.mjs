@@ -231,6 +231,31 @@ test('v0.25 Shell RPC wrappers call the matching node methods', async () => {
   ]);
 });
 
+test('block number parameters accept finality tags supported by shell-chain RPC', async () => {
+  const calls = [];
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    calls.push(body);
+    return rpc({ jsonrpc: '2.0', id: body.id, result: resultFor(body.method) });
+  };
+
+  const provider = createShellProvider({ rpcHttpUrl: 'https://rpc.devnet.shell.local' });
+
+  assert.deepEqual(await provider.getShellBlockByNumber('safe', 'summary'), { number: '0x2a' });
+  assert.deepEqual(await provider.getBlocksRange('finalized'), {
+    start: 'finalized',
+    direction: 'desc',
+    limit: 0,
+    blocks: [],
+    nextStart: null,
+  });
+
+  assert.deepEqual(calls.map((call) => [call.method, call.params]), [
+    ['shell_getBlockByNumber', ['safe', 'summary']],
+    ['shell_getBlocksRange', ['finalized', { direction: 'desc', limit: null, txDetail: 'summary', txLimit: null }]],
+  ]);
+});
+
 test('v0.25 mutating RPC wrappers validate inputs before sending', async () => {
   globalThis.fetch = async () => {
     throw new Error('fetch should not be called for invalid wrapper inputs');
@@ -293,6 +318,8 @@ function resultFor(method) {
       return '0x0';
     case 'shell_getBlockByNumber':
       return { number: '0x2a' };
+    case 'shell_getBlocksRange':
+      return { start: 'finalized', direction: 'desc', limit: 0, blocks: [], nextStart: null };
     case 'shell_getBlockByHash':
       return { hash };
     case 'shell_getValidators':

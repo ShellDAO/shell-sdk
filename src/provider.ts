@@ -111,7 +111,7 @@ function toBlockNumberParam(value: string | number, fieldName: string): string {
   if (typeof value === "number") {
     return toRpcQuantity(value, fieldName);
   }
-  if (/^0x(?:0|[1-9a-fA-F][0-9a-fA-F]*)$/.test(value) || /^(latest|earliest|pending)$/.test(value)) {
+  if (/^0x(?:0|[1-9a-fA-F][0-9a-fA-F]*)$/.test(value) || /^(latest|earliest|pending|safe|finalized)$/.test(value)) {
     return value;
   }
   throw new Error(`${fieldName} must be a block tag or canonical 0x-prefixed JSON-RPC quantity`);
