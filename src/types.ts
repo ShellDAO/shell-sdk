@@ -672,11 +672,11 @@ export interface ShellConsensusInfo {
   currentProposer?: AddressLike | null;
   block_number?: number;
   blockNumber?: number;
-  epoch?: number | string;
+  epoch?: number | string | null;
   epoch_length?: number | string;
   epochLength?: number | string;
-  epoch_progress?: number | string;
-  epochProgress?: number | string;
+  epoch_progress?: number | string | null;
+  epochProgress?: number | string | null;
   [key: string]: unknown;
 }
 
