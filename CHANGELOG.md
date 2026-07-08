@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Bound session-key root authorization hashes to the declared session signature
+  algorithm, matching the chain-side session auth invariant.
+
 ## [0.12.0] — 2026-07-07
 
 ### Added

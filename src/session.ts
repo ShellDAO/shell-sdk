@@ -13,8 +13,8 @@
  * const seed = mnemonicToSeed(mnemonic);
  * const sessionAccount = deriveSessionKey(seed, "ml-dsa-65", 0);
  *
- * // 2. Create session auth (root key signs session pubkey)
- * const sessionAuth = await createSessionAuth(rootAdapter, sessionAccount, {
+ * // 2. Create session auth (root key signs session pubkey + algorithm)
+ * const sessionAuth = await createSessionAuth(rootAdapter, sessionAccount.publicKey, sessionAccount.algoId, {
  *   chainId: 12345n,
  *   expiryBlock: currentBlock + 1000,
  *   valueCap: BigInt("1000000000000000000"), // 1 ETH
@@ -78,19 +78,25 @@ export interface SessionKeyConfig {
 /**
  * Compute the session key authorization hash that the root key must sign.
  *
- * `auth_hash = blake3(PQTX_SESSION_V1\0(16B) || session_pubkey || target(32B|zero) || value_cap(32B BE) || expiry_block(8B BE) || chain_id(8B BE))`
+ * `auth_hash = blake3(PQTX_SESSION_V1\0(16B) || session_pubkey || session_algo(1B) || target(32B|zero) || value_cap(32B BE) || expiry_block(8B BE) || chain_id(8B BE))`
  *
  * This hash binds the session key to a specific chain, expiry, value cap,
  * and optional target, preventing unauthorized delegation.
  *
  * @param sessionPubkey - Raw bytes of the session public key.
+ * @param sessionAlgoId - Session signature algorithm ID.
  * @param config - Session key constraints.
  * @returns 32-byte BLAKE3 hash for the root key to sign.
  */
 export function computeSessionAuthHash(
   sessionPubkey: Uint8Array,
+  sessionAlgoId: number,
   config: SessionKeyConfig,
 ): Uint8Array {
+  if (!Number.isInteger(sessionAlgoId) || sessionAlgoId < 0 || sessionAlgoId > 255) {
+    throw new RangeError(`sessionAlgoId must fit in one byte, got ${sessionAlgoId}`);
+  }
+
   // Target: 32 bytes (address) or 32 zero bytes (no restriction).
   const targetBytes = new Uint8Array(32);
   if (config.target !== null && config.target !== undefined) {
@@ -125,6 +131,7 @@ export function computeSessionAuthHash(
   return blake3(concatBytes(
     PQTX_SESSION_DOMAIN,
     sessionPubkey,
+    new Uint8Array([sessionAlgoId]),
     targetBytes,
     valueCapBytes,
     expiryBytes,
@@ -167,7 +174,7 @@ export async function createSessionAuth(
   sessionAlgoId: number,
   config: SessionKeyConfig,
 ): Promise<SessionAuth> {
-  const authHash = computeSessionAuthHash(sessionPubkey, config);
+  const authHash = computeSessionAuthHash(sessionPubkey, sessionAlgoId, config);
   const rootSig = await rootAdapter.sign(authHash);
 
   return {
