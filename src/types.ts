@@ -172,8 +172,9 @@ export const AA_SESSION_KEY_GAS_SURCHARGE = 20_000;
  *
  * ## Spec (AA_PHASE2_SPEC.md §4)
  *
- * 1. `session_pubkey` is authorized by the root key's `root_signature` over
- *    `auth_hash = blake3(PQTX_SESSION_V1\0 (16B) || session_pubkey || target(32B|zero) || value_cap(32B BE) || expiry_block(8B BE) || chain_id(8B BE))`.
+ * 1. `session_pubkey` and `session_algo` are authorized by the root key's
+ *    `root_signature` over
+ *    `auth_hash = blake3(PQTX_SESSION_V1\0 (16B) || session_pubkey || session_algo(1B) || target(32B|zero) || value_cap(32B BE) || expiry_block(8B BE) || chain_id(8B BE))`.
  * 2. The transaction is signed by `session_pubkey` via `session_signature`.
  * 3. `expiry_block` must be > current block at validation time.
  * 4. Σ(inner_call.value) ≤ `value_cap`.
@@ -205,7 +206,7 @@ export interface SessionAuth {
   expiry_block: number;
   /**
    * Root account's PQ signature over the session key authorization hash.
-   * `auth_hash = blake3(PQTX_SESSION_V1\0 (16B) || session_pubkey || target(32B|zero) || value_cap || expiry_block || chain_id)`.
+   * `auth_hash = blake3(PQTX_SESSION_V1\0 (16B) || session_pubkey || session_algo(1B) || target(32B|zero) || value_cap || expiry_block || chain_id)`.
    */
   root_signature: number[];
   /** Session key's PQ signature over the tx `sender_signing_hash()`. */

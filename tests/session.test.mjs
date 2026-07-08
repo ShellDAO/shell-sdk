@@ -68,19 +68,23 @@ test("session-2: computeSessionAuthHash produces 32-byte BLAKE3 output", () => {
     target: null,
   };
 
-  const hash = computeSessionAuthHash(session.publicKey, config);
+  const hash = computeSessionAuthHash(session.publicKey, session.algoId, config);
   assert.equal(hash.length, 32, "auth_hash must be 32 bytes");
 
   // Hash must be deterministic
-  const hash2 = computeSessionAuthHash(session.publicKey, config);
+  const hash2 = computeSessionAuthHash(session.publicKey, session.algoId, config);
   assert.deepEqual(hash, hash2, "auth_hash must be deterministic");
 
+  // Different session algorithm must produce different hash
+  const hashDifferentAlgo = computeSessionAuthHash(session.publicKey, 0, config);
+  assert.notDeepEqual(hash, hashDifferentAlgo, "different sessionAlgoId must produce different hash");
+
   // Different chain ID must produce different hash
-  const hashDifferentChain = computeSessionAuthHash(session.publicKey, { ...config, chainId: 99999n });
+  const hashDifferentChain = computeSessionAuthHash(session.publicKey, session.algoId, { ...config, chainId: 99999n });
   assert.notDeepEqual(hash, hashDifferentChain, "different chainId must produce different hash");
 
   // Different expiry must produce different hash
-  const hashDifferentExpiry = computeSessionAuthHash(session.publicKey, { ...config, expiryBlock: 2000 });
+  const hashDifferentExpiry = computeSessionAuthHash(session.publicKey, session.algoId, { ...config, expiryBlock: 2000 });
   assert.notDeepEqual(hash, hashDifferentExpiry, "different expiryBlock must produce different hash");
 });
 
