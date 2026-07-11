@@ -2,10 +2,25 @@
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-07-12
+
+### Added
+
+- Added typed `encodeSetValidatorStake` and `proposeSetValidatorStake` provider
+  wrappers with canonical RPC quantity encoding and input validation.
+- Added the `stakeDerivedWeights` validator snapshot field exposed by
+  shell-chain v0.27.x.
+
 ### Fixed
 
 - Bound session-key root authorization hashes to the declared session signature
   algorithm, matching the chain-side session auth invariant.
+- Accepted finality block tags and nullable terminal consensus epoch values
+  returned by current nodes.
+
+### Changed
+
+- Updated compatibility guidance and provider coverage for shell-chain v0.27.x.
 
 ## [0.12.0] — 2026-07-07
 

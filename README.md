@@ -7,9 +7,10 @@
 
 ---
 
-> **v0.25.x aligned**
+> **shell-chain v0.27.x aligned**
 >
-> Addresses, system-contract IDs, and signing hashes match shell-chain v0.25.x:
+> Addresses, system-contract IDs, signing hashes, staking governance RPCs, and
+> validator snapshot fields match shell-chain v0.27.x:
 > 32-byte `0x…` BLAKE3 addresses, `algo_id` byte `Dilithium3=0`, `MlDsa65=1`,
 > `SphincsSha2256f=2`, and BLAKE3-based transaction / AA signing hashes.
 
@@ -246,6 +247,8 @@ import { shellDevnet } from "shell-sdk/provider";
 | `getTransactionsByAddressV2(address, opts?)` | `shell_getTransactionsByAddressV2` cursor pagination; falls back to legacy first-page history on older nodes |
 | `getTransactionSummary(txHash, opts?)` | `shell_getTransactionSummary` → compact transaction and optional receipt metadata |
 | `getValidatorSnapshot(opts?)` | `shell_getValidatorSnapshot` → validator/proposer aggregate and proposer window stats; `proposerWindow` defaults to 200 and accepts 1..1000 |
+| `encodeSetValidatorStake(address, stake)` | `shell_encodeSetValidatorStake` → staking-mode governance calldata |
+| `proposeSetValidatorStake(address, stake)` | `shell_proposeSetValidatorStake` → governance transaction hash; stake is a canonical hex quantity |
 | `getBlockReceipts(block)` | `eth_getBlockReceipts` → `ShellRpcReceipt[]` |
 | `getNodeInfo()` | `shell_getNodeInfo` → `ShellNodeInfo` (version, block height, peer count) |
 | `getWitness(blockNumberOrHash)` | `shell_getWitness` → `ShellWitnessBundle` or `null` if pruned |
@@ -482,7 +485,7 @@ const signed = buildSignedTransaction({
 
 #### `hashTransaction`
 
-Compute the canonical shell-chain v0.25.x signing hash as **BLAKE3** over the structured preimage:
+Compute the canonical shell-chain v0.27.x signing hash as **BLAKE3** over the structured preimage:
 
 `chain_id(8B BE) || nonce(8B BE) || to(32B|zero) || value(32B BE) || data || gas_limit(8B BE) || max_fee_per_gas(8B BE) || max_priority_fee_per_gas(8B BE) || sig_type(1B) || tx_type(1B)`
 

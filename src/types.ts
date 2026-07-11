@@ -951,6 +951,8 @@ export interface ShellProposerStats {
 /** Validator/proposer aggregate returned by `shell_getValidatorSnapshot`. */
 export interface ShellValidatorSnapshot {
   validators: unknown;
+  /** True when consensus weights are derived from locked stake. */
+  stakeDerivedWeights: boolean;
   currentProposer: unknown;
   blockNumber: number;
   epoch: unknown;

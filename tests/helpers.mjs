@@ -143,6 +143,7 @@ export function createJsonRpcFetchMock() {
       },
       shell_getValidatorSnapshot: {
         validators: [],
+        stakeDerivedWeights: false,
         currentProposer: null,
         blockNumber: 42,
         epoch: 0,
