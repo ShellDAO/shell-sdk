@@ -501,6 +501,23 @@ export class ShellProvider {
     return this.request("shell_encodeRemoveValidator", [address]);
   }
 
+  /**
+   * Encode calldata for updating a validator's locked stake.
+   *
+   * Calls `shell_encodeSetValidatorStake`. Stake is a canonical RPC quantity;
+   * in staking mode the node derives consensus weight from this value.
+   */
+  async encodeSetValidatorStake(
+    address: string,
+    stake: HexQuantity | bigint | number,
+  ): Promise<string> {
+    validateAddress(address, "address");
+    return this.request("shell_encodeSetValidatorStake", [
+      address,
+      toRpcQuantity(stake, "stake"),
+    ]);
+  }
+
   async proposeAddValidator(address: string): Promise<string> {
     validateAddress(address, "address");
     return this.request("shell_proposeAddValidator", [address]);
@@ -515,6 +532,23 @@ export class ShellProvider {
     validateAddress(address, "address");
     validateNonNegativeInteger(weight, "weight");
     return this.request("shell_proposeSetValidatorWeight", [address, weight]);
+  }
+
+  /**
+   * Propose updating a validator's locked stake.
+   *
+   * Calls `shell_proposeSetValidatorStake`. In staking mode, consensus weight
+   * is derived from the proposed stake after the governance change applies.
+   */
+  async proposeSetValidatorStake(
+    address: string,
+    stake: HexQuantity | bigint | number,
+  ): Promise<string> {
+    validateAddress(address, "address");
+    return this.request("shell_proposeSetValidatorStake", [
+      address,
+      toRpcQuantity(stake, "stake"),
+    ]);
   }
 
   /**

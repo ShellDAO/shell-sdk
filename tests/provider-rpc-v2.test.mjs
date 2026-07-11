@@ -191,9 +191,11 @@ test('v0.25 Shell RPC wrappers call the matching node methods', async () => {
   assert.equal(await provider.estimateGovernanceGas('addValidator'), '0x186a0');
   assert.equal(await provider.encodeAddValidator(address), '0xadd');
   assert.equal(await provider.encodeRemoveValidator(address), '0xremove');
+  assert.equal(await provider.encodeSetValidatorStake(address, 1000n), '0xstake');
   assert.equal(await provider.proposeAddValidator(address), hash);
   assert.equal(await provider.proposeRemoveValidator(address), hash);
   assert.equal(await provider.proposeSetValidatorWeight(address, 7), hash);
+  assert.equal(await provider.proposeSetValidatorStake(address, 2000n), hash);
   assert.deepEqual(await provider.getNetworkStats(), { peerCount: 2, listeningAddress: '/ip4/127.0.0.1/tcp/30303' });
   assert.deepEqual(await provider.getChainStats(), { blockHeight: 42, totalTransactions: 3, avgBlockTime: 2.5, gasUsedTotal: '0x5208', latestBaseFee: '0x3b9aca00' });
   assert.deepEqual(await provider.getFinalityInfo(), { lastFinalizedBlock: '0x28', lastFinalizedHash: hash, currentHead: '0x2a', finalityLag: 2, pendingAttestations: 0 });
@@ -215,9 +217,11 @@ test('v0.25 Shell RPC wrappers call the matching node methods', async () => {
     ['shell_estimateGovernanceGas', ['addValidator']],
     ['shell_encodeAddValidator', [address]],
     ['shell_encodeRemoveValidator', [address]],
+    ['shell_encodeSetValidatorStake', [address, '0x3e8']],
     ['shell_proposeAddValidator', [address]],
     ['shell_proposeRemoveValidator', [address]],
     ['shell_proposeSetValidatorWeight', [address, 7]],
+    ['shell_proposeSetValidatorStake', [address, '0x7d0']],
     ['shell_getNetworkStats', []],
     ['shell_getChainStats', []],
     ['shell_getFinalityInfo', []],
@@ -271,6 +275,14 @@ test('v0.25 mutating RPC wrappers validate inputs before sending', async () => {
   await assert.rejects(
     () => provider.proposeSetValidatorWeight(address, -1),
     /weight must be a non-negative safe integer/,
+  );
+  await assert.rejects(
+    () => provider.proposeSetValidatorStake(address, -1),
+    /stake must be a non-negative safe integer/,
+  );
+  await assert.rejects(
+    () => provider.encodeSetValidatorStake(address, '1000'),
+    /stake must be a canonical 0x-prefixed JSON-RPC quantity/,
   );
   await assert.rejects(
     () => provider.setBalance(address, '1000'),
@@ -334,9 +346,12 @@ function resultFor(method) {
       return '0xadd';
     case 'shell_encodeRemoveValidator':
       return '0xremove';
+    case 'shell_encodeSetValidatorStake':
+      return '0xstake';
     case 'shell_proposeAddValidator':
     case 'shell_proposeRemoveValidator':
     case 'shell_proposeSetValidatorWeight':
+    case 'shell_proposeSetValidatorStake':
       return hash;
     case 'shell_getNetworkStats':
       return { peerCount: 2, listeningAddress: '/ip4/127.0.0.1/tcp/30303' };
