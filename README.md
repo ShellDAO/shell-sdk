@@ -386,7 +386,7 @@ const signer = new ShellSigner("MlDsa65", MlDsa65Adapter.generate());
 |---|---|---|
 | `tx` | `ShellTransactionRequest` | The unsigned transaction |
 | `txHash` | `Uint8Array` | RLP-encoded hash to sign |
-| `includePublicKey?` | `boolean` | Embed `sender_pubkey` for first-time senders |
+| `includePublicKey?` | `boolean` | Embed `sender_pubkey` until the sender key is registered on-chain |
 
 #### Helper functions
 
@@ -849,7 +849,8 @@ async function submitTransfer({ signer, to, value, rpcHttpUrl }: {
     value,
   });
   const txHash = hashTransaction(tx, signer.signatureType);
-  const signed = await signer.buildSignedTransaction({ tx, txHash, includePublicKey: nonce === 0 });
+  const includePublicKey = await provider.getPqPubkey(signer.getAddress()) === null;
+  const signed = await signer.buildSignedTransaction({ tx, txHash, includePublicKey });
 
   return provider.sendTransaction(signed);
 }

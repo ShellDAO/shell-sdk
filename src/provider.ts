@@ -294,7 +294,8 @@ export class ShellProvider {
    * Retrieve the on-chain public key for an address.
    *
    * Calls `shell_getPqPubkey`. Returns `null` if the address has not yet
-   * submitted a transaction (public key is only recorded on first send).
+   * had a transaction included on-chain. Pending transactions do not register
+   * the key persistently.
    *
    * @param address - A `0x…` hex address.
    * @returns Hex-encoded public key string, or `null` if unknown.
