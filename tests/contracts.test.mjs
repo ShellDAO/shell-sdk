@@ -50,13 +50,17 @@ function makeReceipt(overrides = {}) {
   };
 }
 
-function makeProvider({ receipt = makeReceipt(), callResult = '0x', nonce = '0x0' } = {}) {
+function makeProvider({ receipt = makeReceipt(), callResult = '0x', nonce = '0x0', pqPubkey = null } = {}) {
   const calls = [];
   const provider = {
     rpcHttpUrl: 'http://127.0.0.1:8545',
     async sendTransaction(signed) {
       calls.push({ method: 'shell_sendTransaction', params: [signed] });
       return HASH;
+    },
+    async getPqPubkey(address) {
+      calls.push({ method: 'shell_getPqPubkey', params: [address] });
+      return pqPubkey;
     },
   };
 
@@ -164,6 +168,7 @@ test('deployContract sends, waits, and validates 32-byte contract address', asyn
 
   assert.deepEqual(calls.map((call) => call.method), [
     'eth_getTransactionCount',
+    'shell_getPqPubkey',
     'shell_sendTransaction',
     'eth_getTransactionReceipt',
   ]);
@@ -231,9 +236,48 @@ test('writeContract sends contract call and waits for receipt', async () => {
 
   assert.deepEqual(calls.map((call) => call.method), [
     'eth_getTransactionCount',
+    'shell_getPqPubkey',
     'shell_sendTransaction',
     'eth_getTransactionReceipt',
   ]);
+});
+
+test('writeContract embeds the key for an unregistered sender with a pending nonce', async () => {
+  const { provider, fetchMock } = makeProvider({ nonce: '0x1' });
+  const signer = makeSigner();
+
+  await withFetchMock(fetchMock, async () => {
+    await writeContract({
+      provider,
+      signer,
+      chainId: 1337,
+      address: CONTRACT,
+      abi: ABI,
+      functionName: 'setNumber',
+      args: [12n],
+    });
+  });
+
+  assert.equal(signer.signed[0].includePublicKey, true);
+});
+
+test('writeContract omits the key once the sender is registered on-chain', async () => {
+  const { provider, fetchMock } = makeProvider({ nonce: '0x1', pqPubkey: '0x1234' });
+  const signer = makeSigner();
+
+  await withFetchMock(fetchMock, async () => {
+    await writeContract({
+      provider,
+      signer,
+      chainId: 1337,
+      address: CONTRACT,
+      abi: ABI,
+      functionName: 'setNumber',
+      args: [12n],
+    });
+  });
+
+  assert.equal(signer.signed[0].includePublicKey, false);
 });
 
 test('readContract uses eth_call and decodes result', async () => {
