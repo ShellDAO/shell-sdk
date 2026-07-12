@@ -23,6 +23,8 @@ import {
 
 import {
   PQTX_SESSION_DOMAIN,
+  MAX_SESSION_PUBKEY_BYTES,
+  MAX_SESSION_SIGNATURE_BYTES,
   computeSessionAuthHash,
   createSessionAuth,
   finalizeSessionAuth,
@@ -277,6 +279,40 @@ test("session-shape: validateSessionAuthShape rejects incomplete SessionAuth", a
   const fakeHash = new Uint8Array(32).fill(0xAB);
   const finalAuth = await finalizeSessionAuth(auth, sessionAdapter, fakeHash);
   assert.doesNotThrow(() => validateSessionAuthShape(finalAuth), "finalized auth should be valid");
+});
+
+test("session-shape: rejects fields above node size limits", () => {
+  const valid = {
+    session_pubkey: [1],
+    session_algo: 1,
+    target: null,
+    value_cap: "0x0",
+    expiry_block: 1,
+    root_signature: [1],
+    session_signature: [1],
+  };
+
+  assert.throws(
+    () => validateSessionAuthShape({
+      ...valid,
+      session_pubkey: new Array(MAX_SESSION_PUBKEY_BYTES + 1).fill(0),
+    }),
+    /session_pubkey exceeds/,
+  );
+  assert.throws(
+    () => validateSessionAuthShape({
+      ...valid,
+      root_signature: new Array(MAX_SESSION_SIGNATURE_BYTES + 1).fill(0),
+    }),
+    /root_signature exceeds/,
+  );
+  assert.throws(
+    () => validateSessionAuthShape({
+      ...valid,
+      session_signature: new Array(MAX_SESSION_SIGNATURE_BYTES + 1).fill(0),
+    }),
+    /session_signature exceeds/,
+  );
 });
 
 // ── Constants ─────────────────────────────────────────────────────────────────

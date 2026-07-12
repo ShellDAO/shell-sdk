@@ -229,6 +229,8 @@ export {
 } from "./hdwallet.js";
 export {
   PQTX_SESSION_DOMAIN,
+  MAX_SESSION_PUBKEY_BYTES,
+  MAX_SESSION_SIGNATURE_BYTES,
   computeSessionAuthHash,
   createSessionAuth,
   finalizeSessionAuth,
