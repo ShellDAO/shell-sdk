@@ -24,6 +24,7 @@ export {
   type CreateShellPublicClientOptions,
 } from "./provider.js";
 export {
+  MAX_ACCOUNT_PUBLIC_KEY_BYTES,
   accountManagerAddress,
   cancelRecoverySelector,
   clearValidationCodeSelector,
