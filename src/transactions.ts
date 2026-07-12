@@ -225,6 +225,12 @@ export function buildTransaction(options: BuildTransactionOptions): ShellTransac
   if (options.maxPriorityFeePerGas !== undefined) {
     validateNonNegativeInteger(options.maxPriorityFeePerGas, "maxPriorityFeePerGas");
   }
+  const maxFeePerGas = options.maxFeePerGas ?? DEFAULT_MAX_FEE_PER_GAS;
+  const maxPriorityFeePerGas =
+    options.maxPriorityFeePerGas ?? DEFAULT_MAX_PRIORITY_FEE_PER_GAS;
+  if (maxPriorityFeePerGas > maxFeePerGas) {
+    throw new RangeError("maxPriorityFeePerGas must not exceed maxFeePerGas");
+  }
   if (options.txType !== undefined) {
     validateNonNegativeInteger(options.txType, "txType");
   }
@@ -239,9 +245,8 @@ export function buildTransaction(options: BuildTransactionOptions): ShellTransac
     value: `0x${(options.value ?? 0n).toString(16)}`,
     data: toHexData(options.data),
     gas_limit: options.gasLimit ?? DEFAULT_TRANSFER_GAS_LIMIT,
-    max_fee_per_gas: options.maxFeePerGas ?? DEFAULT_MAX_FEE_PER_GAS,
-    max_priority_fee_per_gas:
-      options.maxPriorityFeePerGas ?? DEFAULT_MAX_PRIORITY_FEE_PER_GAS,
+    max_fee_per_gas: maxFeePerGas,
+    max_priority_fee_per_gas: maxPriorityFeePerGas,
     access_list: options.accessList ?? null,
     tx_type: options.txType ?? DEFAULT_TX_TYPE,
     max_fee_per_blob_gas: options.maxFeePerBlobGas ?? null,
