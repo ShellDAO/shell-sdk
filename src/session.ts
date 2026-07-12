@@ -54,6 +54,12 @@ export const PQTX_SESSION_DOMAIN = new Uint8Array([
   0x5f, 0x56, 0x31, 0x00, // _V1\0
 ]); // b"PQTX_SESSION_V1\0"
 
+/** Maximum session public-key size accepted by Shell Chain nodes. */
+export const MAX_SESSION_PUBKEY_BYTES = 4 * 1024;
+
+/** Maximum session or root signature size accepted by Shell Chain nodes. */
+export const MAX_SESSION_SIGNATURE_BYTES = 51_200;
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 /**
@@ -93,6 +99,9 @@ export function computeSessionAuthHash(
   sessionAlgoId: number,
   config: SessionKeyConfig,
 ): Uint8Array {
+  if (sessionPubkey.length === 0 || sessionPubkey.length > MAX_SESSION_PUBKEY_BYTES) {
+    throw new RangeError(`sessionPubkey must contain 1..${MAX_SESSION_PUBKEY_BYTES} bytes`);
+  }
   if (!Number.isInteger(sessionAlgoId) || sessionAlgoId < 0 || sessionAlgoId > 255) {
     throw new RangeError(`sessionAlgoId must fit in one byte, got ${sessionAlgoId}`);
   }
@@ -176,6 +185,9 @@ export async function createSessionAuth(
 ): Promise<SessionAuth> {
   const authHash = computeSessionAuthHash(sessionPubkey, sessionAlgoId, config);
   const rootSig = await rootAdapter.sign(authHash);
+  if (rootSig.length === 0 || rootSig.length > MAX_SESSION_SIGNATURE_BYTES) {
+    throw new RangeError(`root signature must contain 1..${MAX_SESSION_SIGNATURE_BYTES} bytes`);
+  }
 
   return {
     session_pubkey: Array.from(sessionPubkey),
@@ -212,6 +224,9 @@ export async function finalizeSessionAuth(
   txSigningHash: Uint8Array,
 ): Promise<SessionAuth> {
   const sessionSig = await sessionAdapter.sign(txSigningHash);
+  if (sessionSig.length === 0 || sessionSig.length > MAX_SESSION_SIGNATURE_BYTES) {
+    throw new RangeError(`session signature must contain 1..${MAX_SESSION_SIGNATURE_BYTES} bytes`);
+  }
   return {
     ...sessionAuth,
     session_signature: Array.from(sessionSig),
@@ -231,14 +246,23 @@ export function validateSessionAuthShape(sessionAuth: SessionAuth): void {
   if (!sessionAuth.session_pubkey || sessionAuth.session_pubkey.length === 0) {
     throw new Error("sessionAuth.session_pubkey is empty");
   }
+  if (sessionAuth.session_pubkey.length > MAX_SESSION_PUBKEY_BYTES) {
+    throw new Error(`sessionAuth.session_pubkey exceeds ${MAX_SESSION_PUBKEY_BYTES} bytes`);
+  }
   if (sessionAuth.session_algo !== 0 && sessionAuth.session_algo !== 1 && sessionAuth.session_algo !== 2) {
     throw new Error(`sessionAuth.session_algo must be 0, 1, or 2, got ${sessionAuth.session_algo}`);
   }
   if (!sessionAuth.root_signature || sessionAuth.root_signature.length === 0) {
     throw new Error("sessionAuth.root_signature is empty");
   }
+  if (sessionAuth.root_signature.length > MAX_SESSION_SIGNATURE_BYTES) {
+    throw new Error(`sessionAuth.root_signature exceeds ${MAX_SESSION_SIGNATURE_BYTES} bytes`);
+  }
   if (!sessionAuth.session_signature || sessionAuth.session_signature.length === 0) {
     throw new Error("sessionAuth.session_signature is empty; call finalizeSessionAuth() after building the tx");
+  }
+  if (sessionAuth.session_signature.length > MAX_SESSION_SIGNATURE_BYTES) {
+    throw new Error(`sessionAuth.session_signature exceeds ${MAX_SESSION_SIGNATURE_BYTES} bytes`);
   }
   if (sessionAuth.expiry_block <= 0) {
     throw new Error(`sessionAuth.expiry_block must be > 0, got ${sessionAuth.expiry_block}`);
