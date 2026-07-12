@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   buildBatchTransaction,
+  buildTransaction,
   buildSponsoredTransaction,
   buildSignedTransaction,
   buildInnerTransfer,
@@ -33,6 +34,20 @@ const MINIMAL_INNER_CALL = { to: '0x00000000000000000000000000000000000000000000
 // ---------------------------------------------------------------------------
 // Builder validation
 // ---------------------------------------------------------------------------
+test('buildTransaction: rejects priority fee above max fee', () => {
+  assert.throws(
+    () =>
+      buildTransaction({
+        chainId: 1,
+        nonce: 0,
+        to: null,
+        maxFeePerGas: 100,
+        maxPriorityFeePerGas: 101,
+      }),
+    /maxPriorityFeePerGas must not exceed maxFeePerGas/,
+  );
+});
+
 test('buildBatchTransaction: rejects empty innerCalls', () => {
   assert.throws(
     () => buildBatchTransaction({ chainId: 1, nonce: 0, innerCalls: [] }),
