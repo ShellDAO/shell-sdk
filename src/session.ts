@@ -45,14 +45,14 @@ import type { SignerAdapter } from "./signer.js";
 
 /**
  * Session key authorization domain separator (matches Rust `PQTX_SESSION_DOMAIN`).
- * `b"PQTX_SESSION_V1\0"` — 16 bytes.
+ * `b"PQTX_SESSION_V2\0"` — 16 bytes.
  */
 export const PQTX_SESSION_DOMAIN = new Uint8Array([
   0x50, 0x51, 0x54, 0x58, // PQTX
   0x5f, 0x53, 0x45, 0x53, // _SES
   0x53, 0x49, 0x4f, 0x4e, // SION
-  0x5f, 0x56, 0x31, 0x00, // _V1\0
-]); // b"PQTX_SESSION_V1\0"
+  0x5f, 0x56, 0x32, 0x00, // _V2\0
+]); // b"PQTX_SESSION_V2\0"
 
 /** Maximum session public-key size accepted by Shell Chain nodes. */
 export const MAX_SESSION_PUBKEY_BYTES = 4 * 1024;
@@ -84,7 +84,7 @@ export interface SessionKeyConfig {
 /**
  * Compute the session key authorization hash that the root key must sign.
  *
- * `auth_hash = blake3(PQTX_SESSION_V1\0(16B) || session_pubkey || session_algo(1B) || target(32B|zero) || value_cap(32B BE) || expiry_block(8B BE) || chain_id(8B BE))`
+ * `auth_hash = blake3(PQTX_SESSION_V2\0(16B) || session_pubkey || session_algo(1B) || target_present(1B) || target(32B|zero) || value_cap(32B BE) || expiry_block(8B BE) || chain_id(8B BE))`
  *
  * This hash binds the session key to a specific chain, expiry, value cap,
  * and optional target, preventing unauthorized delegation.
@@ -106,9 +106,12 @@ export function computeSessionAuthHash(
     throw new RangeError(`sessionAlgoId must fit in one byte, got ${sessionAlgoId}`);
   }
 
-  // Target: 32 bytes (address) or 32 zero bytes (no restriction).
+  // Target: explicit presence byte plus 32 bytes. The presence byte keeps an
+  // unrestricted authorization distinct from one restricted to the zero address.
+  const targetPresent = new Uint8Array([0]);
   const targetBytes = new Uint8Array(32);
   if (config.target !== null && config.target !== undefined) {
+    targetPresent[0] = 1;
     const addrBytes = shellAddressToBytes(config.target);
     targetBytes.set(addrBytes.slice(0, 32));
   }
@@ -141,6 +144,7 @@ export function computeSessionAuthHash(
     PQTX_SESSION_DOMAIN,
     sessionPubkey,
     new Uint8Array([sessionAlgoId]),
+    targetPresent,
     targetBytes,
     valueCapBytes,
     expiryBytes,
