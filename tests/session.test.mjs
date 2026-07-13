@@ -88,13 +88,44 @@ test("session-2: computeSessionAuthHash produces 32-byte BLAKE3 output", () => {
   // Different expiry must produce different hash
   const hashDifferentExpiry = computeSessionAuthHash(session.publicKey, session.algoId, { ...config, expiryBlock: 2000 });
   assert.notDeepEqual(hash, hashDifferentExpiry, "different expiryBlock must produce different hash");
+
+  const zeroTarget = `0x${"00".repeat(32)}`;
+  const hashZeroTarget = computeSessionAuthHash(session.publicKey, session.algoId, {
+    ...config,
+    target: zeroTarget,
+  });
+  assert.notDeepEqual(hash, hashZeroTarget, "unrestricted and zero-address targets must differ");
 });
 
 test("session-2b: PQTX_SESSION_DOMAIN is 16 bytes matching spec", () => {
   assert.equal(PQTX_SESSION_DOMAIN.length, 16, "domain must be 16 bytes");
-  // b"PQTX_SESSION_V1\0"
-  const expected = Buffer.from("PQTX_SESSION_V1\0");
+  // b"PQTX_SESSION_V2\0"
+  const expected = Buffer.from("PQTX_SESSION_V2\0");
   assert.deepEqual(Buffer.from(PQTX_SESSION_DOMAIN), expected, "domain bytes mismatch");
+});
+
+test("session-2c: target-presence hashes match Shell Chain vectors", () => {
+  const sessionPubkey = new Uint8Array(32).fill(0x11);
+  const base = {
+    chainId: 1337n,
+    expiryBlock: 500,
+    valueCap: 100n,
+    target: null,
+  };
+  const unrestricted = computeSessionAuthHash(sessionPubkey, 1, base);
+  const zeroTarget = computeSessionAuthHash(sessionPubkey, 1, {
+    ...base,
+    target: `0x${"00".repeat(32)}`,
+  });
+
+  assert.equal(
+    Buffer.from(unrestricted).toString("hex"),
+    "3fceca0ef7542e4933a956618d2f94b663fb72be319e015a09f960409ed8e4f7",
+  );
+  assert.equal(
+    Buffer.from(zeroTarget).toString("hex"),
+    "43faa3987b61c88a5b0f758024f09fa549b10ec62979a7ba5c4ce6ff5ee65088",
+  );
 });
 
 // ── Vector 3: createSessionAuth produces valid structure ─────────────────────
