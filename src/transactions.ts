@@ -237,6 +237,31 @@ export function buildTransaction(options: BuildTransactionOptions): ShellTransac
   if (options.maxFeePerBlobGas !== undefined && options.maxFeePerBlobGas !== null) {
     validateNonNegativeInteger(options.maxFeePerBlobGas, "maxFeePerBlobGas");
   }
+  const txType = options.txType ?? DEFAULT_TX_TYPE;
+  const hasBlobFee = options.maxFeePerBlobGas !== undefined && options.maxFeePerBlobGas !== null;
+  const hasBlobHashes =
+    options.blobVersionedHashes !== undefined && options.blobVersionedHashes !== null;
+  if (txType === 3) {
+    if (!hasBlobFee) {
+      throw new RangeError("type-3 transactions require maxFeePerBlobGas");
+    }
+    if (!hasBlobHashes || options.blobVersionedHashes?.length === 0) {
+      throw new RangeError("type-3 transactions require at least one blobVersionedHash");
+    }
+    if ((options.blobVersionedHashes?.length ?? 0) > 6) {
+      throw new RangeError("type-3 transactions support at most 6 blobVersionedHashes");
+    }
+    if (options.to === null) {
+      throw new RangeError("type-3 transactions cannot create contracts");
+    }
+  } else {
+    if (hasBlobFee) {
+      throw new RangeError("non-blob transactions cannot set maxFeePerBlobGas");
+    }
+    if (hasBlobHashes) {
+      throw new RangeError("non-blob transactions cannot set blobVersionedHashes");
+    }
+  }
 
   return {
     chain_id: options.chainId,
@@ -248,7 +273,7 @@ export function buildTransaction(options: BuildTransactionOptions): ShellTransac
     max_fee_per_gas: maxFeePerGas,
     max_priority_fee_per_gas: maxPriorityFeePerGas,
     access_list: options.accessList ?? null,
-    tx_type: options.txType ?? DEFAULT_TX_TYPE,
+    tx_type: txType,
     max_fee_per_blob_gas: options.maxFeePerBlobGas ?? null,
     blob_versioned_hashes: options.blobVersionedHashes ?? null,
   };
