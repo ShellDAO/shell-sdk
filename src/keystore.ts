@@ -49,6 +49,51 @@ export interface ParsedShellKeystore {
 }
 
 const SIG_IDS: Record<SignatureTypeName, number> = { "ML-DSA-65": 1, Dilithium3: 0, MlDsa65: 1, SphincsSha2256f: 2 };
+const MAX_KDF_MEMORY_KIB = 131_072;
+const MAX_KDF_TIME_COST = 10;
+const MAX_KDF_PARALLELISM = 16;
+const MIN_SALT_HEX_LENGTH = 16;
+const MAX_SALT_HEX_LENGTH = 64;
+const NONCE_HEX_LENGTH = 48;
+const MAX_CIPHERTEXT_HEX_LENGTH = 8_192;
+const MAX_PUBLIC_KEY_HEX_LENGTH = 4_096;
+
+function parseRawEncryptedKey(input: string | ShellEncryptedKey): ShellEncryptedKey {
+  return typeof input === "string" ? (JSON.parse(input) as ShellEncryptedKey) : input;
+}
+
+function assertBoundedInteger(name: string, value: number, maximum: number): void {
+  if (!Number.isSafeInteger(value) || value < 1 || value > maximum) {
+    throw new Error(`${name} must be an integer from 1 to ${maximum}`);
+  }
+}
+
+function assertHexField(name: string, value: string, minimum: number, maximum: number): void {
+  if (
+    typeof value !== "string" ||
+    value.length < minimum ||
+    value.length > maximum ||
+    value.length % 2 !== 0 ||
+    !/^[0-9a-fA-F]*$/.test(value)
+  ) {
+    throw new Error(`${name} must be an even-length hex string of ${minimum} to ${maximum} characters`);
+  }
+}
+
+function validateDecryptEnvelope(keystore: ShellEncryptedKey): void {
+  if (keystore.version !== 1) throw new Error(`unsupported keystore version: ${keystore.version}`);
+  if (keystore.kdf !== "argon2id") throw new Error("unsupported kdf: " + keystore.kdf);
+  if (keystore.cipher !== "xchacha20-poly1305") {
+    throw new Error("unsupported cipher: " + keystore.cipher);
+  }
+  assertBoundedInteger("argon2 memory cost", keystore.kdf_params.m_cost, MAX_KDF_MEMORY_KIB);
+  assertBoundedInteger("argon2 time cost", keystore.kdf_params.t_cost, MAX_KDF_TIME_COST);
+  assertBoundedInteger("argon2 parallelism", keystore.kdf_params.p_cost, MAX_KDF_PARALLELISM);
+  assertHexField("salt", keystore.kdf_params.salt, MIN_SALT_HEX_LENGTH, MAX_SALT_HEX_LENGTH);
+  assertHexField("nonce", keystore.cipher_params.nonce, NONCE_HEX_LENGTH, NONCE_HEX_LENGTH);
+  assertHexField("ciphertext", keystore.ciphertext, 0, MAX_CIPHERTEXT_HEX_LENGTH);
+  assertHexField("public key", keystore.public_key, 0, MAX_PUBLIC_KEY_HEX_LENGTH);
+}
 
 /**
  * Parse a Shell keystore file (string or object) and extract public metadata.
@@ -68,7 +113,8 @@ const SIG_IDS: Record<SignatureTypeName, number> = { "ML-DSA-65": 1, Dilithium3:
  * ```
  */
 export function parseEncryptedKey(input: string | ShellEncryptedKey): ParsedShellKeystore {
-  const raw = typeof input === "string" ? (JSON.parse(input) as ShellEncryptedKey) : input;
+  const raw = parseRawEncryptedKey(input);
+  assertHexField("public key", raw.public_key, 0, MAX_PUBLIC_KEY_HEX_LENGTH);
   const signatureType = signatureTypeFromKeyType(raw.key_type);
   const algorithmId = SIG_IDS[signatureType];
   const publicKey = publicKeyFromHex(raw.public_key);
@@ -132,7 +178,7 @@ export function assertSignerMatchesKeystore(signer: ShellSigner, keystore: Parse
 }
 
 function hexToBytes(hex: string): Uint8Array {
-  if (hex.length % 2 !== 0) throw new Error("invalid hex");
+  if (hex.length % 2 !== 0 || !/^[0-9a-fA-F]*$/.test(hex)) throw new Error("invalid hex");
   const buf = new Uint8Array(hex.length / 2);
   for (let i = 0; i < buf.length; i++) buf[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
   return buf;
@@ -171,10 +217,10 @@ export async function decryptKeystore(
   input: string | ShellEncryptedKey,
   password: string,
 ): Promise<ShellSigner> {
-  const parsed = validateEncryptedKeyAddress(input);
+  const raw = parseRawEncryptedKey(input);
+  validateDecryptEnvelope(raw);
+  const parsed = validateEncryptedKeyAddress(raw);
   const ek = parsed.raw;
-  if (ek.kdf !== "argon2id") throw new Error("unsupported kdf: " + ek.kdf);
-  if (ek.cipher !== "xchacha20-poly1305") throw new Error("unsupported cipher: " + ek.cipher);
 
   const salt = hexToBytes(ek.kdf_params.salt);
   const nonce = hexToBytes(ek.cipher_params.nonce);
