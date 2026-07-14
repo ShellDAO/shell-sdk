@@ -177,10 +177,9 @@ export function encodeSetGuardiansCalldata(
   threshold: number,
   timelock: number,
 ): HexString {
-  // Decode shell addresses to raw 32 bytes, then to 0x-hex for ABI encoding.
-  const hexGuardians = guardians.map(shellAddressToEvmHex);
+  const hexGuardians = guardians.map(shellAddressToNativeHex);
   const encoded = encodeAbiParameters(
-    [{ type: "address[]" }, { type: "uint8" }, { type: "uint64" }],
+    [{ type: "bytes32[]" }, { type: "uint8" }, { type: "uint64" }],
     [hexGuardians, threshold, BigInt(timelock)],
   );
   return `${setGuardiansSelector}${encoded.slice(2)}` as HexString;
@@ -213,9 +212,9 @@ export function encodeSubmitRecoveryCalldata(
   newAlgo: number,
 ): HexString {
   validateAccountPublicKey(newPubkey);
-  const hexAccount = shellAddressToEvmHex(account);
+  const hexAccount = shellAddressToNativeHex(account);
   const encoded = encodeAbiParameters(
-    [{ type: "address" }, { type: "bytes" }, { type: "uint8" }],
+    [{ type: "bytes32" }, { type: "bytes" }, { type: "uint8" }],
     [hexAccount, bytesToHex(newPubkey), newAlgo],
   );
   return `${submitRecoverySelector}${encoded.slice(2)}` as HexString;
@@ -231,8 +230,8 @@ export function encodeSubmitRecoveryCalldata(
  * @returns `HexString` with the 4-byte selector prepended.
  */
 export function encodeExecuteRecoveryCalldata(account: AddressLike): HexString {
-  const hexAccount = shellAddressToEvmHex(account);
-  const encoded = encodeAbiParameters([{ type: "address" }], [hexAccount]);
+  const hexAccount = shellAddressToNativeHex(account);
+  const encoded = encodeAbiParameters([{ type: "bytes32" }], [hexAccount]);
   return `${executeRecoverySelector}${encoded.slice(2)}` as HexString;
 }
 
@@ -246,8 +245,8 @@ export function encodeExecuteRecoveryCalldata(account: AddressLike): HexString {
  * @returns `HexString` with the 4-byte selector prepended.
  */
 export function encodeCancelRecoveryCalldata(account: AddressLike): HexString {
-  const hexAccount = shellAddressToEvmHex(account);
-  const encoded = encodeAbiParameters([{ type: "address" }], [hexAccount]);
+  const hexAccount = shellAddressToNativeHex(account);
+  const encoded = encodeAbiParameters([{ type: "bytes32" }], [hexAccount]);
   return `${cancelRecoverySelector}${encoded.slice(2)}` as HexString;
 }
 
@@ -255,7 +254,7 @@ export function encodeCancelRecoveryCalldata(account: AddressLike): HexString {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-/** Convert a native 32-byte Shell address to its 20-byte EVM ABI representation. */
-function shellAddressToEvmHex(address: AddressLike): `0x${string}` {
-  return bytesToHex(shellAddressToBytes(address as string).slice(-20));
+/** Preserve the native address in the 32-byte ABI word decoded by AccountManager. */
+function shellAddressToNativeHex(address: AddressLike): `0x${string}` {
+  return bytesToHex(shellAddressToBytes(address as string));
 }

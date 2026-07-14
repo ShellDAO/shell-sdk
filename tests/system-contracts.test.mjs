@@ -34,7 +34,12 @@ test("account public-key encoders reject empty payloads", () => {
 });
 
 test("guardian recovery encoders accept native 32-byte Shell addresses", () => {
-  assert.match(encodeSetGuardiansCalldata([account], 1, 100), /^0x/);
-  assert.match(encodeExecuteRecoveryCalldata(account), /^0x/);
-  assert.match(encodeCancelRecoveryCalldata(account), /^0x/);
+  const nativeWord = "11".repeat(32);
+  assert.ok(encodeSetGuardiansCalldata([account], 1, 100).endsWith(nativeWord));
+  assert.equal(
+    encodeSubmitRecoveryCalldata(account, new Uint8Array([1]), 1).slice(10, 74),
+    nativeWord,
+  );
+  assert.equal(encodeExecuteRecoveryCalldata(account).slice(10, 74), nativeWord);
+  assert.equal(encodeCancelRecoveryCalldata(account).slice(10, 74), nativeWord);
 });
