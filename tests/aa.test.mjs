@@ -5,6 +5,8 @@ import {
   buildBatchTransaction,
   buildTransaction,
   buildSponsoredTransaction,
+  buildContractPaymasterTransaction,
+  buildSessionKeyTransaction,
   buildSignedTransaction,
   buildInnerTransfer,
   buildInnerCall,
@@ -89,6 +91,63 @@ test('buildSponsoredTransaction: sets paymaster and signature', () => {
   });
   assert.ok(aa_bundle.paymaster, 'paymaster must be set');
   assert.equal(aa_bundle.paymaster_signature?.length, 3309, 'paymaster_signature must match pmSig length');
+});
+
+test('paymaster builders reject inputs that nodes cannot decode', () => {
+  const common = { chainId: 1, nonce: 0, innerCalls: [MINIMAL_INNER_CALL] };
+
+  assert.throws(
+    () => buildSponsoredTransaction({
+      ...common,
+      paymaster: '0x1234',
+      paymasterSignature: new Uint8Array([1]),
+    }),
+    /paymaster must be .*valid Shell address/,
+  );
+  assert.throws(
+    () => buildSponsoredTransaction({
+      ...common,
+      paymaster: '0x' + '99'.repeat(32),
+      paymasterSignature: [],
+    }),
+    /paymasterSignature must not be empty/,
+  );
+  assert.throws(
+    () => buildContractPaymasterTransaction({
+      ...common,
+      paymaster: '0x' + '99'.repeat(32),
+      paymasterContext: new Uint8Array(AA_MAX_PAYMASTER_CONTEXT + 1),
+    }),
+    /paymasterContext exceeds maximum size/,
+  );
+  assert.throws(
+    () => buildContractPaymasterTransaction({
+      ...common,
+      paymaster: '0x' + '99'.repeat(32),
+      paymasterContext: [256],
+    }),
+    /paymasterContext must contain only byte values/,
+  );
+});
+
+test('buildSessionKeyTransaction rejects incomplete session authorization', () => {
+  assert.throws(
+    () => buildSessionKeyTransaction({
+      chainId: 1,
+      nonce: 0,
+      innerCalls: [MINIMAL_INNER_CALL],
+      sessionAuth: {
+        session_pubkey: [1],
+        session_algo: 1,
+        target: null,
+        value_cap: '0x0',
+        expiry_block: 1,
+        root_signature: [1],
+        session_signature: [],
+      },
+    }),
+    /session_signature is empty/,
+  );
 });
 
 // ---------------------------------------------------------------------------
