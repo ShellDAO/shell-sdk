@@ -22,7 +22,8 @@ import type {
   SignedShellTransaction,
   SignatureTypeName,
 } from "./types.js";
-import { AA_BUNDLE_TX_TYPE, AA_MAX_INNER_CALLS } from "./types.js";
+import { AA_BUNDLE_TX_TYPE, AA_MAX_INNER_CALLS, AA_MAX_PAYMASTER_CONTEXT } from "./types.js";
+import { MAX_SESSION_SIGNATURE_BYTES, validateSessionAuthShape } from "./session.js";
 export { AA_BUNDLE_TX_TYPE, AA_MAX_INNER_CALLS };
 
 // Domain separator for batch (AA bundle) signing hash (matches node PQTX_BUNDLE_V1\0\0).
@@ -569,6 +570,22 @@ export interface BuildSponsoredTransactionOptions extends BuildBatchTransactionO
 /** Default outer gas budget for AA batch transactions. */
 export const DEFAULT_AA_GAS_LIMIT = 200_000;
 
+function validateProtocolBytes(
+  value: Uint8Array | number[],
+  fieldName: string,
+  maxLength: number,
+): void {
+  if (value.length === 0) {
+    throw new Error(`${fieldName} must not be empty`);
+  }
+  if (value.length > maxLength) {
+    throw new Error(`${fieldName} exceeds maximum size of ${maxLength} bytes`);
+  }
+  if (Array.from(value).some((byte) => !Number.isInteger(byte) || byte < 0 || byte > 255)) {
+    throw new Error(`${fieldName} must contain only byte values (0..255)`);
+  }
+}
+
 /**
  * Build a native AA batch transaction (`tx_type = 0x7E`).
  *
@@ -654,6 +671,12 @@ export function buildSponsoredTransaction(options: BuildSponsoredTransactionOpti
   tx: ShellTransactionRequest;
   aa_bundle: AaBundle;
 } {
+  validateAddress(options.paymaster, "paymaster");
+  validateProtocolBytes(
+    options.paymasterSignature,
+    "paymasterSignature",
+    MAX_SESSION_SIGNATURE_BYTES,
+  );
   const { tx, aa_bundle } = buildBatchTransaction(options);
   aa_bundle.paymaster = options.paymaster;
   aa_bundle.paymaster_signature = Array.from(options.paymasterSignature);
@@ -862,6 +885,12 @@ export function buildContractPaymasterTransaction(
   tx: ShellTransactionRequest;
   aa_bundle: AaBundle;
 } {
+  validateAddress(options.paymaster, "paymaster");
+  validateProtocolBytes(
+    options.paymasterContext,
+    "paymasterContext",
+    AA_MAX_PAYMASTER_CONTEXT,
+  );
   const { tx, aa_bundle } = buildBatchTransaction(options);
   aa_bundle.paymaster = options.paymaster;
   aa_bundle.paymaster_context = Array.from(options.paymasterContext);
@@ -911,6 +940,7 @@ export function buildSessionKeyTransaction(options: BuildSessionKeyTransactionOp
   tx: ShellTransactionRequest;
   aa_bundle: AaBundle;
 } {
+  validateSessionAuthShape(options.sessionAuth);
   const { tx, aa_bundle } = buildBatchTransaction(options);
   aa_bundle.session_auth = options.sessionAuth;
   return { tx, aa_bundle };
