@@ -690,7 +690,8 @@ export function buildSponsoredTransaction(options: BuildSponsoredTransactionOpti
  * `blake3( PQTX_BUNDLE_V1\0\0(16B) || tx_signing_hash || rlp(aa_bundle_for_signing) )`.
  *
  * The signing-form bundle omits `paymaster_signature`, `session_auth.root_signature`,
- * and `session_auth.session_signature`, but still commits to `paymaster_context`.
+ * and `session_auth.session_signature`, but commits to `paymaster_context` and
+ * every non-signature session authorization field.
  *
  * @param tx - The outer unsigned transaction (must have `tx_type = 0x7E`).
  * @param bundle - The AA bundle that will be attached.
@@ -721,7 +722,20 @@ export function hashBatchTransaction(
     bundle.paymaster_context && bundle.paymaster_context.length > 0
       ? (bytesToHex(new Uint8Array(bundle.paymaster_context)) as HexString)
       : ("0x" as HexString);
-  const bundleSigningFields = [innerCallsRlp, paymasterField, paymasterContextField] as const;
+  const sessionAuthFields = bundle.session_auth
+    ? [
+        bytesToHex(new Uint8Array(bundle.session_auth.session_pubkey)),
+        toRlpUint(bundle.session_auth.session_algo),
+        bundle.session_auth.target
+          ? bytesToHex(shellAddressToBytes(bundle.session_auth.target))
+          : "0x",
+        toRlpUint(bundle.session_auth.value_cap),
+        toRlpUint(bundle.session_auth.expiry_block),
+      ] as const
+    : undefined;
+  const bundleSigningFields = sessionAuthFields
+    ? [innerCallsRlp, paymasterField, paymasterContextField, sessionAuthFields] as const
+    : [innerCallsRlp, paymasterField, paymasterContextField] as const;
 
   return blake3(
     concatBytes(
