@@ -570,6 +570,8 @@ export interface BuildSponsoredTransactionOptions extends BuildBatchTransactionO
 /** Default outer gas budget for AA batch transactions. */
 export const DEFAULT_AA_GAS_LIMIT = 200_000;
 
+const MAX_AA_INNER_CALLDATA_BYTES = 128 * 1024;
+
 function validateProtocolBytes(
   value: Uint8Array | number[],
   fieldName: string,
@@ -623,6 +625,24 @@ export function buildBatchTransaction(options: BuildBatchTransactionOptions): {
       `buildBatchTransaction: innerCalls length ${options.innerCalls.length} exceeds AA_MAX_INNER_CALLS (${AA_MAX_INNER_CALLS})`,
     );
   }
+
+  options.innerCalls.forEach((call, index) => {
+    const fieldPrefix = `innerCalls[${index}]`;
+    validateAddress(call.to, `${fieldPrefix}.to`);
+    validateHexQuantity(call.value, `${fieldPrefix}.value`, (1n << 256n) - 1n, "u256");
+    validateHexData(call.data, `${fieldPrefix}.data`);
+    if ((call.data.length - 2) / 2 > MAX_AA_INNER_CALLDATA_BYTES) {
+      throw new RangeError(
+        `${fieldPrefix}.data exceeds maximum size of ${MAX_AA_INNER_CALLDATA_BYTES} bytes`,
+      );
+    }
+    validateHexQuantity(
+      call.gas_limit,
+      `${fieldPrefix}.gas_limit`,
+      0xffff_ffff_ffff_ffffn,
+      "u64",
+    );
+  });
 
   const tx = buildTransaction({
     chainId: options.chainId,
@@ -787,6 +807,20 @@ function toHexValue(value: bigint, fieldName: string): HexString {
 function validateHexData(data: HexString, fieldName: string): void {
   if (!/^0x(?:[0-9a-fA-F]{2})*$/.test(data)) {
     throw new Error(`${fieldName} must be 0x-prefixed byte-aligned hex data`);
+  }
+}
+
+function validateHexQuantity(
+  value: HexQuantity,
+  fieldName: string,
+  maxValue: bigint,
+  integerType: string,
+): void {
+  if (!/^0x(?:0|[1-9a-fA-F][0-9a-fA-F]*)$/.test(value)) {
+    throw new Error(`${fieldName} must be a canonical 0x-prefixed hex quantity`);
+  }
+  if (BigInt(value) > maxValue) {
+    throw new RangeError(`${fieldName} must fit in ${integerType}, got: ${value}`);
   }
 }
 

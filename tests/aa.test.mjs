@@ -65,6 +65,25 @@ test('buildBatchTransaction: rejects too many innerCalls', () => {
   );
 });
 
+test('buildBatchTransaction: validates raw inner call fields', () => {
+  const invalidCalls = [
+    [{ ...MINIMAL_INNER_CALL, to: '0x1234' }, /innerCalls\[0\]\.to must be .*valid Shell address/],
+    [{ ...MINIMAL_INNER_CALL, data: '0x0' }, /innerCalls\[0\]\.data must be .*byte-aligned hex data/],
+    [{ ...MINIMAL_INNER_CALL, data: '0x' + '00'.repeat(128 * 1024 + 1) }, /innerCalls\[0\]\.data exceeds maximum size of 131072 bytes/],
+    [{ ...MINIMAL_INNER_CALL, value: '0x00' }, /innerCalls\[0\]\.value must be a canonical .*hex quantity/],
+    [{ ...MINIMAL_INNER_CALL, value: '0x1' + '0'.repeat(64) }, /innerCalls\[0\]\.value must fit in u256/],
+    [{ ...MINIMAL_INNER_CALL, gas_limit: '12' }, /innerCalls\[0\]\.gas_limit must be a canonical .*hex quantity/],
+    [{ ...MINIMAL_INNER_CALL, gas_limit: '0x10000000000000000' }, /innerCalls\[0\]\.gas_limit must fit in u64/],
+  ];
+
+  for (const [innerCall, expectedError] of invalidCalls) {
+    assert.throws(
+      () => buildBatchTransaction({ chainId: 1, nonce: 0, innerCalls: [innerCall] }),
+      expectedError,
+    );
+  }
+});
+
 test('buildBatchTransaction: sets tx_type to AA_BUNDLE_TX_TYPE', () => {
   const { tx } = buildBatchTransaction({ chainId: 1, nonce: 0, innerCalls: [MINIMAL_INNER_CALL] });
   assert.equal(tx.tx_type, AA_BUNDLE_TX_TYPE, 'tx_type must be 0x7E');
