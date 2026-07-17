@@ -547,7 +547,8 @@ export interface BuildBatchTransactionOptions {
   innerCalls: AaInnerCall[];
   /**
    * Total gas budget for the outer transaction.
-   * Should be ≥ sum(innerCalls[i].gas_limit) + 21 000 + overhead.
+   * Must cover the 53 000-gas AA envelope, every inner gas limit, 4 000 gas
+   * for each call after the first, and any authorization surcharge.
    * Defaults to `200_000`.
    */
   gasLimit?: number;
