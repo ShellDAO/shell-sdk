@@ -84,6 +84,59 @@ test('buildBatchTransaction: validates raw inner call fields', () => {
   }
 });
 
+test('buildBatchTransaction: derives the outer value budget from inner calls', () => {
+  const calls = [
+    { ...MINIMAL_INNER_CALL, value: '0x2' },
+    { ...MINIMAL_INNER_CALL, value: '0x3' },
+  ];
+  const { tx } = buildBatchTransaction({ chainId: 1, nonce: 0, innerCalls: calls });
+  assert.equal(tx.value, '0x5');
+});
+
+test('buildBatchTransaction: rejects aggregate value and gas overflow boundaries', () => {
+  assert.throws(
+    () => buildBatchTransaction({
+      chainId: 1,
+      nonce: 0,
+      innerCalls: [
+        { ...MINIMAL_INNER_CALL, value: '0x' + 'f'.repeat(64) },
+        { ...MINIMAL_INNER_CALL, value: '0x1' },
+      ],
+    }),
+    /sum\(innerCalls\[\]\.value\) must fit in u256/,
+  );
+  assert.throws(
+    () => buildBatchTransaction({
+      chainId: 1,
+      nonce: 0,
+      innerCalls: [MINIMAL_INNER_CALL],
+      gasLimit: 73_999,
+    }),
+    /gasLimit must cover AA intrinsic gas \(74000\)/,
+  );
+});
+
+test('buildSessionKeyTransaction: includes the session verification gas surcharge', () => {
+  assert.throws(
+    () => buildSessionKeyTransaction({
+      chainId: 1,
+      nonce: 0,
+      innerCalls: [MINIMAL_INNER_CALL],
+      gasLimit: 93_999,
+      sessionAuth: {
+        session_pubkey: [1],
+        session_algo: 1,
+        target: null,
+        value_cap: '0x0',
+        expiry_block: 1,
+        root_signature: [1],
+        session_signature: [1],
+      },
+    }),
+    /gasLimit must cover AA intrinsic gas \(94000\)/,
+  );
+});
+
 test('buildBatchTransaction: sets tx_type to AA_BUNDLE_TX_TYPE', () => {
   const { tx } = buildBatchTransaction({ chainId: 1, nonce: 0, innerCalls: [MINIMAL_INNER_CALL] });
   assert.equal(tx.tx_type, AA_BUNDLE_TX_TYPE, 'tx_type must be 0x7E');
