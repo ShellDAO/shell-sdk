@@ -22,7 +22,12 @@ import type {
   SignedShellTransaction,
   SignatureTypeName,
 } from "./types.js";
-import { AA_BUNDLE_TX_TYPE, AA_MAX_INNER_CALLS, AA_MAX_PAYMASTER_CONTEXT } from "./types.js";
+import {
+  AA_BUNDLE_TX_TYPE,
+  AA_MAX_INNER_CALLS,
+  AA_MAX_PAYMASTER_CONTEXT,
+  AA_SESSION_KEY_GAS_SURCHARGE,
+} from "./types.js";
 import { MAX_SESSION_SIGNATURE_BYTES, validateSessionAuthShape } from "./session.js";
 export { AA_BUNDLE_TX_TYPE, AA_MAX_INNER_CALLS };
 
@@ -542,7 +547,8 @@ export interface BuildBatchTransactionOptions {
   innerCalls: AaInnerCall[];
   /**
    * Total gas budget for the outer transaction.
-   * Should be ≥ sum(innerCalls[i].gas_limit) + 21 000 + overhead.
+   * Must cover the 53 000-gas AA envelope, every inner gas limit, 4 000 gas
+   * for each call after the first, and any authorization surcharge.
    * Defaults to `200_000`.
    */
   gasLimit?: number;
@@ -569,6 +575,13 @@ export interface BuildSponsoredTransactionOptions extends BuildBatchTransactionO
 
 /** Default outer gas budget for AA batch transactions. */
 export const DEFAULT_AA_GAS_LIMIT = 200_000;
+
+const MAX_AA_INNER_CALLDATA_BYTES = 128 * 1024;
+const MAX_U256 = (1n << 256n) - 1n;
+// AA envelopes use `to: null`, so the node charges the 21k transaction base
+// plus the 32k contract-creation surcharge before bundle-specific gas.
+const BASE_AA_OUTER_INTRINSIC_GAS = 53_000n;
+const AA_INNER_CALL_INTRINSIC_GAS = 4_000n;
 
 function validateProtocolBytes(
   value: Uint8Array | number[],
@@ -624,13 +637,42 @@ export function buildBatchTransaction(options: BuildBatchTransactionOptions): {
     );
   }
 
+  let innerValueSum = 0n;
+  let innerGasSum = 0n;
+  options.innerCalls.forEach((call, index) => {
+    const fieldPrefix = `innerCalls[${index}]`;
+    validateAddress(call.to, `${fieldPrefix}.to`);
+    validateHexQuantity(call.value, `${fieldPrefix}.value`, MAX_U256, "u256");
+    validateHexData(call.data, `${fieldPrefix}.data`);
+    if ((call.data.length - 2) / 2 > MAX_AA_INNER_CALLDATA_BYTES) {
+      throw new RangeError(
+        `${fieldPrefix}.data exceeds maximum size of ${MAX_AA_INNER_CALLDATA_BYTES} bytes`,
+      );
+    }
+    validateHexQuantity(
+      call.gas_limit,
+      `${fieldPrefix}.gas_limit`,
+      0xffff_ffff_ffff_ffffn,
+      "u64",
+    );
+    innerValueSum += BigInt(call.value);
+    innerGasSum += BigInt(call.gas_limit);
+  });
+
+  if (innerValueSum > MAX_U256) {
+    throw new RangeError("sum(innerCalls[].value) must fit in u256");
+  }
+  const gasLimit = options.gasLimit ?? DEFAULT_AA_GAS_LIMIT;
+  validateNonNegativeInteger(gasLimit, "gasLimit");
+  validateAaGasBudget(options.innerCalls.length, innerGasSum, gasLimit, 0);
+
   const tx = buildTransaction({
     chainId: options.chainId,
     nonce: options.nonce,
     to: null,
-    value: 0n,
+    value: innerValueSum,
     data: "0x",
-    gasLimit: options.gasLimit ?? DEFAULT_AA_GAS_LIMIT,
+    gasLimit,
     maxFeePerGas: options.maxFeePerGas ?? DEFAULT_MAX_FEE_PER_GAS,
     maxPriorityFeePerGas: options.maxPriorityFeePerGas ?? DEFAULT_MAX_PRIORITY_FEE_PER_GAS,
     txType: AA_BUNDLE_TX_TYPE,
@@ -804,6 +846,20 @@ function validateHexData(data: HexString, fieldName: string): void {
   }
 }
 
+function validateHexQuantity(
+  value: HexQuantity,
+  fieldName: string,
+  maxValue: bigint,
+  integerType: string,
+): void {
+  if (!/^0x(?:0|[1-9a-fA-F][0-9a-fA-F]*)$/.test(value)) {
+    throw new Error(`${fieldName} must be a canonical 0x-prefixed hex quantity`);
+  }
+  if (BigInt(value) > maxValue) {
+    throw new RangeError(`${fieldName} must fit in ${integerType}, got: ${value}`);
+  }
+}
+
 /**
  * Convenience helper: build a minimal `AaInnerCall` for a SHELL token transfer.
  *
@@ -956,6 +1012,35 @@ export function buildSessionKeyTransaction(options: BuildSessionKeyTransactionOp
 } {
   validateSessionAuthShape(options.sessionAuth);
   const { tx, aa_bundle } = buildBatchTransaction(options);
+  const innerGasSum = options.innerCalls.reduce(
+    (sum, call) => sum + BigInt(call.gas_limit),
+    0n,
+  );
+  validateAaGasBudget(
+    options.innerCalls.length,
+    innerGasSum,
+    tx.gas_limit,
+    AA_SESSION_KEY_GAS_SURCHARGE,
+  );
   aa_bundle.session_auth = options.sessionAuth;
   return { tx, aa_bundle };
+}
+
+function validateAaGasBudget(
+  innerCallCount: number,
+  innerGasSum: bigint,
+  gasLimit: number,
+  sessionSurcharge: number,
+): void {
+  const additionalCalls = BigInt(Math.max(0, innerCallCount - 1));
+  const required =
+    BASE_AA_OUTER_INTRINSIC_GAS +
+    innerGasSum +
+    additionalCalls * AA_INNER_CALL_INTRINSIC_GAS +
+    BigInt(sessionSurcharge);
+  if (BigInt(gasLimit) < required) {
+    throw new RangeError(
+      `gasLimit must cover AA intrinsic gas (${required}), got: ${gasLimit}`,
+    );
+  }
 }
