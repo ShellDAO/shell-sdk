@@ -20,7 +20,7 @@
  * - ML-DSA-65 pk: raw FIPS 204 bytes, length **1952**, `algo_id = 0x01`.
  * - SLH-DSA-SHA2-256f pk: raw FIPS 205 bytes, length **64**, `algo_id = 0x02`.
  *
- * @see ADR-011 in workspace/projects/shell-chain/adrs/ADR-011-pq-hd-wallet.md
+ * @see {@link https://github.com/ShellDAO/shell-chain/blob/main/crates/crypto/src/hd.rs | Shell Chain reference implementation}
  * @module hdwallet
  */
 
