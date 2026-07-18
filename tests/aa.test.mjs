@@ -207,6 +207,40 @@ test('hashBatchTransaction: known Shell-chain vector (chain_id=1, nonce=0, singl
   assert.equal(hash, '0xd2c415a571c60e84907b09cbda157298edb2387331e3d2db40caab7a277a9a59');
 });
 
+test('hashBatchTransaction: session authorization metadata matches Shell-chain vector', () => {
+  const { tx, aa_bundle } = buildSessionKeyTransaction({
+    chainId: 1,
+    nonce: 0,
+    innerCalls: [{
+      to: `0x${'42'.repeat(32)}`,
+      value: '0x0',
+      data: '0x',
+      gas_limit: '0x5208',
+    }],
+    sessionAuth: {
+      session_pubkey: Array(32).fill(0xA5),
+      session_algo: 0,
+      target: `0x${'11'.repeat(32)}`,
+      value_cap: '0x3e8',
+      expiry_block: 42,
+      root_signature: Array(96).fill(0x01),
+      session_signature: Array(96).fill(0x02),
+    },
+  });
+
+  assert.equal(
+    hexBytes(hashBatchTransaction(tx, aa_bundle)),
+    '0x4083d5079c9381bae7e2846173559bf6a35f430297c8f46b0f798cabb96ada3d',
+  );
+
+  const changed = structuredClone(aa_bundle);
+  changed.session_auth.expiry_block += 1;
+  assert.notEqual(
+    hexBytes(hashBatchTransaction(tx, aa_bundle)),
+    hexBytes(hashBatchTransaction(tx, changed)),
+  );
+});
+
 test('hashPaymasterTransaction: known Shell-chain vector', () => {
   const { tx, aa_bundle } = buildSponsoredTransaction({
     chainId: 1,
