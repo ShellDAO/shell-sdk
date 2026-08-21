@@ -229,7 +229,11 @@ import { shellDevnet } from "shell-sdk/provider";
 |---|---|---|
 | `chain` | `Chain` | `shellDevnet` |
 | `rpcHttpUrl` | `string` | `http://127.0.0.1:8545` |
+| `rpcApiKey` | `string` | — |
 | `rpcWsUrl` | `string` | `ws://127.0.0.1:8546` |
+
+`rpcApiKey` authenticates HTTP RPC requests with `Authorization: Bearer ...`.
+Keep it in a server-side secret store; do not embed it in browser bundles.
 
 #### `ShellProvider` class
 
@@ -292,6 +296,18 @@ const nextPage = firstPage.nextCursor
   : null;
 const tx = await provider.getTransactionSummary(txHash, { includeReceipt: true });
 const validators = await provider.getValidatorSnapshot({ proposerWindow: 200 });
+```
+
+For a validator RPC listener protected by `--rpc-api-key`, configure the same
+key before calling signer-backed governance methods:
+
+```typescript
+const provider = createShellProvider({
+  rpcHttpUrl: process.env.SHELL_RPC_URL,
+  rpcApiKey: process.env.SHELL_RPC_API_KEY,
+});
+
+await provider.proposeAddValidator(validatorAddress);
 ```
 
 RPC v2 list methods clamp page/range sizes to 100 items. The default

@@ -169,8 +169,23 @@ export interface CreateShellPublicClientOptions {
   chain?: ShellChainConfig;
   /** Override the HTTP RPC URL. Defaults to the chain's first HTTP URL. */
   rpcHttpUrl?: string;
+  /** API key sent as a Bearer token with HTTP RPC requests. Not used by WebSocket clients. */
+  rpcApiKey?: string;
   /** Override the WebSocket RPC URL. Defaults to the chain's first WS URL. */
   rpcWsUrl?: string;
+}
+
+function bearerAuthorization(apiKey: string | undefined): string | undefined {
+  if (apiKey === undefined) {
+    return undefined;
+  }
+  if (apiKey.length === 0) {
+    throw new Error("rpcApiKey must not be empty");
+  }
+  if (/[\r\n]/.test(apiKey)) {
+    throw new Error("rpcApiKey must not contain newline characters");
+  }
+  return `Bearer ${apiKey}`;
 }
 
 /**
@@ -263,10 +278,12 @@ export class ShellProvider {
   readonly client: ShellPublicClient;
   /** HTTP RPC URL used for Shell-specific JSON-RPC calls. */
   readonly rpcHttpUrl: string;
+  private readonly authorizationHeader: string | undefined;
 
-  constructor(client: ShellPublicClient, rpcHttpUrl: string) {
+  constructor(client: ShellPublicClient, rpcHttpUrl: string, rpcApiKey?: string) {
     this.client = client;
     this.rpcHttpUrl = rpcHttpUrl;
+    this.authorizationHeader = bearerAuthorization(rpcApiKey);
   }
 
   private async request<T>(method: string, params: unknown[]): Promise<T> {
@@ -274,6 +291,9 @@ export class ShellProvider {
       method: "POST",
       headers: {
         "content-type": "application/json",
+        ...(this.authorizationHeader === undefined
+          ? {}
+          : { authorization: this.authorizationHeader }),
       },
       body: JSON.stringify({
         jsonrpc: "2.0",
@@ -519,16 +539,19 @@ export class ShellProvider {
     ]);
   }
 
+  /** Propose a validator addition. Protected remote nodes require `rpcApiKey`. */
   async proposeAddValidator(address: string): Promise<string> {
     validateAddress(address, "address");
     return this.request("shell_proposeAddValidator", [address]);
   }
 
+  /** Propose a validator removal. Protected remote nodes require `rpcApiKey`. */
   async proposeRemoveValidator(address: string): Promise<string> {
     validateAddress(address, "address");
     return this.request("shell_proposeRemoveValidator", [address]);
   }
 
+  /** Propose a validator weight update. Protected remote nodes require `rpcApiKey`. */
   async proposeSetValidatorWeight(address: string, weight: number): Promise<string> {
     validateAddress(address, "address");
     validateNonNegativeInteger(weight, "weight");
@@ -540,6 +563,7 @@ export class ShellProvider {
    *
    * Calls `shell_proposeSetValidatorStake`. In staking mode, consensus weight
    * is derived from the proposed stake after the governance change applies.
+   * Protected remote nodes require `rpcApiKey`.
    */
   async proposeSetValidatorStake(
     address: string,
@@ -755,12 +779,18 @@ export function createShellPublicClient(
 ): ShellPublicClient {
   const chain = options.chain ?? shellDevnet;
   const rpcHttpUrl = options.rpcHttpUrl ?? chain.rpcUrls.default.http[0];
+  const authorization = bearerAuthorization(options.rpcApiKey);
 
   validateRpcUrl(rpcHttpUrl);
 
   return createPublicClient({
     chain: chain as Chain,
-    transport: http(rpcHttpUrl),
+    transport: http(
+      rpcHttpUrl,
+      authorization === undefined
+        ? undefined
+        : { fetchOptions: { headers: { authorization } } },
+    ),
   });
 }
 
@@ -818,5 +848,5 @@ export function createShellProvider(options: CreateShellPublicClientOptions = {}
 
   validateRpcUrl(rpcHttpUrl);
 
-  return new ShellProvider(client, rpcHttpUrl);
+  return new ShellProvider(client, rpcHttpUrl, options.rpcApiKey);
 }

@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added the `rpcApiKey` provider option for Bearer-authenticated HTTP RPC
+  requests, including signer-backed validator governance methods.
+
 ### Breaking
 
 - Updated transaction signing hashes to the shell-chain v0.27.5 V2 domain and
