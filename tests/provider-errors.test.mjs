@@ -16,6 +16,33 @@ test('ShellProvider returns JSON-RPC results from raw Shell methods', async () =
   assert.equal(await provider.getPqPubkey('0x' + '44'.repeat(32)), '0x' + '11'.repeat(32));
 });
 
+test('ShellProvider authenticates raw and viem HTTP requests with the RPC API key', async () => {
+  const authorizationHeaders = [];
+  globalThis.fetch = async (_url, init) => {
+    authorizationHeaders.push(new Headers(init.headers).get('authorization'));
+    const body = JSON.parse(init.body);
+    const result = body.method === 'eth_blockNumber' ? '0x1' : '0x' + '11'.repeat(32);
+    return rpc({ jsonrpc: '2.0', id: body.id, result });
+  };
+
+  const provider = createShellProvider({ rpcHttpUrl: RPC_URL, rpcApiKey: 'secret' });
+
+  await provider.getPqPubkey('0x' + '44'.repeat(32));
+  assert.equal(await provider.client.getBlockNumber(), 1n);
+  assert.deepEqual(authorizationHeaders, ['Bearer secret', 'Bearer secret']);
+});
+
+test('ShellProvider rejects unsafe RPC API keys', () => {
+  assert.throws(
+    () => createShellProvider({ rpcHttpUrl: RPC_URL, rpcApiKey: '' }),
+    /rpcApiKey must not be empty/,
+  );
+  assert.throws(
+    () => createShellProvider({ rpcHttpUrl: RPC_URL, rpcApiKey: 'secret\r\ninjected' }),
+    /rpcApiKey must not contain newline characters/,
+  );
+});
+
 test('ShellProvider surfaces JSON-RPC error codes and messages', async () => {
   globalThis.fetch = async (_url, init) => {
     const body = JSON.parse(init.body);
