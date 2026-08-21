@@ -485,9 +485,9 @@ const signed = buildSignedTransaction({
 
 #### `hashTransaction`
 
-Compute the canonical shell-chain v0.27.x signing hash as **BLAKE3** over the structured preimage:
+Compute the canonical shell-chain v0.27.5 signing hash as **BLAKE3** over the structured preimage:
 
-`chain_id(8B BE) || nonce(8B BE) || to(32B|zero) || value(32B BE) || data || gas_limit(8B BE) || max_fee_per_gas(8B BE) || max_priority_fee_per_gas(8B BE) || sig_type(1B) || tx_type(1B)`
+`PQTX_SIGNING_V2\0(16B) || chain_id(8B BE) || nonce(8B BE) || to(32B|zero) || value(32B BE) || data || gas_limit(8B BE) || max_fee_per_gas(8B BE) || max_priority_fee_per_gas(8B BE) || rlp(access_list) || sig_type(1B) || tx_type(1B)`
 
 For blob transactions (`tx_type === 3`), append `max_fee_per_blob_gas(8B BE)` and each 32-byte blob hash.
 

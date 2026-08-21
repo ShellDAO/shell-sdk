@@ -276,7 +276,7 @@ test('hashBatchTransaction: known Shell-chain vector (chain_id=1, nonce=0, singl
     innerCalls: [{ to: null, value: '0x0', data: '0x1234', gas_limit: '0x5208' }],
   });
   const hash = hexBytes(hashBatchTransaction(tx, aa_bundle));
-  assert.equal(hash, '0xd2c415a571c60e84907b09cbda157298edb2387331e3d2db40caab7a277a9a59');
+  assert.equal(hash, '0xa464ebdf74146ce5528c5f69f931ec009033c0542d33db784462d91cf573e1d7');
 });
 
 test('hashBatchTransaction: session authorization metadata matches Shell-chain vector', () => {
@@ -302,7 +302,7 @@ test('hashBatchTransaction: session authorization metadata matches Shell-chain v
 
   assert.equal(
     hexBytes(hashBatchTransaction(tx, aa_bundle)),
-    '0x4083d5079c9381bae7e2846173559bf6a35f430297c8f46b0f798cabb96ada3d',
+    '0xb619da4989890f1a525b88e5aa5975e03de02b80e518b90768fabd98f93d996f',
   );
 
   const changed = structuredClone(aa_bundle);
@@ -326,7 +326,7 @@ test('hashPaymasterTransaction: known Shell-chain vector', () => {
     tx,
     aa_bundle,
   ));
-  assert.equal(hash, '0xd5016bf694426c4ef74e7b06f27062db79acb9050923793278ea7ffd6ab9ee75');
+  assert.equal(hash, '0x298b3859ad8ae406f738834a56253284272cd5fca951c6bed627dfce878b75da');
 });
 
 // ---------------------------------------------------------------------------

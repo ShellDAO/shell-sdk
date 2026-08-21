@@ -472,18 +472,15 @@ export function hexBytes(bytes: Uint8Array): HexString {
 /**
  * Compute the canonical Shell transaction signing hash.
  *
- * Shell-chain v0.23.0 signs `blake3` over the structured preimage from
+ * Shell-chain v0.27.5 signs `blake3` over the structured preimage from
  * `shell-chain/crates/core/src/transaction.rs::Transaction::signing_hash`:
  *
- * `PQTX_SIGNING_V1\0(16B) || chain_id(8B BE) || nonce(8B BE) || to(32B|zero) || value(32B BE) || data ||`
+ * `PQTX_SIGNING_V2\0(16B) || chain_id(8B BE) || nonce(8B BE) || to(32B|zero) || value(32B BE) || data ||`
  * `gas_limit(8B BE) || max_fee_per_gas(8B BE) || max_priority_fee_per_gas(8B BE) ||`
- * `sig_type(1B) || tx_type(1B)`
+ * `rlp(access_list) || sig_type(1B) || tx_type(1B)`
  *
  * Blob transactions (`tx_type === 3`) append
  * `max_fee_per_blob_gas(8B BE) || blob_hash_0(32B) || ...`.
- *
- * `access_list` is intentionally excluded because the chain's signing preimage
- * does not include it.
  *
  * @param tx - The unsigned transaction to hash.
  * @param signatureType - Signature algorithm name or numeric id. Defaults to Dilithium3 (`0`).
@@ -493,8 +490,8 @@ export function hexBytes(bytes: Uint8Array): HexString {
 /** Domain separator prepended to every transaction signing preimage (matches node constant). */
 const PQTX_SIGNING_DOMAIN = new Uint8Array([
   0x50, 0x51, 0x54, 0x58, 0x5f, 0x53, 0x49, 0x47,
-  0x4e, 0x49, 0x4e, 0x47, 0x5f, 0x56, 0x31, 0x00,
-]); // b"PQTX_SIGNING_V1\0"
+  0x4e, 0x49, 0x4e, 0x47, 0x5f, 0x56, 0x32, 0x00,
+]); // b"PQTX_SIGNING_V2\0"
 
 export function hashTransaction(
   tx: ShellTransactionRequest,
@@ -511,6 +508,7 @@ export function hashTransaction(
     encodeU64Be(tx.gas_limit, "gas_limit"),
     encodeU64Be(tx.max_fee_per_gas, "max_fee_per_gas"),
     encodeU64Be(tx.max_priority_fee_per_gas, "max_priority_fee_per_gas"),
+    hexToBytes(toRlp(toRlpAccessList(tx.access_list))),
     new Uint8Array([signatureTypeToId(signatureType)]),
     new Uint8Array([txType]),
   ];

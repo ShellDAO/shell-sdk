@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Breaking
+
+- Updated transaction signing hashes to the shell-chain v0.27.5 V2 domain and
+  canonical access-list commitment. Transactions signed with the previous
+  domain are not compatible with the upgraded network.
+
+### Fixed
+
+- Bound EIP-2930 access-list metadata to sender, session-key, and paymaster
+  authorization hashes.
+
 ## [0.13.0] — 2026-07-12
 
 ### Added

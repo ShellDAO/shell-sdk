@@ -25,6 +25,22 @@ test('rust compatibility: transaction hash vectors match shell-chain', () => {
   }
 });
 
+test('signing: transaction hash commits canonical access-list contents', () => {
+  const tx = structuredClone(fixture.transactions[0].tx);
+  const emptyListHash = hexBytes(hashTransaction({ ...tx, access_list: [] }));
+  const nullListHash = hexBytes(hashTransaction({ ...tx, access_list: null }));
+  const changedListHash = hexBytes(hashTransaction({
+    ...tx,
+    access_list: [{
+      address: '0x0000000000000000000000002222222222222222222222222222222222222222',
+      storage_keys: ['0x3333333333333333333333333333333333333333333333333333333333333333'],
+    }],
+  }));
+
+  assert.equal(emptyListHash, nullListHash, 'empty and absent access lists must encode identically');
+  assert.notEqual(changedListHash, nullListHash, 'access-list mutation must change the signing hash');
+});
+
 test('signing: ML-DSA-65 key/signature sizes match pqcrypto-dilithium v0.5', () => {
   // pqcrypto-dilithium 0.5 (shell-chain) implements FIPS 204 ML-DSA-65.
   // Verify that @noble/post-quantum produces byte-identical key and signature sizes.
