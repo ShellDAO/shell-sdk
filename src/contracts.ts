@@ -129,21 +129,6 @@ export interface DecodeContractFunctionResultOptions {
   data: HexString;
 }
 
-interface JsonRpcSuccess<T> {
-  result: T;
-  error?: undefined;
-}
-
-interface JsonRpcFailure {
-  result?: undefined;
-  error: {
-    code: number;
-    message: string;
-  };
-}
-
-type JsonRpcResponse<T> = JsonRpcSuccess<T> | JsonRpcFailure;
-
 interface AbiParameterLike {
   name?: string;
   type: string;
@@ -290,21 +275,7 @@ function encodeShellAddressArgs(parameters: readonly AbiParameterLike[], args: r
 }
 
 async function rpcRequest<T>(provider: ShellProvider, method: string, params: unknown[]): Promise<T> {
-  const response = await fetch(provider.rpcHttpUrl, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`rpc request failed: ${response.status} ${response.statusText}`);
-  }
-
-  const body = (await response.json()) as JsonRpcResponse<T>;
-  if ("error" in body && body.error) {
-    throw new Error(`[${body.error.code}] ${body.error.message}`);
-  }
-  return body.result;
+  return provider.client.request<{ Parameters: unknown[]; ReturnType: T }>({ method, params });
 }
 
 async function getPendingNonce(provider: ShellProvider, address: AddressLike): Promise<number> {
