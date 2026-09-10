@@ -369,6 +369,38 @@ test('waitForTransactionReceipt times out clearly', async () => {
   });
 });
 
+test('receipt polling sleeps only within the remaining timeout budget', async (t) => {
+  for (const responseTime of [40, 50, 60]) {
+    await t.test(`null receipt arrives after ${responseTime} ms`, async (t) => {
+      let now = 0;
+      let requests = 0;
+      const delays = [];
+      t.mock.method(Date, 'now', () => now);
+      t.mock.method(globalThis, 'setTimeout', (callback, delay) => {
+        delays.push(delay);
+        now += delay;
+        callback();
+        return 0;
+      });
+      const provider = {
+        client: {
+          request: async () => {
+            requests += 1;
+            now += responseTime;
+            return null;
+          },
+        },
+      };
+      await assert.rejects(
+        waitForTransactionReceipt({ provider, hash: HASH, timeoutMs: 50, pollIntervalMs: 1000 }),
+        /timeout waiting for transaction receipt/,
+      );
+      assert.deepEqual(delays, responseTime < 50 ? [10] : []);
+      assert.equal(requests, 1, 'must not start another poll at the deadline');
+    });
+  }
+});
+
 test('compileSolidity returns normalized Shell contract artifact', async () => {
   const artifact = await compileSolidity({
     sources: [{

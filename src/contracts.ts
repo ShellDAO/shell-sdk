@@ -379,7 +379,7 @@ export async function waitForTransactionReceipt(
   const pollIntervalMs = Math.max(requestedPollIntervalMs, 100);
 
   const deadline = Date.now() + timeoutMs;
-  while (Date.now() <= deadline) {
+  while (Date.now() < deadline) {
     const receipt = await rpcRequest<ShellRpcReceipt | null>(
       options.provider,
       "eth_getTransactionReceipt",
@@ -388,7 +388,11 @@ export async function waitForTransactionReceipt(
     if (receipt) {
       return receipt;
     }
-    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, Math.min(pollIntervalMs, remainingMs)));
   }
 
   throw new Error(`timeout waiting for transaction receipt: ${options.hash}`);
