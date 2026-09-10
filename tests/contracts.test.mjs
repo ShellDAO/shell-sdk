@@ -13,6 +13,7 @@ import {
   writeContract,
 } from '../dist/contracts.js';
 import { compileSolidity } from '../dist/contracts-compiler.js';
+import { createShellProvider } from '../dist/provider.js';
 
 const ADDRESS = '0x' + '11'.repeat(32);
 const CONTRACT = '0x' + '22'.repeat(32);
@@ -50,31 +51,25 @@ function makeReceipt(overrides = {}) {
   };
 }
 
-function makeProvider({ receipt = makeReceipt(), callResult = '0x', nonce = '0x0', pqPubkey = null } = {}) {
+function makeProvider({ receipt = makeReceipt(), callResult = '0x', nonce = '0x0', pqPubkey = null, rpcApiKey } = {}) {
   const calls = [];
-  const provider = {
-    rpcHttpUrl: 'http://127.0.0.1:8545',
-    async sendTransaction(signed) {
-      calls.push({ method: 'shell_sendTransaction', params: [signed] });
-      return HASH;
-    },
-    async getPqPubkey(address) {
-      calls.push({ method: 'shell_getPqPubkey', params: [address] });
-      return pqPubkey;
-    },
-  };
+  const provider = createShellProvider({ rpcHttpUrl: 'http://127.0.0.1:8545', rpcApiKey });
 
   const fetchMock = async (_url, init) => {
     const body = JSON.parse(init.body);
     calls.push(body);
-    if (body.method === 'eth_getTransactionCount') {
-      return makeResponse({ jsonrpc: '2.0', id: body.id, result: nonce });
+    if (rpcApiKey && new Headers(init.headers).get('authorization') !== `Bearer ${rpcApiKey}`) {
+      return new Response('Unauthorized', { status: 401 });
     }
-    if (body.method === 'eth_getTransactionReceipt') {
-      return makeResponse({ jsonrpc: '2.0', id: body.id, result: receipt });
-    }
-    if (body.method === 'eth_call') {
-      return makeResponse({ jsonrpc: '2.0', id: body.id, result: callResult });
+    const results = {
+      eth_getTransactionCount: nonce,
+      eth_getTransactionReceipt: receipt,
+      eth_call: callResult,
+      shell_getPqPubkey: pqPubkey,
+      shell_sendTransaction: HASH,
+    };
+    if (Object.hasOwn(results, body.method)) {
+      return makeResponse({ jsonrpc: '2.0', id: body.id, result: results[body.method] });
     }
     throw new Error(`unexpected method ${body.method}`);
   };
@@ -144,6 +139,39 @@ test('buildContractCallTransaction encodes calldata for Shell 32-byte address ta
   assert.equal(tx.to, CONTRACT);
   assert.equal(tx.gas_limit, 120_000);
   assert.match(tx.data, /^0x3fb5c1cb/);
+});
+
+test('contract helpers use the provider RPC API key throughout read, deploy and write', async () => {
+  const { provider, calls, fetchMock } = makeProvider({
+    rpcApiKey: 'test-api-key',
+    nonce: '0x3',
+    callResult: '0x' + 15n.toString(16).padStart(64, '0'),
+  });
+  await withFetchMock(fetchMock, async () => {
+    const signer = makeSigner();
+    const deployed = await deployContract({
+      provider, signer, chainId: 1337,
+      artifact: { contractName: 'Counter', abi: NO_CONSTRUCTOR_ABI, bytecode: '0x60006000' },
+      wait: true,
+    });
+    assert.equal(deployed.nonce, 3);
+    assert.equal(deployed.contractAddress, CONTRACT);
+    const written = await writeContract({
+      provider, signer, chainId: 1337, address: CONTRACT, abi: ABI,
+      functionName: 'setNumber', args: [12n], wait: true,
+    });
+    assert.equal(written.nonce, 3);
+    assert.equal(written.receipt.status, '0x1');
+    assert.equal(await readContract({
+      provider, address: CONTRACT, abi: ABI, functionName: 'getNumber',
+    }), 15n);
+  });
+  assert.deepEqual(calls.map(call => call.method), [
+    'eth_getTransactionCount', 'shell_getPqPubkey', 'shell_sendTransaction', 'eth_getTransactionReceipt',
+    'eth_getTransactionCount', 'shell_getPqPubkey', 'shell_sendTransaction', 'eth_getTransactionReceipt',
+    'eth_call',
+  ]);
+  assert.equal(calls[0].params[1], 'pending');
 });
 
 test('deployContract sends, waits, and validates 32-byte contract address', async () => {
