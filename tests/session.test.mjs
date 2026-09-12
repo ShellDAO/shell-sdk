@@ -128,6 +128,77 @@ test("session-2c: target-presence hashes match Shell Chain vectors", () => {
   );
 });
 
+const validAuthConfig = {
+  chainId: 1n,
+  expiryBlock: 1,
+  valueCap: 0n,
+  target: null,
+};
+
+const invalidAuthQuantities = [
+  ["chainId", -1n],
+  ["chainId", 1n << 64n],
+  ["valueCap", -1n],
+  ["valueCap", 1n << 256n],
+  ["expiryBlock", -1],
+  ["expiryBlock", 1.5],
+  ["expiryBlock", NaN],
+  ["expiryBlock", Infinity],
+  ["expiryBlock", Number.MAX_SAFE_INTEGER + 1],
+];
+
+test("session quantities reject truncation and unsafe expiry values", () => {
+  for (const [field, value] of invalidAuthQuantities) {
+    assert.throws(
+      () => computeSessionAuthHash(new Uint8Array([1]), 1, {
+        ...validAuthConfig,
+        [field]: value,
+      }),
+      new RegExp(field),
+      `${field}=${value} must not be encoded as another authorization`,
+    );
+  }
+});
+
+test("session quantities fail before invoking the root signer", async () => {
+  let signCalls = 0;
+  const rootAdapter = {
+    async sign() {
+      signCalls += 1;
+      return new Uint8Array([1]);
+    },
+  };
+  for (const [field, value] of invalidAuthQuantities) {
+    await assert.rejects(
+      createSessionAuth(rootAdapter, new Uint8Array([1]), 1, {
+        ...validAuthConfig,
+        [field]: value,
+      }),
+      new RegExp(field),
+    );
+  }
+  assert.equal(signCalls, 0);
+});
+
+test("session quantities preserve valid numeric boundaries", async () => {
+  const rootAdapter = { async sign() { return new Uint8Array([1]); } };
+  const config = {
+    ...validAuthConfig,
+    chainId: (1n << 64n) - 1n,
+    expiryBlock: Number.MAX_SAFE_INTEGER,
+    valueCap: (1n << 256n) - 1n,
+  };
+  const hash = computeSessionAuthHash(new Uint8Array([1]), 1, config);
+  const zeroHash = computeSessionAuthHash(new Uint8Array([1]), 1, {
+    ...validAuthConfig, chainId: 0n, expiryBlock: 0,
+  });
+  assert.equal(hash.length, 32);
+  assert.notDeepEqual(hash, zeroHash);
+  const auth = await createSessionAuth(rootAdapter, new Uint8Array([1]), 1, config);
+  assert.equal(auth.expiry_block, Number.MAX_SAFE_INTEGER);
+  assert.equal(auth.value_cap, `0x${"ff".repeat(32)}`);
+});
+
 // ── Vector 3: createSessionAuth produces valid structure ─────────────────────
 
 test("session-3: createSessionAuth returns well-formed SessionAuth", async () => {
