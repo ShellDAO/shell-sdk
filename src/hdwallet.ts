@@ -171,8 +171,8 @@ export function masterNodeFromSeed(seed512: Uint8Array): HdNode {
  * @returns Child {@link HdNode}.
  */
 export function deriveChildNode(parent: HdNode, rawIndex: number): HdNode {
-  if (rawIndex < 0 || rawIndex >= HARDENED_OFFSET) {
-    throw new Error(`raw index must be in [0, 2^31): got ${rawIndex}`);
+  if (!Number.isInteger(rawIndex) || rawIndex < 0 || rawIndex >= HARDENED_OFFSET) {
+    throw new Error(`raw index must be an integer in [0, 2^31): got ${rawIndex}`);
   }
   const encodedIndex = (HARDENED_OFFSET | rawIndex) >>> 0; // NORMATIVE: 0x80000000 | n
 

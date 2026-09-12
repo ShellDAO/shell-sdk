@@ -128,6 +128,33 @@ test("deriveChildNode: rejects out-of-range index", () => {
   assert.throws(() => deriveChildNode(master, -1), /\[0, 2\^31\)/);
 });
 
+test("deriveChildNode: rejects fractional and non-finite indices", () => {
+  const master = masterNodeFromSeed(new Uint8Array(64));
+  for (const index of [0.5, 1.9, NaN, Infinity, -Infinity]) {
+    assert.throws(() => deriveChildNode(master, index), /index must be/);
+  }
+});
+
+test("deriveAccount: rejects non-integer account, change and address indices", () => {
+  const seed = new Uint8Array(64);
+  for (const index of [0.5, NaN]) {
+    for (const position of [0, 1, 2]) {
+      const indices = [0, 0, 0];
+      indices[position] = index;
+      assert.throws(() => deriveAccount(seed, "ml-dsa-65", ...indices), /index must be/);
+    }
+  }
+});
+
+test("deriveChildNode: accepts both valid index boundaries", () => {
+  const master = masterNodeFromSeed(new Uint8Array(64));
+  for (const index of [0, HARDENED_OFFSET - 1]) {
+    const child = deriveChildNode(master, index);
+    assert.equal(child.secret.length, 32);
+    assert.equal(child.chainCode.length, 32);
+  }
+});
+
 // ── Full path derivation against vectors ──────────────────────────────────────
 
 test("deriveAtPath (ML-DSA-65): all intermediate nodes match canonical vectors", () => {
