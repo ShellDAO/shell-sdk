@@ -40,6 +40,7 @@ import { concatBytes } from "@noble/hashes/utils";
 import type { SessionAuth, AddressLike } from "./types.js";
 import { shellAddressToBytes } from "./address.js";
 import type { SignerAdapter } from "./signer.js";
+import { validateNonNegativeBigInt, validateNonNegativeInteger } from "./validation.js";
 
 // ── Domain separator ──────────────────────────────────────────────────────────
 
@@ -105,6 +106,16 @@ export function computeSessionAuthHash(
   if (!Number.isInteger(sessionAlgoId) || sessionAlgoId < 0 || sessionAlgoId > 255) {
     throw new RangeError(`sessionAlgoId must fit in one byte, got ${sessionAlgoId}`);
   }
+
+  validateNonNegativeBigInt(config.chainId, "chainId");
+  if (config.chainId >= (1n << 64n)) {
+    throw new RangeError("chainId must fit in an unsigned 64-bit integer");
+  }
+  validateNonNegativeBigInt(config.valueCap, "valueCap");
+  if (config.valueCap >= (1n << 256n)) {
+    throw new RangeError("valueCap must fit in an unsigned 256-bit integer");
+  }
+  validateNonNegativeInteger(config.expiryBlock, "expiryBlock");
 
   // Target: explicit presence byte plus 32 bytes. The presence byte keeps an
   // unrestricted authorization distinct from one restricted to the zero address.
