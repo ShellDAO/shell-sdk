@@ -423,3 +423,60 @@ test("session-constants: HD_SESSION_ACCOUNT and HD_SESSION_SUBTREE are 1", () =>
   assert.equal(HD_SESSION_ACCOUNT, 1);
   assert.equal(HD_SESSION_SUBTREE, 1);
 });
+
+
+test("session auth snapshots constraints while root signing is pending", async () => {
+  const publicKey = new Uint8Array([1, 2, 3]);
+  const config = { chainId: 10n, expiryBlock: 100, valueCap: 20n, target: null };
+  let finish;
+  let signedHash;
+  const adapter = { sign(hash) {
+    signedHash = hash.slice();
+    return new Promise(resolve => { finish = resolve; });
+  } };
+  const pending = createSessionAuth(adapter, publicKey, 1, config);
+  publicKey.fill(9);
+  config.expiryBlock = 200;
+  config.valueCap = 30n;
+  config.target = `0x${"ab".repeat(32)}`;
+  finish(new Uint8Array([4, 5]));
+  const auth = await pending;
+  assert.deepEqual(auth.session_pubkey, [1, 2, 3]);
+  assert.equal(auth.expiry_block, 100);
+  assert.equal(auth.value_cap, "0x14");
+  assert.equal(auth.target, null);
+  assert.deepEqual(computeSessionAuthHash(Uint8Array.from(auth.session_pubkey), auth.session_algo, {
+    chainId: 10n, expiryBlock: auth.expiry_block,
+    valueCap: BigInt(auth.value_cap), target: auth.target,
+  }), signedHash);
+});
+
+test("session finalization snapshots authorization and transaction hash", async () => {
+  const auth = {
+    session_pubkey: [1, 2, 3], session_algo: 1, target: null,
+    value_cap: "0x14", expiry_block: 100, root_signature: [4, 5], session_signature: [],
+  };
+  const original = structuredClone(auth);
+  const hash = Buffer.alloc(32, 7);
+  let finish;
+  let signerInput;
+  const adapter = { sign(input) {
+    signerInput = input;
+    return new Promise(resolve => { finish = resolve; });
+  } };
+  const pending = finalizeSessionAuth(auth, adapter, hash);
+  auth.expiry_block = 200;
+  auth.value_cap = "0x30";
+  auth.target = `0x${"ab".repeat(32)}`;
+  auth.session_pubkey.fill(9);
+  auth.root_signature.fill(9);
+  hash.fill(9);
+  finish(new Uint8Array([6]));
+  const finalized = await pending;
+  assert.deepEqual(signerInput, new Uint8Array(32).fill(7));
+  assert.deepEqual(finalized, { ...original, session_signature: [6] });
+  auth.session_pubkey.push(10);
+  auth.root_signature.push(10);
+  assert.deepEqual(finalized.session_pubkey, original.session_pubkey);
+  assert.deepEqual(finalized.root_signature, original.root_signature);
+});

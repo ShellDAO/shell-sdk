@@ -199,20 +199,21 @@ export async function createSessionAuth(
   config: SessionKeyConfig,
 ): Promise<SessionAuth> {
   const authHash = computeSessionAuthHash(sessionPubkey, sessionAlgoId, config);
-  const rootSig = await rootAdapter.sign(authHash);
-  if (rootSig.length === 0 || rootSig.length > MAX_SESSION_SIGNATURE_BYTES) {
-    throw new RangeError(`root signature must contain 1..${MAX_SESSION_SIGNATURE_BYTES} bytes`);
-  }
-
-  return {
+  const auth: SessionAuth = {
     session_pubkey: Array.from(sessionPubkey),
     session_algo: sessionAlgoId,
     target: config.target ?? null,
     value_cap: `0x${config.valueCap.toString(16)}`,
     expiry_block: config.expiryBlock,
-    root_signature: Array.from(rootSig),
+    root_signature: [],
     session_signature: [], // caller must set this after signing the tx
   };
+  const rootSig = await rootAdapter.sign(authHash);
+  if (rootSig.length === 0 || rootSig.length > MAX_SESSION_SIGNATURE_BYTES) {
+    throw new RangeError(`root signature must contain 1..${MAX_SESSION_SIGNATURE_BYTES} bytes`);
+  }
+  auth.root_signature = Array.from(rootSig);
+  return auth;
 }
 
 /**
@@ -238,14 +239,18 @@ export async function finalizeSessionAuth(
   sessionAdapter: SignerAdapter,
   txSigningHash: Uint8Array,
 ): Promise<SessionAuth> {
-  const sessionSig = await sessionAdapter.sign(txSigningHash);
+  const auth: SessionAuth = {
+    ...sessionAuth,
+    session_pubkey: [...sessionAuth.session_pubkey],
+    root_signature: [...sessionAuth.root_signature],
+    session_signature: [],
+  };
+  const sessionSig = await sessionAdapter.sign(Uint8Array.from(txSigningHash));
   if (sessionSig.length === 0 || sessionSig.length > MAX_SESSION_SIGNATURE_BYTES) {
     throw new RangeError(`session signature must contain 1..${MAX_SESSION_SIGNATURE_BYTES} bytes`);
   }
-  return {
-    ...sessionAuth,
-    session_signature: Array.from(sessionSig),
-  };
+  auth.session_signature = Array.from(sessionSig);
+  return auth;
 }
 
 /**

@@ -15,6 +15,9 @@
 
 ### Fixed
 
+- Snapshot session authorization fields and transaction hashes before asynchronous
+  signing so caller mutations cannot change the returned signed authorization.
+
 - Enforce contract receipt wait deadlines while an RPC request is pending;
   ignore late completions and release wait timers after each request.
 
