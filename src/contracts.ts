@@ -369,6 +369,8 @@ export function buildContractCallTransaction(
   });
 }
 
+const MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
+
 export async function waitForTransactionReceipt(
   options: WaitForTransactionReceiptOptions,
 ): Promise<ShellRpcReceipt> {
@@ -380,12 +382,37 @@ export async function waitForTransactionReceipt(
   const pollIntervalMs = Math.max(requestedPollIntervalMs, 100);
 
   const deadline = Date.now() + timeoutMs;
+  const timeoutError = new Error(`timeout waiting for transaction receipt: ${options.hash}`);
   while (Date.now() < deadline) {
-    const receipt = await rpcRequest<ShellRpcReceipt | null>(
-      options.provider,
-      "eth_getTransactionReceipt",
-      [options.hash],
-    );
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = new Promise<never>((_, reject) => {
+      const checkDeadline = () => {
+        const remainingMs = deadline - Date.now();
+        if (remainingMs <= 0) {
+          reject(timeoutError);
+        } else {
+          // Long timeouts need multiple timers to avoid platform delay overflow.
+          timer = setTimeout(checkDeadline, Math.min(remainingMs, MAX_TIMER_DELAY_MS));
+        }
+      };
+      checkDeadline();
+    });
+    let receipt: ShellRpcReceipt | null;
+    try {
+      receipt = await Promise.race([
+        rpcRequest<ShellRpcReceipt | null>(
+          options.provider,
+          "eth_getTransactionReceipt",
+          [options.hash],
+        ),
+        timedOut,
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+    if (Date.now() >= deadline) {
+      throw timeoutError;
+    }
     if (receipt) {
       if (
         typeof receipt.transactionHash !== "string"
@@ -402,7 +429,7 @@ export async function waitForTransactionReceipt(
     await new Promise((resolve) => setTimeout(resolve, Math.min(pollIntervalMs, remainingMs)));
   }
 
-  throw new Error(`timeout waiting for transaction receipt: ${options.hash}`);
+  throw timeoutError;
 }
 
 async function shouldIncludePublicKey(provider: ShellProvider, address: string): Promise<boolean> {

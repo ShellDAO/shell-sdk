@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { setImmediate as flushTasks } from 'node:timers/promises';
 import { parseAbi, toFunctionSelector } from 'viem';
 
 import {
@@ -425,35 +426,103 @@ test('waitForTransactionReceipt times out clearly', async () => {
 });
 
 test('receipt polling sleeps only within the remaining timeout budget', async (t) => {
-  for (const responseTime of [40, 50, 60]) {
-    await t.test(`null receipt arrives after ${responseTime} ms`, async (t) => {
-      let now = 0;
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 0 });
+  let requests = 0;
+  let respond;
+  const provider = { client: { request: () => {
+    requests += 1;
+    return new Promise(resolve => { respond = resolve; });
+  } } };
+  const outcome = assert.rejects(
+    waitForTransactionReceipt({ provider, hash: HASH, timeoutMs: 50, pollIntervalMs: 1000 }),
+    /timeout waiting for transaction receipt/,
+  );
+  t.mock.timers.tick(40);
+  respond(null);
+  await flushTasks();
+  t.mock.timers.tick(10);
+  await outcome;
+  assert.equal(requests, 1, 'must not start another poll at the deadline');
+});
+
+test('receipt deadline ends a stalled RPC and ignores its late completion', async (t) => {
+  for (const lateResult of ['receipt', 'null', 'error']) {
+    await t.test(lateResult, async (t) => {
+      t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 0 });
       let requests = 0;
-      const delays = [];
-      t.mock.method(Date, 'now', () => now);
-      t.mock.method(globalThis, 'setTimeout', (callback, delay) => {
-        delays.push(delay);
-        now += delay;
-        callback();
-        return 0;
-      });
-      const provider = {
-        client: {
-          request: async () => {
-            requests += 1;
-            now += responseTime;
-            return null;
-          },
-        },
-      };
-      await assert.rejects(
-        waitForTransactionReceipt({ provider, hash: HASH, timeoutMs: 50, pollIntervalMs: 1000 }),
-        /timeout waiting for transaction receipt/,
-      );
-      assert.deepEqual(delays, responseTime < 50 ? [10] : []);
-      assert.equal(requests, 1, 'must not start another poll at the deadline');
+      let respond;
+      let reject;
+      const provider = { client: { request: () => {
+        requests += 1;
+        return new Promise((resolve, fail) => { respond = resolve; reject = fail; });
+      } } };
+      let settled = false;
+      const outcome = waitForTransactionReceipt({ provider, hash: HASH, timeoutMs: 50 })
+        .then(value => { settled = true; return value; }, error => { settled = true; throw error; });
+      const rejection = assert.rejects(outcome, /timeout waiting for transaction receipt/);
+      rejection.catch(() => {});
+      try {
+        t.mock.timers.tick(49);
+        await flushTasks();
+        assert.equal(settled, false);
+        t.mock.timers.tick(1);
+        await flushTasks();
+        assert.equal(settled, true, 'must reject while RPC is still pending');
+      } finally {
+        if (lateResult === 'error') reject(new Error('late transport error'));
+        else respond(lateResult === 'receipt' ? makeReceipt() : null);
+        // Release baseline waits too, so a failed regression leaves no pending work.
+        t.mock.timers.tick(1000);
+        await flushTasks();
+        await rejection.catch(() => {});
+      }
+      await rejection;
+      assert.equal(requests, 1, 'late completion must not restart receipt polling');
     });
   }
+});
+
+test('receipt wait supports long deadlines and clears its timer after success', async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 0 });
+  const schedule = t.mock.method(globalThis, 'setTimeout');
+  const clear = t.mock.method(globalThis, 'clearTimeout');
+  let respond;
+  const provider = { client: { request: () => new Promise(resolve => { respond = resolve; }) } };
+  const maxDelay = 2 ** 31 - 1;
+  let settled = false;
+  const outcome = waitForTransactionReceipt({ provider, hash: HASH, timeoutMs: maxDelay + 50 })
+    .then(value => { settled = true; return value; });
+  assert.equal(schedule.mock.calls[0].arguments[1], maxDelay);
+  t.mock.timers.tick(maxDelay);
+  await flushTasks();
+  assert.equal(settled, false, 'timer limit must not shorten the requested deadline');
+  assert.equal(schedule.mock.calls[1].arguments[1], 50);
+  respond(makeReceipt());
+  assert.deepEqual(await outcome, makeReceipt());
+  assert.equal(clear.mock.callCount(), 1);
+  assert.equal(clear.mock.calls[0].arguments[0], schedule.mock.calls[1].result);
+});
+
+test('receipt wait rejects responses processed after the deadline even before timers run', async (t) => {
+  let now = 0;
+  t.mock.method(Date, 'now', () => now);
+  const provider = { client: { request: async () => {
+    now = 51;
+    return makeReceipt();
+  } } };
+  await assert.rejects(
+    waitForTransactionReceipt({ provider, hash: HASH, timeoutMs: 50 }),
+    /timeout waiting for transaction receipt/,
+  );
+});
+
+test('receipt wait preserves RPC errors and releases its deadline timer', async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 0 });
+  const clear = t.mock.method(globalThis, 'clearTimeout');
+  const error = new Error('RPC unavailable');
+  const provider = { client: { request: async () => { throw error; } } };
+  await assert.rejects(waitForTransactionReceipt({ provider, hash: HASH }), actual => actual === error);
+  assert.equal(clear.mock.callCount(), 1);
 });
 
 test('compileSolidity returns normalized Shell contract artifact', async () => {
