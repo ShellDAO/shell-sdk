@@ -28,7 +28,7 @@ import type {
   ShellRpcReceipt,
   ShellTransactionRequest,
 } from "./types.js";
-import { validateAddress, validateNonNegativeInteger } from "./validation.js";
+import { validateAddress, validateHash, validateNonNegativeInteger } from "./validation.js";
 
 export interface ShellContractArtifact {
   contractName: string;
@@ -372,6 +372,7 @@ export function buildContractCallTransaction(
 export async function waitForTransactionReceipt(
   options: WaitForTransactionReceiptOptions,
 ): Promise<ShellRpcReceipt> {
+  validateHash(options.hash, "hash");
   const timeoutMs = options.timeoutMs ?? 120_000;
   const requestedPollIntervalMs = options.pollIntervalMs ?? 2_000;
   validateNonNegativeInteger(timeoutMs, "timeoutMs");
@@ -386,6 +387,12 @@ export async function waitForTransactionReceipt(
       [options.hash],
     );
     if (receipt) {
+      if (
+        typeof receipt.transactionHash !== "string"
+        || receipt.transactionHash.toLowerCase() !== options.hash.toLowerCase()
+      ) {
+        throw new Error("transaction receipt hash does not match requested transaction");
+      }
       return receipt;
     }
     const remainingMs = deadline - Date.now();

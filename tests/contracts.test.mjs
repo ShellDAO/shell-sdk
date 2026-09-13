@@ -356,6 +356,61 @@ test('Shell contract ABI decodes address returns as 32-byte addresses', () => {
   assert.equal(decoded, ADDRESS);
 });
 
+test('receipt polling rejects unrelated or missing transaction hashes', async (t) => {
+  for (const [name, transactionHash] of [
+    ['another transaction', '0x' + 'ab'.repeat(32)],
+    ['missing hash', undefined],
+    ['null hash', null],
+    ['malformed hash', '0x1234'],
+  ]) {
+    await t.test(name, async () => {
+      const { provider, fetchMock, calls } = makeProvider({ receipt: makeReceipt({ transactionHash }) });
+      await withFetchMock(fetchMock, async () => {
+        await assert.rejects(
+          waitForTransactionReceipt({ provider, hash: HASH }),
+          /receipt.*hash.*does not match/,
+        );
+      });
+      assert.equal(calls.length, 1, 'an invalid response must not start another poll');
+    });
+  }
+});
+
+test('receipt polling accepts matching hashes regardless of hex letter case', async () => {
+  const hash = '0x' + 'ab'.repeat(32);
+  const receipt = makeReceipt({ transactionHash: '0x' + 'AB'.repeat(32), status: '0x0' });
+  const { provider, fetchMock } = makeProvider({ receipt });
+  await withFetchMock(fetchMock, async () => {
+    assert.deepEqual(await waitForTransactionReceipt({ provider, hash }), receipt);
+  });
+});
+
+test('receipt polling rejects malformed requested hashes before RPC', async () => {
+  const { provider, calls, fetchMock } = makeProvider();
+  await withFetchMock(fetchMock, async () => {
+    await assert.rejects(
+      waitForTransactionReceipt({ provider, hash: '0x1234' }),
+      /hash must be a valid 32-byte hash/,
+    );
+  });
+  assert.equal(calls.length, 0);
+});
+
+test('deployContract does not return an address from an unrelated receipt', async () => {
+  const { provider, fetchMock } = makeProvider({
+    receipt: makeReceipt({ transactionHash: '0x' + 'ab'.repeat(32) }),
+  });
+  await withFetchMock(fetchMock, async () => {
+    await assert.rejects(deployContract({
+      provider,
+      signer: makeSigner(),
+      chainId: 1337,
+      artifact: { contractName: 'Counter', abi: NO_CONSTRUCTOR_ABI, bytecode: '0x60006000' },
+      wait: true,
+    }), /receipt.*hash.*does not match/);
+  });
+});
+
 test('waitForTransactionReceipt times out clearly', async () => {
   const { provider } = makeProvider();
   await withFetchMock(async (_url, init) => {
