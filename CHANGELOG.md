@@ -15,6 +15,8 @@
 
 ### Fixed
 
+- Reject contract-helper receipts for a different transaction and validate
+  requested transaction hashes before polling.
 - Bound EIP-2930 access-list metadata to sender, session-key, and paymaster
   authorization hashes.
 
