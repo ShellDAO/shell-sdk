@@ -227,7 +227,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
-async function parseJsonRpcResponse<T>(response: Response): Promise<T> {
+async function parseJsonRpcResponse<T>(response: Response, requestId: number): Promise<T> {
   const text = await response.text();
   if (!text) {
     throw new Error("rpc response body is empty");
@@ -242,6 +242,10 @@ async function parseJsonRpcResponse<T>(response: Response): Promise<T> {
 
   if (!isRecord(body)) {
     throw new Error("rpc response body must be a JSON-RPC object");
+  }
+
+  if (body.jsonrpc !== "2.0" || body.id !== requestId) {
+    throw new Error("rpc response identity does not match request");
   }
 
   if ("error" in body && body.error !== undefined) {
@@ -287,6 +291,7 @@ export class ShellProvider {
   }
 
   private async request<T>(method: string, params: unknown[]): Promise<T> {
+    const requestId = 1;
     const response = await fetch(this.rpcHttpUrl, {
       method: "POST",
       headers: {
@@ -297,7 +302,7 @@ export class ShellProvider {
       },
       body: JSON.stringify({
         jsonrpc: "2.0",
-        id: 1,
+        id: requestId,
         method,
         params,
       }),
@@ -307,7 +312,7 @@ export class ShellProvider {
       throw new Error(`rpc request failed: ${response.status} ${response.statusText}`);
     }
 
-    return parseJsonRpcResponse<T>(response);
+    return parseJsonRpcResponse<T>(response, requestId);
   }
 
   /**
