@@ -15,6 +15,9 @@
 
 ### Fixed
 
+- Validate raw RPC response IDs and JSON-RPC versions before accepting results
+  or interpreting error codes for compatibility fallbacks.
+
 - Preserve contract deployment and write inputs across asynchronous nonce lookup,
   signing and broadcast, including the original signer, provider and access list.
 - Snapshot session authorization fields and transaction hashes before asynchronous
