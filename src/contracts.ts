@@ -437,26 +437,36 @@ async function shouldIncludePublicKey(provider: ShellProvider, address: string):
 }
 
 export async function deployContract(options: DeployContractOptions): Promise<DeployContractResult> {
-  const sender = options.signer.getAddress();
-  const nonce = options.nonce ?? await getPendingNonce(options.provider, sender);
-  const includePublicKey = options.includePublicKey
-    ?? await shouldIncludePublicKey(options.provider, sender);
-  const tx = buildDeployTransaction({ ...options, nonce });
-  const signed = await options.signer.buildSignedTransaction({
+  // Capture execution options and encode mutable ABI inputs before yielding.
+  const request = { ...options };
+  const tx = buildDeployTransaction({
+    ...request,
+    nonce: request.nonce ?? 0,
+    accessList: request.accessList?.map(item => ({
+      address: item.address,
+      storage_keys: [...item.storage_keys],
+    })),
+  });
+  const sender = request.signer.getAddress();
+  const nonce = request.nonce ?? await getPendingNonce(request.provider, sender);
+  const includePublicKey = request.includePublicKey
+    ?? await shouldIncludePublicKey(request.provider, sender);
+  tx.nonce = nonce;
+  const signed = await request.signer.buildSignedTransaction({
     tx,
     includePublicKey,
   });
-  const hash = normalizeHexData(await options.provider.sendTransaction(signed), "transaction hash");
+  const hash = normalizeHexData(await request.provider.sendTransaction(signed), "transaction hash");
 
-  if (!options.wait) {
+  if (!request.wait) {
     return { hash, nonce };
   }
 
   const receipt = await waitForTransactionReceipt({
-    provider: options.provider,
+    provider: request.provider,
     hash,
-    timeoutMs: options.timeoutMs,
-    pollIntervalMs: options.pollIntervalMs,
+    timeoutMs: request.timeoutMs,
+    pollIntervalMs: request.pollIntervalMs,
   });
   if (receipt.status !== "0x1") {
     throw new Error(`contract deploy reverted: ${hash}`);
@@ -469,26 +479,36 @@ export async function deployContract(options: DeployContractOptions): Promise<De
 }
 
 export async function writeContract(options: ContractWriteOptions): Promise<ContractWriteResult> {
-  const sender = options.signer.getAddress();
-  const nonce = options.nonce ?? await getPendingNonce(options.provider, sender);
-  const includePublicKey = options.includePublicKey
-    ?? await shouldIncludePublicKey(options.provider, sender);
-  const tx = buildContractCallTransaction({ ...options, nonce });
-  const signed = await options.signer.buildSignedTransaction({
+  // Capture execution options and encode mutable ABI inputs before yielding.
+  const request = { ...options };
+  const tx = buildContractCallTransaction({
+    ...request,
+    nonce: request.nonce ?? 0,
+    accessList: request.accessList?.map(item => ({
+      address: item.address,
+      storage_keys: [...item.storage_keys],
+    })),
+  });
+  const sender = request.signer.getAddress();
+  const nonce = request.nonce ?? await getPendingNonce(request.provider, sender);
+  const includePublicKey = request.includePublicKey
+    ?? await shouldIncludePublicKey(request.provider, sender);
+  tx.nonce = nonce;
+  const signed = await request.signer.buildSignedTransaction({
     tx,
     includePublicKey,
   });
-  const hash = normalizeHexData(await options.provider.sendTransaction(signed), "transaction hash");
+  const hash = normalizeHexData(await request.provider.sendTransaction(signed), "transaction hash");
 
-  if (!options.wait) {
+  if (!request.wait) {
     return { hash, nonce };
   }
 
   const receipt = await waitForTransactionReceipt({
-    provider: options.provider,
+    provider: request.provider,
     hash,
-    timeoutMs: options.timeoutMs,
-    pollIntervalMs: options.pollIntervalMs,
+    timeoutMs: request.timeoutMs,
+    pollIntervalMs: request.pollIntervalMs,
   });
   if (receipt.status !== "0x1") {
     throw new Error(`contract write reverted: ${hash}`);

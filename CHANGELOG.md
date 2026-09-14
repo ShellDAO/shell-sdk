@@ -15,6 +15,8 @@
 
 ### Fixed
 
+- Preserve contract deployment and write inputs across asynchronous nonce lookup,
+  signing and broadcast, including the original signer, provider and access list.
 - Snapshot session authorization fields and transaction hashes before asynchronous
   signing so caller mutations cannot change the returned signed authorization.
 

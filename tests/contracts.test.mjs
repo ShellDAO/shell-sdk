@@ -142,6 +142,64 @@ test('buildContractCallTransaction encodes calldata for Shell 32-byte address ta
   assert.match(tx.data, /^0x3fb5c1cb/);
 });
 
+for (const [name, submit, build, transactionOptions] of [
+  ['deployContract', deployContract, buildDeployTransaction, () => ({
+    artifact: { contractName: 'Counter', abi: ABI, bytecode: '0x60006000' },
+    constructorArgs: [7n],
+  })],
+  ['writeContract', writeContract, buildContractCallTransaction, () => ({
+    address: CONTRACT, abi: ABI, functionName: 'setNumber', args: [7n],
+  })],
+]) {
+  test(`${name} preserves submission inputs while the pending nonce is loading`, async () => {
+    const { provider, calls, fetchMock } = makeProvider({ nonce: '0x7' });
+    const signer = makeSigner();
+    const replacementSigner = makeSigner();
+    replacementSigner.getAddress = () => '0x' + '55'.repeat(32);
+    let replacementBroadcasts = 0;
+    let releaseNonce;
+    const nonceReady = new Promise(resolve => { releaseNonce = resolve; });
+    const options = {
+      provider, signer, chainId: 1337, wait: true,
+      ...transactionOptions(),
+      accessList: [{ address: CONTRACT, storage_keys: ['0x' + '66'.repeat(32)] }],
+    };
+    const expected = structuredClone(build({ ...options, nonce: 7 }));
+
+    await withFetchMock(async (url, init) => {
+      if (JSON.parse(init.body).method === 'eth_getTransactionCount') {
+        await nonceReady;
+      }
+      return fetchMock(url, init);
+    }, async () => {
+      const pending = submit(options);
+      options.signer = replacementSigner;
+      options.provider = {
+        ...provider,
+        async sendTransaction() { replacementBroadcasts += 1; return HASH; },
+      };
+      options.chainId = 42;
+      options.includePublicKey = false;
+      options.wait = false;
+      (options.constructorArgs ?? options.args)[0] = 99n;
+      options.accessList[0].storage_keys[0] = '0x' + '77'.repeat(32);
+      if (options.artifact) options.artifact.bytecode = '0x60016001';
+      releaseNonce();
+
+      const result = await pending;
+      assert.equal(replacementSigner.signed.length, 0, 'must retain the original signer');
+      assert.equal(replacementBroadcasts, 0, 'must retain the original provider');
+      assert.deepEqual(signer.signed, [{ tx: expected, includePublicKey: true }]);
+      assert.equal(result.nonce, 7);
+      assert.equal(result.receipt.transactionHash, HASH);
+      assert.deepEqual(calls.map(call => call.method), [
+        'eth_getTransactionCount', 'shell_getPqPubkey', 'shell_sendTransaction', 'eth_getTransactionReceipt',
+      ]);
+      assert.equal(calls[0].params[0], ADDRESS);
+    });
+  });
+}
+
 test('contract helpers use the provider RPC API key throughout read, deploy and write', async () => {
   const { provider, calls, fetchMock } = makeProvider({
     rpcApiKey: 'test-api-key',
