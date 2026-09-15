@@ -15,6 +15,7 @@ import {
 } from '../dist/contracts.js';
 import { compileSolidity } from '../dist/contracts-compiler.js';
 import { createShellProvider } from '../dist/provider.js';
+import { acknowledgementHash } from './helpers.mjs';
 
 const ADDRESS = '0x' + '11'.repeat(32);
 const CONTRACT = '0x' + '22'.repeat(32);
@@ -52,8 +53,9 @@ function makeReceipt(overrides = {}) {
   };
 }
 
-function makeProvider({ receipt = makeReceipt(), callResult = '0x', nonce = '0x0', pqPubkey = null, rpcApiKey } = {}) {
+function makeProvider({ receipt = hash => makeReceipt({ transactionHash: hash }), callResult = '0x', nonce = '0x0', pqPubkey = null, rpcApiKey } = {}) {
   const calls = [];
+  let submittedHash;
   const provider = createShellProvider({ rpcHttpUrl: 'http://127.0.0.1:8545', rpcApiKey });
 
   const fetchMock = async (_url, init) => {
@@ -62,12 +64,13 @@ function makeProvider({ receipt = makeReceipt(), callResult = '0x', nonce = '0x0
     if (rpcApiKey && new Headers(init.headers).get('authorization') !== `Bearer ${rpcApiKey}`) {
       return new Response('Unauthorized', { status: 401 });
     }
+    if (body.method === 'shell_sendTransaction') submittedHash = acknowledgementHash(body.params[0]);
     const results = {
       eth_getTransactionCount: nonce,
-      eth_getTransactionReceipt: receipt,
+      eth_getTransactionReceipt: typeof receipt === 'function' ? receipt(body.params[0]) : receipt,
       eth_call: callResult,
       shell_getPqPubkey: pqPubkey,
-      shell_sendTransaction: HASH,
+      shell_sendTransaction: submittedHash,
     };
     if (Object.hasOwn(results, body.method)) {
       return makeResponse({ jsonrpc: '2.0', id: body.id, result: results[body.method] });
@@ -87,7 +90,7 @@ function makeSigner() {
     },
     async buildSignedTransaction(options) {
       signed.push(options);
-      return { tx: options.tx, signature: { sig_type: 'ML-DSA-65', data: [1, 2, 3] } };
+      return { from: ADDRESS, tx: options.tx, signature: { sig_type: 'ML-DSA-65', data: [1, 2, 3] } };
     },
   };
 }
@@ -191,7 +194,7 @@ for (const [name, submit, build, transactionOptions] of [
       assert.equal(replacementBroadcasts, 0, 'must retain the original provider');
       assert.deepEqual(signer.signed, [{ tx: expected, includePublicKey: true }]);
       assert.equal(result.nonce, 7);
-      assert.equal(result.receipt.transactionHash, HASH);
+      assert.equal(result.receipt.transactionHash, result.hash);
       assert.deepEqual(calls.map(call => call.method), [
         'eth_getTransactionCount', 'shell_getPqPubkey', 'shell_sendTransaction', 'eth_getTransactionReceipt',
       ]);
@@ -247,7 +250,7 @@ test('deployContract sends, waits, and validates 32-byte contract address', asyn
       pollIntervalMs: 0,
     });
 
-    assert.equal(result.hash, HASH);
+    assert.equal(result.hash, acknowledgementHash(calls.find(call => call.method === 'shell_sendTransaction').params[0]));
     assert.equal(result.nonce, 0);
     assert.equal(result.contractAddress, CONTRACT);
     assert.equal(signer.signed[0].includePublicKey, true);
@@ -300,7 +303,7 @@ test('deployContract rejects pending nonces outside JavaScript safe integer rang
 });
 
 test('writeContract sends contract call and waits for receipt', async () => {
-  const { provider, calls, fetchMock } = makeProvider({ receipt: makeReceipt({ to: CONTRACT, contractAddress: null }) });
+  const { provider, calls, fetchMock } = makeProvider({ receipt: hash => makeReceipt({ transactionHash: hash, to: CONTRACT, contractAddress: null }) });
   const signer = makeSigner();
 
   await withFetchMock(fetchMock, async () => {
@@ -316,7 +319,7 @@ test('writeContract sends contract call and waits for receipt', async () => {
       pollIntervalMs: 0,
     });
 
-    assert.equal(result.hash, HASH);
+    assert.equal(result.hash, acknowledgementHash(calls.find(call => call.method === 'shell_sendTransaction').params[0]));
     assert.equal(result.receipt.status, '0x1');
     assert.equal(signer.signed[0].tx.to, CONTRACT);
   });

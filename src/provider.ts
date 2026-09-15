@@ -16,6 +16,7 @@
  * @module provider
  */
 import {
+  bytesToHex,
   createPublicClient,
   defineChain,
   http,
@@ -65,6 +66,11 @@ import type {
   SignedShellTransaction,
 } from "./types.js";
 import { validateAddress, validateHash, validateNonNegativeInteger, validateRpcUrl } from "./validation.js";
+import { blake3 } from "@noble/hashes/blake3";
+import { hashTransaction, hashBatchTransaction, AA_BUNDLE_TX_TYPE } from "./transactions.js";
+import { shellAddressToBytes } from "./address.js";
+
+const TRANSACTION_ID_DOMAIN = new TextEncoder().encode("PQTX_IDENTITY_V1");
 
 class RpcRequestError extends Error {
   readonly code: number;
@@ -336,10 +342,25 @@ export class ShellProvider {
    *
    * @param signedTransaction - A fully-signed transaction built with {@link ShellSigner.buildSignedTransaction}.
    * @returns The transaction hash as a hex string.
-   * @throws {Error} If the node rejects the transaction.
+   * @throws {Error} If the node rejects the transaction or acknowledges another ID.
+   * A mismatched acknowledgement may still follow acceptance; check the expected
+   * transaction ID before retrying.
    */
   async sendTransaction(signedTransaction: SignedShellTransaction): Promise<string> {
-    return this.request("shell_sendTransaction", [signedTransaction]);
+    const { tx, aa_bundle, signature, from } = signedTransaction;
+    const signingHash = tx.tx_type === AA_BUNDLE_TX_TYPE && aa_bundle
+      ? hashBatchTransaction(tx, aa_bundle, signature.sig_type)
+      : hashTransaction(tx, signature.sig_type);
+    const expectedHash = bytesToHex(blake3(new Uint8Array([
+      ...TRANSACTION_ID_DOMAIN, ...shellAddressToBytes(from), ...signingHash,
+    ])));
+    const result = await this.request<unknown>("shell_sendTransaction", [signedTransaction]);
+    if (typeof result !== "string" || result.toLowerCase() !== expectedHash) {
+      throw new Error(
+        `RPC returned an unexpected transaction hash; transaction ${expectedHash} may already have been submitted; check its status before retrying`,
+      );
+    }
+    return result;
   }
 
   /**

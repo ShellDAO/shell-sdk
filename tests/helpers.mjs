@@ -1,3 +1,5 @@
+import { blake3 } from "@noble/hashes/blake3";
+import { hashTransaction, hashBatchTransaction } from "../dist/transactions.js";
 import { xchacha20poly1305 } from '@noble/ciphers/chacha.js';
 import { argon2id } from 'hash-wasm';
 
@@ -46,7 +48,7 @@ export function createJsonRpcFetchMock() {
 
     const results = {
       shell_getPqPubkey: '0x' + '11'.repeat(32),
-      shell_sendTransaction: '0x' + 'ab'.repeat(32),
+      shell_sendTransaction: body.method === 'shell_sendTransaction' ? acknowledgementHash(body.params[0]) : undefined,
       shell_getTransactionsByAddress: { transactions: [], total: 0 },
       shell_rpcCapabilities: {
         rpcVersion: 'shell-rpc-v2',
@@ -197,4 +199,18 @@ function hexToBytes(hex) {
     bytes[index] = parseInt(clean.slice(index * 2, index * 2 + 2), 16);
   }
   return bytes;
+}
+
+// Canonical ID preimage from SignedTransaction::hash; witnesses are excluded.
+export function acknowledgementHash(signed) {
+  const signingHash = signed.tx.tx_type === 0x7e && signed.aa_bundle
+    ? hashBatchTransaction(signed.tx, signed.aa_bundle, signed.signature.sig_type)
+    : hashTransaction(signed.tx, signed.signature.sig_type);
+  return idFromSigningHash(signed.from, signingHash);
+}
+
+export function idFromSigningHash(from, signingHash) {
+  return '0x' + Buffer.from(blake3(Buffer.concat([
+    Buffer.from('PQTX_IDENTITY_V1'), Buffer.from(from.slice(2), 'hex'), signingHash,
+  ]))).toString('hex');
 }
