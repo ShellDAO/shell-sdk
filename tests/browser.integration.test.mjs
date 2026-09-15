@@ -8,7 +8,7 @@ import {
   createShellProvider,
   generateMlDsa65KeyPair,
 } from '../dist/index.js';
-import { createJsonRpcFetchMock } from './helpers.mjs';
+import { createJsonRpcFetchMock, acknowledgementHash } from './helpers.mjs';
 
 test('browser integration: dist exports work with fetch-based provider', async () => {
   const { fetchMock, calls } = createJsonRpcFetchMock();
@@ -55,7 +55,7 @@ test('browser integration: dist exports work with fetch-based provider', async (
     paymaster_context: '0x01',
   });
 
-  assert.equal(txHash, '0x' + 'ab'.repeat(32));
+  assert.equal(txHash, acknowledgementHash(signed));
   assert.equal(pqPubkey, '0x' + '11'.repeat(32));
   assert.equal(capabilities.rpcVersion, 'shell-rpc-v2');
   assert.equal(snapshot.chainId, '0x67932');
