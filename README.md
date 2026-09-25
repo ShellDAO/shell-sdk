@@ -7,12 +7,14 @@
 
 ---
 
-> **shell-chain v0.27.x aligned**
+> **V2 signing release candidate: 0.14.0-rc.1**
 >
-> Addresses, system-contract IDs, signing hashes, staking governance RPCs, and
-> validator snapshot fields match shell-chain v0.27.x:
-> 32-byte `0x…` BLAKE3 addresses, `algo_id` byte `Dilithium3=0`, `MlDsa65=1`,
-> `SphincsSha2256f=2`, and BLAKE3-based transaction / AA signing hashes.
+> This source uses V2 transaction signing with canonical access-list commitments.
+> The published `shell-sdk@0.13.0` package uses V1. Match the SDK to the node's
+> signing format; mixing these versions causes signature rejection. This candidate
+> was verified against [shell-chain source `e5e759c`](https://github.com/ShellDAO/shell-chain/commit/e5e759c68948e30ccff671bfe9cb7041f0bbec10),
+> not the older `v0.27.4` release tag or the public testnet. See the
+> [compatibility notes](CHANGELOG.md#0140-rc1--unreleased) before upgrading.
 
 
 ## Table of Contents
@@ -57,6 +59,13 @@
 ---
 
 ## Installation
+
+The default registry installation below currently selects the stable V1 release.
+For a V2 node, use a matching source build while `0.14.0-rc.1` is unreleased.
+After the candidate is published, opt in explicitly with
+`npm install shell-sdk@0.14.0-rc.1`; prereleases are published to `next` and do not
+replace `latest`. See the [contract guide](https://shell.org/zh/docs/smart-contracts)
+for a verified source-build workflow.
 
 ```bash
 # npm
@@ -1035,6 +1044,12 @@ Before publishing a `shell-sdk` release candidate:
 4. Review README examples against the current public exports (`shell-sdk`, `shell-sdk/signer`, `shell-sdk/transactions`).
 5. Check `package.json` `exports`, `files`, `version`, and repository metadata.
 6. Build once from a clean tree and smoke-import the package root plus subpaths from `dist/`.
+7. Test the packed package against the intended node signing format. Record the
+   exact node revision and network; a source version string alone is insufficient.
+8. Publish from a Git tag exactly matching `v` plus the package version. The
+   Publish workflow also requires this tag for manual dispatch, checks the
+   lockfile version, and selects `next` for prereleases or `latest` for stable
+   releases. Merging a release-preparation PR does not publish a package.
 
 ---
 

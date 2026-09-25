@@ -1,6 +1,26 @@
 # Changelog
 
-## [Unreleased]
+## [0.14.0-rc.1] — Unreleased
+
+### Compatibility and validation
+
+- This candidate uses V2 transaction signing. The published `0.13.0` package
+  uses V1 and cannot sign transactions for current V2 node source. V2 signatures
+  are likewise not a replacement for clients of a V1 network.
+- Verified the SDK implementation against shell-chain source revision
+  `e5e759c68948e30ccff671bfe9cb7041f0bbec10`: Counter compilation, deployment,
+  confirmed writes, state reads, and a rejected decrement at zero passed on a
+  local development node. That source still declares Cargo version `0.27.4`;
+  this verification does not refer to the older `v0.27.4` release tag or the
+  public testnet. The coordinated V2 node release is tracked as `v0.27.5`.
+- Candidate publication uses the opt-in npm `next` channel. Stable installations
+  remain on their existing release until a coordinated stable release is ready.
+
+### Release tooling
+
+- Validate that the Git release tag, package version, and lockfile version agree
+  before publishing. Manual publication must also select the matching tag.
+- Select `next` for prerelease versions and `latest` for stable versions.
 
 ### Added
 
