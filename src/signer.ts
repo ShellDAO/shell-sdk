@@ -104,14 +104,18 @@ export class ShellSigner {
   /** The underlying adapter that performs the actual cryptographic operations. */
   readonly adapter: SignerAdapter;
   private disposed = false;
+  private readonly accountAddress?: string;
 
   /**
    * @param signatureType - The PQ algorithm name.
    * @param adapter - An adapter providing `sign` and `getPublicKey`.
+   * @param accountAddress - Existing account address after key rotation. The node
+   * still verifies that this key is authorized for the account. Omit for a new account.
    */
-  constructor(signatureType: SignatureTypeName, adapter: SignerAdapter) {
+  constructor(signatureType: SignatureTypeName, adapter: SignerAdapter, accountAddress?: string) {
     this.signatureType = canonicalSignatureType(signatureType);
     this.adapter = adapter;
+    this.accountAddress = accountAddress === undefined ? undefined : normalizeShellAddress(accountAddress);
   }
 
   /**
@@ -138,12 +142,11 @@ export class ShellSigner {
   }
 
   /**
-   * Derive and return the `0x…` hex address for this signer.
-   *
-   * The address is computed deterministically from the public key and algorithm ID.
+   * Return the existing account address, or derive a new account address from
+   * the public key and algorithm ID when no account address was supplied.
    */
   getAddress(): string {
-    return deriveShellAddressFromPublicKey(this.getPublicKey(), this.algorithmId);
+    return this.accountAddress ?? deriveShellAddressFromPublicKey(this.getPublicKey(), this.algorithmId);
   }
 
   /**

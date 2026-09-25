@@ -395,6 +395,8 @@ import { ShellSigner } from "shell-sdk/signer";
 import { MlDsa65Adapter } from "shell-sdk/adapters";
 
 const signer = new ShellSigner("MlDsa65", MlDsa65Adapter.generate());
+// After an on-chain rotation, bind the replacement key to the original address:
+// const rotated = new ShellSigner("MlDsa65", replacementAdapter, accountAddress);
 ```
 
 | Member | Description |
@@ -905,39 +907,63 @@ console.log("total:", history.total);
 
 Shell Chain accounts support **key rotation** — replacing the signing key without changing the account address. This is a critical security feature for post-quantum safety.
 
+This example uses a disposable funded local account on chain `1337`. It generates
+an in-memory replacement key and disposes it at the end. For an account you need
+to retain, load a securely persisted replacement key and keep the original account
+address alongside it before rotating. Use a node compatible with this SDK's
+signing version and submit no concurrent transactions from the account.
+
 ```typescript
-import { MlDsa65Adapter } from "shell-sdk/adapters";
-import { ShellSigner } from "shell-sdk/signer";
-import { createShellProvider } from "shell-sdk/provider";
-import { buildRotateKeyTransaction, hashTransaction } from "shell-sdk/transactions";
+import { readFile } from "node:fs/promises";
+import { MlDsa65Adapter, ShellSigner, createShellProvider, decryptKeystore,
+  buildRotateKeyTransaction, buildTransferTransaction } from "shell-sdk";
+import { waitForTransactionReceipt } from "shell-sdk/contracts";
 
-const provider = createShellProvider();
-
-// Current signer (must sign the rotation transaction)
-const currentSigner = await decryptKeystore(readFileSync("old-key.json", "utf8"), passphrase);
-
-// New key pair to rotate to
+const password = process.env.SHELL_KEYSTORE_PASSWORD;
+if (!password) throw new Error("Set SHELL_KEYSTORE_PASSWORD");
+const provider = createShellProvider({ rpcHttpUrl: "http://127.0.0.1:8545" });
+const currentSigner = await decryptKeystore(
+  JSON.parse(await readFile(process.env.SHELL_KEYSTORE_PATH ?? "old-key.json", "utf8")),
+  password,
+);
+const accountAddress = currentSigner.getAddress() as `0x${string}`;
 const newAdapter = MlDsa65Adapter.generate();
-const newSigner  = new ShellSigner("MlDsa65", newAdapter);
+const newSigner = new ShellSigner("MlDsa65", newAdapter, accountAddress);
 
-const nonce = await provider.client.getTransactionCount({ address: currentSigner.getAddress() });
+try {
+  const nonce = Number(BigInt(await provider.client.request({
+    method: "eth_getTransactionCount", params: [accountAddress, "pending"],
+  })));
+  const tx = buildRotateKeyTransaction({
+    chainId: 1337, nonce, publicKey: newAdapter.getPublicKey(),
+    algorithmId: newSigner.algorithmId,
+  });
+  const signed = await currentSigner.buildSignedTransaction({ tx, includePublicKey: true });
+  const hash = await provider.sendTransaction(signed);
+  const receipt = await waitForTransactionReceipt({ provider, hash: hash as `0x${string}` });
+  if (receipt.status !== "0x1") throw new Error(`Rotation failed: ${hash}`);
 
-// Build the rotateKey system transaction
-const tx = buildRotateKeyTransaction({
-  chainId: 424242,
-  nonce,
-  publicKey: newAdapter.getPublicKey(),
-  algorithmId: newSigner.algorithmId, // 1 for MlDsa65
-});
-
-const txHash = hashTransaction(tx, currentSigner.signatureType);
-
-// Sign with the CURRENT key
-const signed = await currentSigner.buildSignedTransaction({ tx, txHash });
-const hash   = await provider.sendTransaction(signed);
-console.log("Key rotated! tx:", hash);
-// From the next transaction onwards, use newSigner
+  // The new key signs for the same account, with its next nonce.
+  const followup = buildTransferTransaction({
+    chainId: 1337, nonce: nonce + 1, to: accountAddress, value: 0n,
+  });
+  const next = await newSigner.buildSignedTransaction({ tx: followup, includePublicKey: true });
+  const nextHash = await provider.sendTransaction(next);
+  const nextReceipt = await waitForTransactionReceipt({ provider, hash: nextHash as `0x${string}` });
+  if (nextReceipt.status !== "0x1") throw new Error(`Follow-up failed: ${nextHash}`);
+  console.log("Rotated account:", newSigner.getAddress(), "confirmed:", nextHash);
+} finally {
+  currentSigner.dispose();
+  newSigner.dispose();
+}
 ```
+
+The optional third constructor argument is the existing account address. Omitting
+it derives a fresh address from the replacement public key; that fresh address
+does not inherit the original balance or nonce. Binding an address does not grant
+authority: the node still checks the registered key. Wait for a successful rotation
+receipt before using the new key, and include its public key in signed transactions.
+If receipt waiting times out, check the same hash before retrying.
 
 ---
 
