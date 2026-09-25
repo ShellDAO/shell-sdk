@@ -35,6 +35,9 @@
 
 ### Fixed
 
+- Allow `ShellSigner` to retain an existing account address after key rotation,
+  so transfers and AA batches use the new key without changing the sender.
+
 - Validate raw RPC response IDs and JSON-RPC versions before accepting results
   or interpreting error codes for compatibility fallbacks.
 
