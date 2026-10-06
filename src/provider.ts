@@ -728,9 +728,10 @@ export class ShellProvider {
   /**
    * Query contract-paymaster validation gas capability.
    *
-   * Calls `shell_estimatePaymasterGas`. Current nodes return
-   * `simulation_status: "cap_only"` and expose only the protocol cap; clients
-   * must gate sponsored contract-paymaster UX on the returned status.
+   * Supply the actual outer `gas_limit` for simulation on supported node builds.
+   * Older nodes and requests omitting it return `simulation_status: "cap_only"`.
+   * Inspect status; acceptance does not guarantee later sponsorship or validate
+   * signatures, funding, nonce or the complete bundle.
    *
    * @param request - Paymaster, sender, optional inner-call bytes and context.
    * @returns Versioned paymaster gas capability/estimate response.

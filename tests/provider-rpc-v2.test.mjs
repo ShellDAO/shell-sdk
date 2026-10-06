@@ -384,3 +384,31 @@ function rpc(payload) {
     headers: { 'content-type': 'application/json' },
   });
 }
+
+
+test('paymaster simulation preserves complete cost inputs and measured response', async () => {
+  const request = {
+    paymaster: '0x' + 'aa'.repeat(32), sender: '0x' + 'bb'.repeat(32),
+    inner_calls_data: '0xc0', paymaster_context: '0xab',
+    gas_limit: '0x493e0', max_fee_per_gas: '0x7',
+  };
+  const response = {
+    paymaster: request.paymaster, sender: request.sender,
+    simulation_status: 'simulated', simulation_version: 2,
+    capability: 'paymaster_staticcall', validation_gas: '0x6000',
+    paymaster_gas_cap: '0xc350', within_cap: true, max_gas_cost: '0x200b20',
+  };
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    assert.equal(body.method, 'shell_estimatePaymasterGas');
+    assert.deepEqual(body.params, [request]);
+    return rpc({ jsonrpc: '2.0', id: body.id, result: response });
+  };
+  try {
+    const provider = createShellProvider({ rpcHttpUrl: 'https://rpc.devnet.shell.local' });
+    assert.deepEqual(await provider.estimatePaymasterGas(request), response);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
