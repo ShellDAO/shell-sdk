@@ -4,6 +4,11 @@
 
 ### Compatibility and validation
 
+- Add optional outer `gas_limit` and measured response fields for contract-paymaster
+  simulation. Verified real HTTP calls and RocksDB restart against shell-chain
+  source `6f257d53281ffc4eae14a7edae4252383ebd4b17`; the older published
+  v0.27.4 node still returns cap-only. No package release is implied.
+
 - This candidate uses V2 transaction signing. The published `0.13.0` package
   uses V1 and cannot sign transactions for current V2 node source. V2 signatures
   are likewise not a replacement for clients of a V1 network.

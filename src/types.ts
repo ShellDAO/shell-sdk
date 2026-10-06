@@ -488,8 +488,10 @@ export interface ShellEstimatePaymasterGasRequest {
   paymaster: AddressLike;
   /** Bundle sender address. */
   sender: AddressLike;
-  /** Raw inner-call bytes forwarded to the future validator simulation. */
+  /** Canonical RLP inner-call bytes forwarded to validator simulation. */
   inner_calls_data?: HexString | null;
+  /** Outer bundle gas limit as hex; enables simulation on supported source builds. */
+  gas_limit?: string | null;
   /** Max fee per gas as a hex wei quantity. */
   max_fee_per_gas?: string | null;
   /** Opaque context bytes forwarded to `validatePaymasterOp`. */
@@ -501,8 +503,8 @@ export type ShellPaymasterSimulationStatus = "cap_only" | "simulated";
 /**
  * Response from `shell_estimatePaymasterGas`.
  *
- * Current Shell Chain nodes return `simulation_status: "cap_only"`, which is
- * a versioned partial response exposing only the protocol gas cap. Clients must
+ * Older nodes and requests without `gas_limit` return `simulation_status: "cap_only"`,
+ * a partial response exposing only the protocol gas cap. Clients must
  * not treat `validation_gas` or `within_cap` as available unless the status is
  * upgraded to `"simulated"`.
  */
@@ -522,7 +524,9 @@ export interface ShellEstimatePaymasterGasResult {
   /** Version of the response contract. */
   simulation_version: number;
   /** Node capability string. */
-  capability: "paymaster_cap_only" | "paymaster_simulation";
+  capability: "paymaster_cap_only" | "paymaster_simulation" | "paymaster_staticcall";
+  /** Exact outer gas limit times fee, as hex; available after simulation. */
+  max_gas_cost?: string;
   /** Machine-readable or human-readable reason when partial. */
   reason?: string;
   /** Additional operator/client guidance. */

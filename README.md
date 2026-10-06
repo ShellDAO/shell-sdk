@@ -1095,3 +1095,25 @@ Before publishing a `shell-sdk` release candidate:
 | Default max fee per gas | 1 Gwei |
 
 For full chain documentation, validator setup, and the Shell CLI reference, see the project wiki or official docs site.
+
+### Contract-paymaster validation gas (unreleased source builds)
+
+Use the bundle's actual outer gas limit and fee. `inner_calls_data` is its
+canonical RLP inner-call list and `paymaster_context` is the policy context:
+
+```typescript
+const estimate = await provider.estimatePaymasterGas({
+  paymaster, sender, inner_calls_data, paymaster_context,
+  gas_limit: "0x493e0", max_fee_per_gas: "0x7",
+});
+if (estimate.simulation_status === "simulated") {
+  console.log(estimate.validation_gas, estimate.max_gas_cost);
+}
+```
+
+Updated node source executes the admission STATICCALL and returns measured gas
+including intrinsic and wrapper costs. Failed policies reject the RPC request;
+state is never committed. Existing public binaries and requests without
+`gas_limit` return `cap_only`, with no measured gas. This SDK type addition is
+also unreleased. Simulation does not validate the complete bundle, signatures,
+nonce or funding and does not guarantee sponsorship at a later state or height.
