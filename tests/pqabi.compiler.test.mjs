@@ -25,11 +25,9 @@ test('PQABI target retains original ABI types and selector dispatch', async () =
   assert.notEqual(native.bytecode,original.bytecode);
 });
 
-test('PQABI target rejects context, events, assembly and payable address instead of narrowing', async () => {
+test('PQABI target rejects context, assembly and payable address instead of narrowing', async () => {
   for (const body of [
     'function caller() external view returns(address) { return msg.sender; }',
-    'event Owner(address value);',
-    'error Owner(address value);',
     'function raw() external { assembly { stop() } }',
     'address payable public owner;',
   ]) {

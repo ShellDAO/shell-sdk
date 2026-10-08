@@ -11,12 +11,96 @@ interface CompilerInput {
 }
 
 interface AstNode {
+  id?: number;
   nodeType?: string;
   name?: string;
   memberName?: string;
   src?: string;
   typeDescriptions?: { typeString?: string };
   [key: string]: unknown;
+}
+
+interface AstSource {
+  ast: unknown;
+}
+
+/** Restore only generated signature constants at the typed emission/revert
+ * source location. A whole-IR literal replacement would also change unrelated
+ * user constants that happen to equal a lowered event topic or error selector.
+ */
+function restoreTopicsAndErrors(
+  ir: string,
+  originalSources: Record<string, AstSource>,
+  loweredSources: Record<string, AstSource>,
+): string {
+  const originalDefinitions = new Map<string, AstNode>();
+  for (const source of Object.values(originalSources)) {
+    visit(source.ast, (node) => {
+      if (node.nodeType === "EventDefinition" || node.nodeType === "ErrorDefinition") {
+        originalDefinitions.set(node.src!, node);
+      }
+    });
+  }
+  const definitions = new Map<number, { node: AstNode; original: AstNode }>();
+  for (const source of Object.values(loweredSources)) {
+    visit(source.ast, (node) => {
+      if (node.nodeType !== "EventDefinition" && node.nodeType !== "ErrorDefinition") return;
+      // Both address and uint256 are seven ASCII bytes: every source range
+      // remains unchanged. Validate the declaration pairing rather than rely on
+      // the compiler assigning identical AST ids in the two compilations.
+      const original = originalDefinitions.get(node.src!);
+      if (!original || original.name !== node.name || original.nodeType !== node.nodeType) {
+        throw new Error("PQABI signature declaration source mismatch");
+      }
+      definitions.set(node.id!, { node, original });
+    });
+  }
+  const locations = new Map<string, { kind: string; before: string; after: string }>();
+  for (const source of Object.values(loweredSources)) {
+    visit(source.ast, (node) => {
+      const call = (node.eventCall ?? node.errorCall) as AstNode | undefined;
+      if (!call) return;
+      const expression = call.expression as AstNode;
+      const definition = definitions.get(expression.referencedDeclaration as number);
+      if (!definition) throw new Error("PQABI signature declaration unavailable");
+      if (definition.node.anonymous) return;
+      const kind = definition.node.nodeType === "EventDefinition" ? "event" : "error";
+      const selectorKey = kind === "event" ? "eventSelector" : "errorSelector";
+      const pad = (value: unknown) => {
+        const width = kind === "event" ? 64 : 8;
+        if (typeof value !== "string" || !new RegExp(`^[0-9a-f]{${width}}$`).test(value)) {
+          throw new Error("PQABI signature metadata unavailable");
+        }
+        return kind === "event" ? value : value.padEnd(64, "0");
+      };
+      const [start, length, file] = call.src!.split(":").map(Number);
+      locations.set(`${file}:${start}:${start + length}`, {
+        kind, before: pad(definition.node[selectorKey]), after: pad(definition.original[selectorKey]),
+      });
+    });
+  }
+  let location = "";
+  const changed = new Set<string>();
+  const encountered = new Set<string>();
+  const output = ir.split("\n").map((line) => {
+    const marker = line.match(/^\s*\/\/\/ @src (\d+:\d+:\d+)/);
+    if (marker) location = marker[1];
+    const signature = locations.get(location);
+    if (!signature || line.trimStart().startsWith("//")) return line;
+    encountered.add(location);
+    const pattern = signature.kind === "event"
+      ? /^(\s*let \w+ := )0x([0-9a-fA-F]+)(\s*)$/
+      : /^(\s*mstore\(\w+, )0x([0-9a-fA-F]+)(\)\s*)$/;
+    return line.replace(pattern, (match, before: string, value: string, after: string) => {
+      if (value.toLowerCase().padStart(64, "0") !== signature.before) return match;
+      changed.add(location);
+      return `${before}0x${signature.after}${after}`;
+    });
+  }).join("\n");
+  for (const location of encountered) {
+    if (!changed.has(location)) throw new Error(`unsupported PQABI signature emission at ${location}`);
+  }
+  return output;
 }
 
 function compile(input: unknown) {
@@ -44,8 +128,8 @@ function visit(value: unknown, visitor: (node: AstNode) => void): void {
  * use compiler AST byte ranges rather than matching text in comments/strings.
  *
  * This first target supports address values, comparisons, arrays, mappings and
- * storage. Reject features that need native call-context or typed selector/topic
- * lowering instead of silently emitting a 160-bit path.
+ * storage, events and explicit custom-error reverts. Reject features that need
+ * native call-context instead of silently emitting a 160-bit path.
  */
 export function compilePqabi(input: CompilerInput, contractName: string) {
   const selection = {
@@ -64,16 +148,22 @@ export function compilePqabi(input: CompilerInput, contractName: string) {
   for (const [path, source] of Object.entries(input.sources)) {
     const replacements: { start: number; length: number }[] = [];
     visit(original.sources[path].ast, (node) => {
-      if (node.nodeType === "InlineAssembly" || node.nodeType === "EventDefinition" || node.nodeType === "ErrorDefinition"
+      if (node.nodeType === "FunctionCall" && (node.expression as AstNode)?.name === "require"
+        && (node.arguments as AstNode[]).some((argument) =>
+          /returns \(error\)/.test(((argument.expression as AstNode)?.typeDescriptions?.typeString) ?? ""))) {
+        throw new Error("PQABI custom errors in require are not yet supported; explicit revert is supported");
+      }
+      if (node.nodeType === "InlineAssembly"
         || node.nodeType === "FunctionTypeName" || node.nodeType === "NewExpression"
         || (node.nodeType === "ElementaryTypeName" && node.name === "address"
           && node.stateMutability === "payable")
         || (node.nodeType === "Identifier" && ["this", "super"].includes(node.name ?? ""))
         || (node.nodeType === "MemberAccess" && !["length", "push", "pop"].includes(node.memberName ?? ""))) {
-        throw new Error(`PQABI target does not yet support ${node.nodeType}${node.memberName ? ` .${node.memberName}` : ""} in ${path}; native context/calls and event/selector lowering require further compiler support`);
+        throw new Error(`PQABI target does not yet support ${node.nodeType}${node.memberName ? ` .${node.memberName}` : ""} in ${path}; native context/calls require further compiler support`);
       }
       if (node.nodeType === "ElementaryTypeName" && node.name === "address") {
         const [start, length] = node.src!.split(":").map(Number);
+        if (length !== 7) throw new Error("unsupported PQABI address source range");
         replacements.push({ start, length });
       }
     });
@@ -97,7 +187,7 @@ export function compilePqabi(input: CompilerInput, contractName: string) {
     }
     // Replace only dispatcher case literals, in one pass (avoids cascading swaps).
     const seen = new Map<string, number>();
-    const ir = loweredContract.ir.replace(/\bcase 0x([0-9a-fA-F]{1,8})\b/g, (match: string, hex: string) => {
+    let ir = loweredContract.ir.replace(/\bcase 0x([0-9a-fA-F]{1,8})\b/g, (match: string, hex: string) => {
       const selector = selectors.get(hex.toLowerCase().padStart(8, "0"));
       if (selector) {
         const key = hex.toLowerCase().padStart(8, "0");
@@ -108,6 +198,7 @@ export function compilePqabi(input: CompilerInput, contractName: string) {
     for (const selector of selectors.keys()) {
       if (seen.get(selector) !== 1) throw new Error(`ambiguous or missing PQABI dispatcher selector ${selector}`);
     }
+    ir = restoreTopicsAndErrors(ir, original.sources, lowered.sources);
     const yul = compile({
       language: "Yul",
       sources: { [path]: { content: ir } },
