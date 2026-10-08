@@ -1128,8 +1128,11 @@ for this target; its storage layout differs from a previously deployed contract
 that packed 20-byte addresses. Do not replace bytecode in an existing account.
 
 This initial target supports address values, comparisons, arrays, mappings and
-storage. Native caller/context addresses, external calls, member operations,
-events, custom errors, payable addresses, function types and inline assembly
+storage, events and explicit custom-error reverts. Event signature topics and
+custom-error selectors retain their original `address` type signatures, with
+full-word indexed topics, event data and error arguments. Native caller/context
+addresses, external calls, member operations, custom errors inside `require`,
+payable addresses, function types and inline assembly
 require further support and fail compilation when an address-bearing source
 uses them. This target does not yet fulfill the complete native-address
 execution surface described in the whitepaper.
@@ -1138,10 +1141,11 @@ Run the isolated real-VM acceptance without submitting a transaction:
 
 ```bash
 npm run build
-SHELL_PQABI_RPC_URL=http://127.0.0.1:8545 node --test tests/pqabi.compiler.test.mjs
+SHELL_PQABI_RPC_URL=http://127.0.0.1:8545 node --test tests/pqabi.compiler.test.mjs tests/pqabi.events.test.mjs
 ```
 
 The probe deploys a child contract inside `eth_call`, checks constructor storage,
 full-width echo, a storage update and malformed-write rollback with original
-selectors. Simulated state is discarded; restart and persistent-node acceptance
+selectors. The event/error probe also checks full-width revert data, rollback
+and user constants equal to lowered signature values. Simulated state is discarded; restart and persistent-node acceptance
 remain separate checks.

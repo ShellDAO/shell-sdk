@@ -29,13 +29,20 @@
 
 ### Added
 
+- Preserve original event signature topics and custom-error selectors in the
+  experimental PQABI compiler target. Named and anonymous events retain full
+  address topics/data; explicit custom-error reverts encode all 32 address
+  bytes and roll back preceding storage/log effects. Signature restoration
+  uses typed source locations and leaves equal user constants unchanged.
+  Custom errors inside `require` remain explicitly unsupported.
+
 - Add an experimental opt-in `target: "pqvm"` / `--pqvm` compiler path for
   full-word `address` parameters, returns and storage with original function
   selectors. Read-only real-VM deployment, echo, storage updates and malformed
   write rollback passed against the public v0.27.3 node. An isolated v0.27.4
   release node retained stored address values after a RocksDB restart using a
   compatible V1 signer; this is not validation of the candidate V2 signer on
-  that older release. Native call context, external calls, events and other
+  that older release. Native call context, external calls and other remaining
   unsupported constructs fail explicitly; full native-address support and
   package publication remain incomplete.
 
