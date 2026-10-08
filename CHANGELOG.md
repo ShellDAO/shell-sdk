@@ -29,6 +29,16 @@
 
 ### Added
 
+- Add an experimental opt-in `target: "pqvm"` / `--pqvm` compiler path for
+  full-word `address` parameters, returns and storage with original function
+  selectors. Read-only real-VM deployment, echo, storage updates and malformed
+  write rollback passed against the public v0.27.3 node. An isolated v0.27.4
+  release node retained stored address values after a RocksDB restart using a
+  compatible V1 signer; this is not validation of the candidate V2 signer on
+  that older release. Native call context, external calls, events and other
+  unsupported constructs fail explicitly; full native-address support and
+  package publication remain incomplete.
+
 - Added the `rpcApiKey` provider option for Bearer-authenticated HTTP RPC
   requests, including signer-backed validator governance methods.
 

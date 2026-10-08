@@ -16,6 +16,7 @@ import type { Abi } from "viem";
 
 import type { HexString } from "./types.js";
 import type { ShellContractArtifact } from "./contracts.js";
+import { compilePqabi } from "./pqabi-compiler.js";
 
 export interface CompileSoliditySource {
   path: string;
@@ -31,6 +32,8 @@ export interface CompileSolidityOptions {
   };
   evmVersion?: string;
   outputPath?: string;
+  /** Opt-in PQABI value/storage target; native call-context support is separate. */
+  target?: "evm" | "pqvm";
 }
 
 interface SolcError {
@@ -88,7 +91,9 @@ export async function compileSolidity(
     },
   };
 
-  const output = JSON.parse(solc.compile(JSON.stringify(input)));
+  const output = options.target === "pqvm"
+    ? compilePqabi(input, options.contractName)
+    : JSON.parse(solc.compile(JSON.stringify(input)));
   const errors = ((output.errors ?? []) as SolcError[]).filter((entry) => entry.severity === "error");
   if (errors.length > 0) {
     const message = errors

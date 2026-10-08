@@ -19,7 +19,7 @@ function usage(): string {
   return `shell-sdk contract <command> [options]
 
 Commands:
-  contract compile  --source <path> --contract <name> --out <artifact.json>
+  contract compile  --source <path> --contract <name> --out <artifact.json> [--pqvm]
   contract deploy   --artifact <artifact.json> --keystore <key.json> --password <password>
   contract write    --artifact <artifact.json> --address <0x...> --function <name> [--args <json>]
   contract read     --artifact <artifact.json> --address <0x...> --function <name> [--args <json>]
@@ -118,6 +118,7 @@ async function compileCommand(options: CliOptions) {
     sources: [{ path: stringOption(options, "source") }],
     contractName: stringOption(options, "contract"),
     outputPath: stringOption(options, "out"),
+    target: options.pqvm === true ? "pqvm" : "evm",
   });
   console.log(JSON.stringify({
     contractName: artifact.contractName,
