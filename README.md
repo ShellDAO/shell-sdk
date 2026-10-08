@@ -1117,3 +1117,31 @@ state is never committed. Existing public binaries and requests without
 `gas_limit` return `cap_only`, with no measured gas. This SDK type addition is
 also unreleased. Simulation does not validate the complete bundle, signatures,
 nonce or funding and does not guarantee sponsorship at a later state or height.
+
+### Experimental PQABI compiler target
+
+In the development version, `compileSolidity({ ...options, target: "pqvm" })`
+(or `shell-sdk contract compile ... --pqvm`) compiles Solidity `address` values
+as full 32-byte ABI and storage words while retaining the original ABI types
+and function selectors. The default target remains `evm`. Recompile contracts
+for this target; its storage layout differs from a previously deployed contract
+that packed 20-byte addresses. Do not replace bytecode in an existing account.
+
+This initial target supports address values, comparisons, arrays, mappings and
+storage. Native caller/context addresses, external calls, member operations,
+events, custom errors, payable addresses, function types and inline assembly
+require further support and fail compilation when an address-bearing source
+uses them. This target does not yet fulfill the complete native-address
+execution surface described in the whitepaper.
+
+Run the isolated real-VM acceptance without submitting a transaction:
+
+```bash
+npm run build
+SHELL_PQABI_RPC_URL=http://127.0.0.1:8545 node --test tests/pqabi.compiler.test.mjs
+```
+
+The probe deploys a child contract inside `eth_call`, checks constructor storage,
+full-width echo, a storage update and malformed-write rollback with original
+selectors. Simulated state is discarded; restart and persistent-node acceptance
+remain separate checks.
