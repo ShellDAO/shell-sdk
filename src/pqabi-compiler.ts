@@ -80,20 +80,47 @@ function restoreTopicsAndErrors(
     });
   }
   let location = "";
+  let requireError: number | undefined;
+  let helperDepth = 0;
   const changed = new Set<string>();
   const encountered = new Set<string>();
   const output = ir.split("\n").map((line) => {
+    const functionStart = line.match(/^\s*function (\w+)\(/);
+    if (functionStart) {
+      const helper = functionStart[1].match(/^require_helper_t_error_(\d+)_/);
+      requireError = helper ? Number(helper[1]) : undefined;
+      helperDepth = 0;
+    }
+    if (requireError !== undefined && !line.trimStart().startsWith("//")) {
+      helperDepth += (line.match(/\{/g) ?? []).length - (line.match(/\}/g) ?? []).length;
+      if (helperDepth === 0) requireError = undefined;
+    }
     const marker = line.match(/^\s*\/\/\/ @src (\d+:\d+:\d+)/);
     if (marker) location = marker[1];
-    const signature = locations.get(location);
+    const definition = requireError === undefined ? undefined : definitions.get(requireError);
+    if (requireError !== undefined && (!definition || definition.node.nodeType !== "ErrorDefinition")) {
+      throw new Error("PQABI require error declaration unavailable");
+    }
+    // Solidity emits custom-error require helpers outside the call's source
+    // marker. Bind their constants to the lowered error declaration's AST id.
+    if (definition && [definition.node.errorSelector, definition.original.errorSelector]
+      .some((selector) => typeof selector !== "string" || !/^[0-9a-f]{8}$/.test(selector))) {
+      throw new Error("PQABI require error signature metadata unavailable");
+    }
+    const key = definition ? `require:${requireError}` : location;
+    const signature = definition ? {
+      kind: "error",
+      before: String(definition.node.errorSelector).padEnd(64, "0"),
+      after: String(definition.original.errorSelector).padEnd(64, "0"),
+    } : locations.get(location);
     if (!signature || line.trimStart().startsWith("//")) return line;
-    encountered.add(location);
+    encountered.add(key);
     const pattern = signature.kind === "event"
       ? /^(\s*let \w+ := )0x([0-9a-fA-F]+)(\s*)$/
       : /^(\s*mstore\(\w+, )0x([0-9a-fA-F]+)(\)\s*)$/;
     return line.replace(pattern, (match, before: string, value: string, after: string) => {
       if (value.toLowerCase().padStart(64, "0") !== signature.before) return match;
-      changed.add(location);
+      changed.add(key);
       return `${before}0x${signature.after}${after}`;
     });
   }).join("\n");
@@ -148,11 +175,6 @@ export function compilePqabi(input: CompilerInput, contractName: string) {
   for (const [path, source] of Object.entries(input.sources)) {
     const replacements: { start: number; length: number }[] = [];
     visit(original.sources[path].ast, (node) => {
-      if (node.nodeType === "FunctionCall" && (node.expression as AstNode)?.name === "require"
-        && (node.arguments as AstNode[]).some((argument) =>
-          /returns \(error\)/.test(((argument.expression as AstNode)?.typeDescriptions?.typeString) ?? ""))) {
-        throw new Error("PQABI custom errors in require are not yet supported; explicit revert is supported");
-      }
       if (node.nodeType === "InlineAssembly"
         || node.nodeType === "FunctionTypeName" || node.nodeType === "NewExpression"
         || (node.nodeType === "ElementaryTypeName" && node.name === "address"

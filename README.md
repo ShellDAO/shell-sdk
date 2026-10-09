@@ -1128,10 +1128,11 @@ for this target; its storage layout differs from a previously deployed contract
 that packed 20-byte addresses. Do not replace bytecode in an existing account.
 
 This initial target supports address values, comparisons, arrays, mappings and
-storage, events and explicit custom-error reverts. Event signature topics and
+storage, events, explicit custom-error reverts and `require(bool, CustomError(...))`
+(with Solidity 0.8.26 or newer). Event signature topics and
 custom-error selectors retain their original `address` type signatures, with
 full-word indexed topics, event data and error arguments. Native caller/context
-addresses, external calls, member operations, custom errors inside `require`,
+addresses, external calls, member operations,
 payable addresses, function types and inline assembly
 require further support and fail compilation when an address-bearing source
 uses them. This target does not yet fulfill the complete native-address
