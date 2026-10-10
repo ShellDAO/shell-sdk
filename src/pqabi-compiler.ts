@@ -217,6 +217,7 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
     });
   }
   const sources: CompilerInput["sources"] = {};
+  let hasPureTypedCall = false;
   for (const [path, source] of Object.entries(input.sources)) {
     const replacements: { start: number; length: number; text: string }[] = [];
     const handled = new Set<number>();
@@ -249,6 +250,7 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
           const selector = definition.functionSelector;
           if (typeof selector !== "string" || !/^[0-9a-f]{8}$/.test(selector)) throw new Error("PQABI typed call selector unavailable");
           const operation = ["view", "pure"].includes(String(definition.stateMutability)) ? "staticcall" : "call";
+          if (definition.stateMutability === "pure") hasPureTypedCall = true;
           const lowName = `_${operation === "call" ? "k" : "s"}${node.src!.split(":")[2]}`;
           helpers.set(operation, lowName);
           const resultType = (returns[0].typeName as AstNode)?.name === "bytes32" ? "bytes32" : "uint256";
@@ -377,6 +379,27 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
       return `function ${name}() view returns (uint256 value) { assembly { ${guard} value := ${opcode}() } }`;
     }).join("\n");
     sources[path] = { content: content.toString("utf8") + "\n" + declarations };
+  }
+  if (hasPureTypedCall) {
+    // Solidity allows typed pure external calls, but our STATICCALL helper is
+    // view. Original source has already passed Solidity's purity checks. Lower
+    // pure annotations only in backend source, across imports and overrides so
+    // transitive callers remain consistent; the public ABI stays original.
+    for (const [path, source] of Object.entries(input.sources)) {
+      const content = Buffer.from(sources[path].content);
+      visit(original.sources[path].ast, (node) => {
+        if (node.nodeType !== "FunctionDefinition" || node.stateMutability !== "pure") return;
+        const [start, length] = node.src!.split(":").map(Number);
+        const bodyStart = (node.body as AstNode | undefined)?.src?.split(":")[0];
+        const header = Buffer.from(source.content).subarray(start, bodyStart === undefined ? start + length : Number(bodyStart)).toString("utf8");
+        // Skip comments and quoted modifier arguments; AST offsets are bytes.
+        const tokens = header.matchAll(/\/\/[^\r\n]*|\/\*[\s\S]*?\*\/|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\b[A-Za-z_]\w*\b/g);
+        const pure = [...tokens].filter((token) => token[0] === "pure");
+        if (pure.length !== 1) throw new Error("unsupported PQABI pure annotation source range");
+        content.write("view", start + Buffer.byteLength(header.slice(0, pure[0].index)), "utf8");
+      });
+      sources[path] = {content: content.toString("utf8")};
+    }
   }
   const lowered = compile({ ...input, sources, settings: { ...input.settings, viaIR: true, outputSelection: selection } });
   for (const [path, contracts] of Object.entries(original.contracts) as [string, Record<string, { abi: unknown; evm: { methodIdentifiers: Record<string, string> } }>][] ) {
