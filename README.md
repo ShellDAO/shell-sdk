@@ -1179,7 +1179,7 @@ other receiver expressions remain unsupported.
 Typed `I(target).echo(value)` calls also preserve the original selector and
 complete address when the external function takes one nonpayable `address` or
 `uint256` and
-returns one nonpayable `address` or one `bytes32`. The target must be an address variable and the
+returns one nonpayable `address`, `bytes32` or `uint256`. The target must be an address variable and the
 argument an identifier, literal or integer `type(T).min` / `type(T).max`
 expression, such as `IOwner(target).ownerOf(type(uint256).max)`.
 View and pure declarations use STATICCALL;
@@ -1187,6 +1187,23 @@ other declarations use CALL. Callee revert data propagates, and an absent or
 short return value reverts. Call options, named arguments, try/catch, contract
 variables and other ABI shapes still require further compiler support. This
 form requires the same unreleased profile and explicit activation option.
+
+Numeric results use the same form, for example:
+
+```solidity
+interface IBalance {
+    function balanceOf(address owner) external view returns (uint256);
+}
+contract BalanceReader {
+    function lookup(address token, address owner) external view returns (uint256) {
+        return IBalance(token).balanceOf(owner);
+    }
+}
+```
+
+The token and owner retain their full native address; the returned balance is
+decoded as a 256-bit integer. This source support requires the same unreleased
+profile and does not establish support for other token operations.
 
 For a full-width owner returned as `bytes32`, the same typed call form applies:
 
