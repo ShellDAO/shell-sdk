@@ -34,6 +34,10 @@ export interface CompileSolidityOptions {
   outputPath?: string;
   /** Opt-in PQABI value/storage target; native call-context support is separate. */
   target?: "evm" | "pqvm";
+  /** Unreleased native-address-context-v1 profile. Must match the node's
+   * immutable activation schedule; emitted context reads revert before it.
+   */
+  nativeAddressContextHeight?: number;
 }
 
 interface SolcError {
@@ -91,8 +95,11 @@ export async function compileSolidity(
     },
   };
 
+  if (options.nativeAddressContextHeight !== undefined && options.target !== "pqvm") {
+    throw new Error("nativeAddressContextHeight requires the pqvm target");
+  }
   const output = options.target === "pqvm"
-    ? compilePqabi(input, options.contractName)
+    ? compilePqabi(input, options.contractName, options.nativeAddressContextHeight)
     : JSON.parse(solc.compile(JSON.stringify(input)));
   const errors = ((output.errors ?? []) as SolcError[]).filter((entry) => entry.severity === "error");
   if (errors.length > 0) {

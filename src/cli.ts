@@ -19,7 +19,7 @@ function usage(): string {
   return `shell-sdk contract <command> [options]
 
 Commands:
-  contract compile  --source <path> --contract <name> --out <artifact.json> [--pqvm]
+  contract compile  --source <path> --contract <name> --out <artifact.json> [--pqvm] [--native-address-context-height <height>]
   contract deploy   --artifact <artifact.json> --keystore <key.json> --password <password>
   contract write    --artifact <artifact.json> --address <0x...> --function <name> [--args <json>]
   contract read     --artifact <artifact.json> --address <0x...> --function <name> [--args <json>]
@@ -114,11 +114,16 @@ function providerFromOptions(options: CliOptions) {
 }
 
 async function compileCommand(options: CliOptions) {
+  const nativeHeight = options["native-address-context-height"];
+  if (nativeHeight !== undefined && (typeof nativeHeight !== "string" || !/^\d+$/.test(nativeHeight))) {
+    throw new Error("--native-address-context-height requires a nonnegative integer");
+  }
   const artifact = await compileSolidity({
     sources: [{ path: stringOption(options, "source") }],
     contractName: stringOption(options, "contract"),
     outputPath: stringOption(options, "out"),
     target: options.pqvm === true ? "pqvm" : "evm",
+    ...(nativeHeight === undefined ? {} : {nativeAddressContextHeight: Number(nativeHeight)}),
   });
   console.log(JSON.stringify({
     contractName: artifact.contractName,
