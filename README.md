@@ -1131,7 +1131,9 @@ This initial target supports address values, comparisons, arrays, mappings and
 storage, events, explicit custom-error reverts and `require(bool, CustomError(...))`
 (with Solidity 0.8.26 or newer). Event signature topics and
 custom-error selectors retain their original `address` type signatures, with
-full-word indexed topics, event data and error arguments.
+full-word indexed topics, event data and error arguments. Integer
+`type(T).min` and `type(T).max` preserve Solidity limits for every signed and
+unsigned integer width, including the `int` and `uint` aliases.
 
 Unreleased `native-address-context-v1` nodes can also compile `msg.sender`,
 `tx.origin`, `block.coinbase` and `address(this)` as full words. Set
@@ -1178,7 +1180,9 @@ Typed `I(target).echo(value)` calls also preserve the original selector and
 complete address when the external function takes one nonpayable `address` or
 `uint256` and
 returns one nonpayable `address` or one `bytes32`. The target must be an address variable and the
-argument an identifier or literal. View and pure declarations use STATICCALL;
+argument an identifier, literal or integer `type(T).min` / `type(T).max`
+expression, such as `IOwner(target).ownerOf(type(uint256).max)`.
+View and pure declarations use STATICCALL;
 other declarations use CALL. Callee revert data propagates, and an absent or
 short return value reverts. Call options, named arguments, try/catch, contract
 variables and other ABI shapes still require further compiler support. This

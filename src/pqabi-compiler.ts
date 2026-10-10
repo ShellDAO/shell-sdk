@@ -139,6 +139,18 @@ function compile(input: unknown) {
   return output;
 }
 
+/** Integer metatype limits are evaluated by Solidity and contain no address
+ * path. Identify the typed builtin, not a user member named min or max.
+ */
+function integerLimit(node: AstNode): boolean {
+  const call = node.expression as AstNode | undefined;
+  const callee = call?.expression as AstNode | undefined;
+  return node.nodeType === "MemberAccess" && ["min", "max"].includes(node.memberName ?? "")
+    && call?.nodeType === "FunctionCall" && call.kind === "functionCall"
+    && callee?.typeDescriptions?.typeIdentifier === "t_function_metatype_pure$__$returns$__$"
+    && /^t_magic_meta_type_t_u?int[0-9]+$/.test(call.typeDescriptions?.typeIdentifier ?? "");
+}
+
 function visit(value: unknown, visitor: (node: AstNode) => void): void {
   if (Array.isArray(value)) {
     for (const child of value) visit(child, visitor);
@@ -229,7 +241,7 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
             || !(addressParameter(parameters[0]) || ["uint", "uint256"].includes(String((parameters[0].typeName as AstNode)?.name))) || !(addressParameter(returns[0]) || (returns[0].typeName as AstNode)?.name === "bytes32")
             || (target.arguments as AstNode[])?.length !== 1 || receiver?.nodeType !== "Identifier"
             || receiver.typeDescriptions?.typeString !== "address" || (node.arguments as AstNode[])?.length !== 1
-            || !["Identifier", "Literal"].includes(argument?.nodeType ?? "")
+            || (!["Identifier", "Literal"].includes(argument?.nodeType ?? "") && !integerLimit(argument))
             || (node.names as unknown[])?.length || node.tryCall) {
             throw new Error("PQABI typed calls currently require an interface cast of an address variable, one address or uint256 argument and one address or bytes32 result");
           }
@@ -336,7 +348,8 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
         || (node.nodeType === "ElementaryTypeName" && node.name === "address"
           && node.stateMutability === "payable")
         || (node.nodeType === "Identifier" && ["this", "super"].includes(node.name ?? ""))
-        || (node.nodeType === "MemberAccess" && !["length", "push", "pop"].includes(node.memberName ?? ""))) {
+        || (node.nodeType === "MemberAccess" && !integerLimit(node)
+          && !["length", "push", "pop"].includes(node.memberName ?? ""))) {
         throw new Error(`PQABI target does not yet support ${node.nodeType}${node.memberName ? ` .${node.memberName}` : ""} in ${path}; native context/calls require further compiler support`);
       }
       if (node.nodeType === "ElementaryTypeName" && node.name === "address") {
