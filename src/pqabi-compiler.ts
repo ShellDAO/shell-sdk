@@ -226,12 +226,12 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
           const addressParameter = (parameter: AstNode) => (parameter.typeName as AstNode)?.name === "address"
             && (parameter.typeName as AstNode)?.stateMutability !== "payable";
           if (!definition || parameters?.length !== 1 || returns?.length !== 1
-            || !(addressParameter(parameters[0]) || ["uint", "uint256"].includes(String((parameters[0].typeName as AstNode)?.name))) || !addressParameter(returns[0])
+            || !(addressParameter(parameters[0]) || ["uint", "uint256"].includes(String((parameters[0].typeName as AstNode)?.name))) || !(addressParameter(returns[0]) || (returns[0].typeName as AstNode)?.name === "bytes32")
             || (target.arguments as AstNode[])?.length !== 1 || receiver?.nodeType !== "Identifier"
             || receiver.typeDescriptions?.typeString !== "address" || (node.arguments as AstNode[])?.length !== 1
             || !["Identifier", "Literal"].includes(argument?.nodeType ?? "")
             || (node.names as unknown[])?.length || node.tryCall) {
-            throw new Error("PQABI typed calls currently require an interface cast of an address variable, one address or uint256 argument and one address result");
+            throw new Error("PQABI typed calls currently require an interface cast of an address variable, one address or uint256 argument and one address or bytes32 result");
           }
           if (nativeHeight === undefined) throw new Error("PQABI typed call requires nativeAddressContextHeight matching an activated node profile");
           const selector = definition.functionSelector;
@@ -239,12 +239,13 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
           const operation = ["view", "pure"].includes(String(definition.stateMutability)) ? "staticcall" : "call";
           const lowName = `_${operation === "call" ? "k" : "s"}${node.src!.split(":")[2]}`;
           helpers.set(operation, lowName);
+          const resultType = addressParameter(returns[0]) ? "uint256" : "bytes32";
           const key = `typed:${definition.id}`;
           let name = helpers.get(key);
           if (!name) {
             name = `_t${node.id!.toString(36)}`;
             helpers.set(key, name);
-            typedDeclarations.set(name, `function ${name}(uint256 target, uint256 value) ${operation === "staticcall" ? "view " : ""}returns (uint256) { (bool success, bytes memory output) = ${lowName}(target, abi.encodeWithSelector(bytes4(0x${selector}), value)); if (!success) { assembly { revert(add(output, 32), mload(output)) } } return abi.decode(output, (uint256)); }`);
+            typedDeclarations.set(name, `function ${name}(uint256 target, uint256 value) ${operation === "staticcall" ? "view " : ""}returns (${resultType}) { (bool success, bytes memory output) = ${lowName}(target, abi.encodeWithSelector(bytes4(0x${selector}), value)); if (!success) { assembly { revert(add(output, 32), mload(output)) } } return abi.decode(output, (${resultType})); }`);
           }
           const read = (argument: AstNode) => {
             const [start, length] = argument.src!.split(":").map(Number);
