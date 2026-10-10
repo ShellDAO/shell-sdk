@@ -208,7 +208,26 @@ test('typed bytes32 owner result retains its ABI and uint256 argument', async ()
  assert.equal(native.abi.find(entry=>entry.name==='lookup').outputs[0].type,'bytes32');
  await assert.rejects(compileSolidity({...args,target:'pqvm'}),/typed call requires nativeAddressContextHeight/);
  for (const result of ['bytes16','bytes memory']) {
-  await assert.rejects(compileSolidity({...args,sources:[{path:'Reader.sol',content:source.replaceAll('bytes32',result)}],target:'pqvm',nativeAddressContextHeight:2}),/one address or bytes32 result/);
+  await assert.rejects(compileSolidity({...args,sources:[{path:'Reader.sol',content:source.replaceAll('bytes32',result)}],target:'pqvm',nativeAddressContextHeight:2}),/one address, bytes32 or uint256 result/);
+ }
+});
+
+test('typed balance calls retain numeric uint256 results and the original address ABI', async () => {
+ const source='pragma solidity ^0.8.20; interface I {function balanceOf(address owner) external view returns(uint256);} contract Reader {function lookup(address token,address owner) external view returns(uint256){return I(token).balanceOf(owner);}}';
+ for (const result of ['uint256','uint']) {
+  for (const mutability of ['view','pure','']) {
+   let content=source.replaceAll('uint256',result).replace('external view returns','external '+mutability+' returns');
+   if (!mutability) content=content.replace('owner) external view','owner) external');
+   const args={sources:[{path:'Reader.sol',content}],contractName:'Reader',evmVersion:'shanghai'};
+   const original=await compileSolidity({...args,target:'evm'});
+   const native=await compileSolidity({...args,target:'pqvm',nativeAddressContextHeight:2});
+   assert.deepEqual(native.abi,original.abi);
+   assert.equal(native.abi.find(entry=>entry.name==='lookup').outputs[0].type,'uint256');
+   await assert.rejects(compileSolidity({...args,target:'pqvm'}),/typed call requires nativeAddressContextHeight/);
+  }
+ }
+ for (const result of ['uint128','int256','bool','bytes16']) {
+  await assert.rejects(compileSolidity({sources:[{path:'Reader.sol',content:source.replaceAll('uint256',result)}],contractName:'Reader',target:'pqvm',nativeAddressContextHeight:2}),/one address, bytes32 or uint256 result/);
  }
 });
 
