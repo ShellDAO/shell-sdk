@@ -77,3 +77,123 @@ const harness=`object "Probe" { code {
     assert.equal(result.result,target==='pqvm'?'0x'+first+first+second+second:'0x');
   }
 });
+
+
+test('native context builtins require explicit activation and retain the public ABI', async () => {
+  const content = `pragma solidity ^0.8.20; contract Context { address public owner; function read() external returns(address,address,address,address) { owner=msg.sender; return(msg.sender,tx.origin,block.coinbase,address(this)); } }`;
+  const options = {sources:[{path:'Context.sol',content}],contractName:'Context',target:'pqvm',evmVersion:'shanghai'};
+  await assert.rejects(compileSolidity(options), /nativeAddressContextHeight/);
+  for (const height of [-1, 1.5, Number.MAX_SAFE_INTEGER+1, NaN]) {
+    await assert.rejects(compileSolidity({...options,nativeAddressContextHeight:height}), /nonnegative safe integer/);
+  }
+  const native = await compileSolidity({...options,nativeAddressContextHeight:2});
+  const original = await compileSolidity({...options,target:'evm'});
+  assert.deepEqual(native.abi, original.abi);
+  assert.notEqual(native.deployedBytecode, original.deployedBytecode);
+  // Builtins must be detected even when the source spells no address type.
+  await assert.rejects(compileSolidity({sources:[{path:'OnlyContext.sol',content:'pragma solidity ^0.8.20; contract OnlyContext { function equal() external view returns(bool) {return msg.sender == tx.origin;} }'}],contractName:'OnlyContext',target:'pqvm'}), /nativeAddressContextHeight/);
+  await compileSolidity({sources:[{path:'OnlyContext.sol',content:'pragma solidity ^0.8.20; contract OnlyContext { function equal() external view returns(bool) {return msg.sender == tx.origin;} }'}],contractName:'OnlyContext',target:'pqvm',nativeAddressContextHeight:2});
+  await assert.rejects(compileSolidity({...options,sources:[{path:'Context.sol',content:content+' function _pc0() pure returns(uint256) {return 1;}'}],nativeAddressContextHeight:2}), /helper name conflicts/);
+});
+
+
+test('native address variable introspection compiles with the explicit profile', async () => {
+  const source = 'pragma solidity ^0.8.20; contract NativeMembers { function inspect(address target) external view returns(uint256,bytes32,bytes memory) {return(target.balance,target.codehash,target.code);} }';
+  const options = {sources:[{path:'NativeMembers.sol',content:source}],contractName:'NativeMembers',target:'pqvm'};
+  await assert.rejects(compileSolidity(options), /nativeAddressContextHeight/);
+  const native = await compileSolidity({...options,nativeAddressContextHeight:2});
+  const original = await compileSolidity({...options,target:'evm'});
+  assert.deepEqual(native.abi, original.abi);
+  await assert.rejects(compileSolidity({...options,sources:[{path:'NativeMembers.sol',content:source.replace('target.balance','getTarget().balance').replace('function inspect', 'function getTarget() internal view returns(address) {return msg.sender;} function inspect')}],nativeAddressContextHeight:2}), /does not yet support/);
+});
+
+
+test('native context introspection preserves compound receivers and ABI', async () => {
+  const source = 'pragma solidity ^0.8.20; contract NativeCompound { function inspect() external view returns(uint256,bytes32,bytes memory) {return(address(this).balance,msg.sender.codehash,msg.sender.code);} }';
+  const options = {sources:[{path:'NativeCompound.sol',content:source}],contractName:'NativeCompound',target:'pqvm'};
+  await assert.rejects(compileSolidity(options), /nativeAddressContextHeight/);
+  const native = await compileSolidity({...options,nativeAddressContextHeight:2});
+  const original = await compileSolidity({...options,target:'evm'});
+  assert.deepEqual(native.abi,original.abi);
+  for (const receiver of ['address(this)', 'msg.sender', 'tx.origin', 'block.coinbase']) {
+    await compileSolidity({...options,sources:[{path:'NativeCompound.sol',content:source.replaceAll('address(this)',receiver).replaceAll('msg.sender',receiver)}],nativeAddressContextHeight:2});
+  }
+});
+
+
+test('native low-level call retains full address ABI and explicit activation', async () => {
+ const source='pragma solidity ^0.8.20; contract NativeCall { function invoke(address target, bytes memory data, uint256 value) external payable returns(bool,bytes memory) {return target.call{value:value}(data);} }';
+ const options={sources:[{path:'NativeCall.sol',content:source}],contractName:'NativeCall',target:'pqvm'};
+ await assert.rejects(compileSolidity(options),/nativeAddressContextHeight/);
+ const native=await compileSolidity({...options,nativeAddressContextHeight:2});
+ const evm=await compileSolidity({...options,target:'evm'});assert.deepEqual(native.abi,evm.abi);
+ await compileSolidity({...options,sources:[{path:'NativeCall.sol',content:source.replace('{value:value}','')}],nativeAddressContextHeight:2});
+ await assert.rejects(compileSolidity({...options,sources:[{path:'NativeCall.sol',content:source.replace('value:value','gas:value')}],nativeAddressContextHeight:2}),/optional simple value/);
+});
+
+
+test('native static and delegate calls keep ABI, mode and activation', async () => {
+ for(const mode of ['staticcall','delegatecall']) {
+  const source=`pragma solidity ^0.8.20; contract NativeModes { function invoke(address target, bytes memory data) external ${mode==='staticcall'?'view':'payable'} returns(bool,bytes memory) {return target.${mode}(data);} }`;
+  const options={sources:[{path:'NativeModes.sol',content:source}],contractName:'NativeModes',target:'pqvm'};
+  await assert.rejects(compileSolidity(options),/nativeAddressContextHeight/);
+  const native=await compileSolidity({...options,nativeAddressContextHeight:2});
+  const evm=await compileSolidity({...options,target:'evm'});assert.deepEqual(native.abi,evm.abi);
+  await assert.rejects(compileSolidity({...options,sources:[{path:'NativeModes.sol',content:source.replace(`target.${mode}(data)`,`target.${mode}(abi.encode(target))`)}],nativeAddressContextHeight:2}),/address and bytes variables/);
+ }
+});
+
+
+test('native low-level calls accept full-word context receivers', async () => {
+ for(const receiver of ['address(this)','msg.sender','tx.origin','block.coinbase']) {
+  for(const mode of ['call','staticcall','delegatecall']) {
+   const source=`pragma solidity ^0.8.20; contract ContextCall { function invoke(bytes memory data) external returns(bool,bytes memory) {return ${receiver}.${mode}(data);} }`;
+   const options={sources:[{path:'ContextCall.sol',content:source}],contractName:'ContextCall',target:'pqvm'};
+   await assert.rejects(compileSolidity(options),/nativeAddressContextHeight/);
+   const native=await compileSolidity({...options,nativeAddressContextHeight:2});
+   const evm=await compileSolidity({...options,target:'evm'});assert.deepEqual(native.abi,evm.abi);
+  }
+ }
+});
+
+
+test('native call evaluates an internal address receiver once without narrowing', async () => {
+ const source='pragma solidity ^0.8.20; contract NativeFunctionReceiver { address private target; uint256 public selections; function choose() internal returns(address) {selections+=1; return target;} function invoke(bytes memory data) external returns(bool,bytes memory) {return choose().call(data);} }';
+ const options={sources:[{path:'NativeFunctionReceiver.sol',content:source}],contractName:'NativeFunctionReceiver',target:'pqvm'};
+ await assert.rejects(compileSolidity(options),/nativeAddressContextHeight/);
+ const native=await compileSolidity({...options,nativeAddressContextHeight:2});const evm=await compileSolidity({...options,target:'evm'});assert.deepEqual(native.abi,evm.abi);
+ for (const argument of ['1', 'count']) {
+  await compileSolidity({...options,sources:[{path:'NativeFunctionReceiver.sol',content:source.replace('choose() internal','choose(uint256 n) internal').replace('invoke(bytes memory data)', 'invoke(bytes memory data,uint256 count)').replace('choose().call',`choose(${argument}).call`)}],nativeAddressContextHeight:2});
+ }
+ await assert.rejects(compileSolidity({...options,sources:[{path:'NativeFunctionReceiver.sol',content:source.replace('choose() internal','choose(uint256 n) internal').replace('choose().call','choose(1+2).call')}],nativeAddressContextHeight:2}),/does not yet support/);
+});
+
+
+test('native function literal arguments preserve UTF-8 signature source ranges', async () => {
+ const source='pragma solidity ^0.8.20; contract Receiver {address private target; function choose(string memory value) internal view returns(address){return target;} function invoke(bytes memory data) external returns(bool,bytes memory){return choose(unicode"地址").call(data);} error Denied(address value); function reject(address value) external pure {revert Denied(value);} }';
+ const artifact=await compileSolidity({...options,target:'pqvm',evmVersion:'shanghai',contractName:'Receiver',sources:[{path:'Receiver.sol',content:source}],nativeAddressContextHeight:2});
+ assert.deepEqual(artifact.abi.find(entry=>entry.type==='error').inputs.map(entry=>entry.type),['address']);
+});
+
+
+test('typed external address calls preserve the original selector and ABI', async () => {
+ const source='pragma solidity ^0.8.20; interface I {function echo(address value) external returns(address);} contract Typed {function invoke(address target,address value) external returns(address){return I(target).echo(value);}}';
+ for (const mutability of ['', 'view ', 'pure ']) {
+  const artifact=await compileSolidity({...options,target:'pqvm',evmVersion:'shanghai',contractName:'Typed',sources:[{path:'Typed.sol',content:source.replace('external returns(address);', `external ${mutability}returns(address);`)}],nativeAddressContextHeight:2});
+  assert.deepEqual(artifact.abi.find(entry=>entry.name==='invoke').inputs.map(entry=>entry.type),['address','address']);
+  const original=await compileSolidity({...options,target:'evm',contractName:'Typed',sources:[{path:'Typed.sol',content:source.replace('external returns(address);', `external ${mutability}returns(address);`)}]});
+  assert.deepEqual(artifact.abi,original.abi);
+ }
+ await assert.rejects(compileSolidity({...options,target:'pqvm',contractName:'Typed',sources:[{path:'Typed.sol',content:source}]}),/typed call requires nativeAddressContextHeight/);
+});
+
+
+test('typed uint256 input and address result retain the original interface ABI', async () => {
+ const source='pragma solidity ^0.8.20; interface I {function ownerOf(uint256 tokenId) external view returns(address);} contract Reader {function lookup(address target,uint256 tokenId) external view returns(address){return I(target).ownerOf(tokenId);} function last(address target) external view returns(address){return I(target).ownerOf(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);}}';
+ const args={sources:[{path:'Reader.sol',content:source}],contractName:'Reader',evmVersion:'shanghai'};
+ const original=await compileSolidity({...args,target:'evm'});
+ const native=await compileSolidity({...args,target:'pqvm',nativeAddressContextHeight:2});
+ assert.deepEqual(native.abi,original.abi);
+ await assert.rejects(compileSolidity({...args,target:'pqvm'}),/typed call requires nativeAddressContextHeight/);
+ await assert.rejects(compileSolidity({...args,sources:[{path:'Reader.sol',content:source.replaceAll('uint256 tokenId','uint64 tokenId').replace('0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff','1')}],target:'pqvm',nativeAddressContextHeight:2}),/one address or uint256 argument/);
+});

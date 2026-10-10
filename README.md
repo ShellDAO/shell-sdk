@@ -1130,8 +1130,60 @@ that packed 20-byte addresses. Do not replace bytecode in an existing account.
 This initial target supports address values, comparisons, arrays, mappings and
 storage, events and explicit custom-error reverts. Event signature topics and
 custom-error selectors retain their original `address` type signatures, with
-full-word indexed topics, event data and error arguments. Native caller/context
-addresses, external calls, member operations, custom errors inside `require`,
+full-word indexed topics, event data and error arguments.
+
+Unreleased `native-address-context-v1` nodes can also compile `msg.sender`,
+`tx.origin`, `block.coinbase` and `address(this)` as full words. Set
+`nativeAddressContextHeight` to the node's immutable activation height:
+
+```typescript
+const artifact = await compileSolidity({
+  sources: [{ path: "Context.sol" }],
+  contractName: "Context",
+  target: "pqvm",
+  nativeAddressContextHeight: 2,
+});
+```
+
+The CLI equivalent is `--pqvm --native-address-context-height 2`.
+The example height applies only to an isolated chain configured with activation
+at block 2. Each generated context read reverts before that height. The compiler
+cannot verify a remote node's schedule: the operator must match it explicitly.
+Existing public node releases do not implement this profile. Omitting the option
+keeps native context expressions rejected; setting it cannot activate a node.
+With the same explicit profile, address variables also support `.balance`,
+`.codehash` and `.code` against their complete 32-byte target. These reads return
+zero balance, zero hash and empty bytes for nonexistent accounts. Context
+receivers also support these reads, including `address(this).balance` and
+`msg.sender.codehash`. Function-result, array and struct receivers still require
+further compiler support.
+This is source support for development validation, pending the complete node
+profile and release.
+
+With the explicit profile, low-level `target.call(data)` and
+`target.call{value: amount}(data)`, `target.staticcall(data)` and
+`target.delegatecall(data)` also preserve the full target and return
+`(bool, bytes)`, including revert data. Static calls prohibit state writes;
+delegate calls use the calling contract storage and original caller/value.
+Receivers can be address variables or the context expressions `msg.sender`,
+`tx.origin`, `block.coinbase` and `address(this)`, or a direct internal function
+call that returns an address and takes identifier or literal arguments. That
+receiver is evaluated once.
+This initial form requires a
+bytes variable and a simple value variable or literal; call gas options,
+other receiver expressions remain unsupported.
+
+Typed `I(target).echo(value)` calls also preserve the original selector and
+complete address when the external function takes one nonpayable `address` or
+`uint256` and
+returns one nonpayable `address`. The target must be an address variable and the
+argument an identifier or literal. View and pure declarations use STATICCALL;
+other declarations use CALL. Callee revert data propagates, and an absent or
+short return value reverts. Call options, named arguments, try/catch, contract
+variables and other ABI shapes still require further compiler support. This
+form requires the same unreleased profile and explicit activation option.
+
+Other external calls, other member operations,
 payable addresses, function types and inline assembly
 require further support and fail compilation when an address-bearing source
 uses them. This target does not yet fulfill the complete native-address
