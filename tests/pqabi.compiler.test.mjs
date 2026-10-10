@@ -197,3 +197,17 @@ test('typed uint256 input and address result retain the original interface ABI',
  await assert.rejects(compileSolidity({...args,target:'pqvm'}),/typed call requires nativeAddressContextHeight/);
  await assert.rejects(compileSolidity({...args,sources:[{path:'Reader.sol',content:source.replaceAll('uint256 tokenId','uint64 tokenId').replace('0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff','1')}],target:'pqvm',nativeAddressContextHeight:2}),/one address or uint256 argument/);
 });
+
+
+test('typed bytes32 owner result retains its ABI and uint256 argument', async () => {
+ const source='pragma solidity ^0.8.20; interface I {function ownerOf(uint256 tokenId) external view returns(bytes32);} contract Reader {function lookup(address target,uint256 tokenId) external view returns(bytes32){return I(target).ownerOf(tokenId);} function last(address target) external view returns(bytes32){return I(target).ownerOf(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);}}';
+ const args={sources:[{path:'Reader.sol',content:source}],contractName:'Reader',evmVersion:'shanghai'};
+ const original=await compileSolidity({...args,target:'evm'});
+ const native=await compileSolidity({...args,target:'pqvm',nativeAddressContextHeight:2});
+ assert.deepEqual(native.abi,original.abi);
+ assert.equal(native.abi.find(entry=>entry.name==='lookup').outputs[0].type,'bytes32');
+ await assert.rejects(compileSolidity({...args,target:'pqvm'}),/typed call requires nativeAddressContextHeight/);
+ for (const result of ['bytes16','bytes memory']) {
+  await assert.rejects(compileSolidity({...args,sources:[{path:'Reader.sol',content:source.replaceAll('bytes32',result)}],target:'pqvm',nativeAddressContextHeight:2}),/one address or bytes32 result/);
+ }
+});

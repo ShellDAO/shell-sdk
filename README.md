@@ -1177,12 +1177,29 @@ other receiver expressions remain unsupported.
 Typed `I(target).echo(value)` calls also preserve the original selector and
 complete address when the external function takes one nonpayable `address` or
 `uint256` and
-returns one nonpayable `address`. The target must be an address variable and the
+returns one nonpayable `address` or one `bytes32`. The target must be an address variable and the
 argument an identifier or literal. View and pure declarations use STATICCALL;
 other declarations use CALL. Callee revert data propagates, and an absent or
 short return value reverts. Call options, named arguments, try/catch, contract
 variables and other ABI shapes still require further compiler support. This
 form requires the same unreleased profile and explicit activation option.
+
+For a full-width owner returned as `bytes32`, the same typed call form applies:
+
+```solidity
+interface IOwner {
+    function ownerOf(uint256 tokenId) external view returns (bytes32);
+}
+contract Reader {
+    function lookup(address target, uint256 tokenId) external view returns (bytes32) {
+        return IOwner(target).ownerOf(tokenId);
+    }
+}
+```
+
+Compile with `target: "pqvm"` and `nativeAddressContextHeight` matching the
+activated development node profile. This opt-in support is available in source;
+it does not imply that the public package or testnet has activated the profile.
 
 Other external calls, other member operations,
 payable addresses, function types and inline assembly
