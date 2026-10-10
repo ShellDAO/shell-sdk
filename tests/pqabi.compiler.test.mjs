@@ -211,3 +211,52 @@ test('typed bytes32 owner result retains its ABI and uint256 argument', async ()
   await assert.rejects(compileSolidity({...args,sources:[{path:'Reader.sol',content:source.replaceAll('bytes32',result)}],target:'pqvm',nativeAddressContextHeight:2}),/one address or bytes32 result/);
  }
 });
+
+// Independently compute limits from the integer width. Literal equivalents
+// exercise the same address lowering while providing a separate value oracle.
+function executableBytecode(artifact) {
+  const hex = artifact.deployedBytecode.slice(2);
+  const metadataBytes = Number.parseInt(hex.slice(-4), 16);
+  return hex.slice(0, -(metadataBytes + 2) * 2);
+}
+
+test('integer type limits retain every signed and unsigned width through address lowering', async () => {
+  for (const signed of [false, true]) {
+    const declarations = [];
+    const literals = [];
+    for (let width = 8; width <= 256; width += 8) {
+      const type = `${signed ? 'int' : 'uint'}${width}`;
+      const min = signed ? -(1n << BigInt(width - 1)) : 0n;
+      const max = (1n << BigInt(width - (signed ? 1 : 0))) - 1n;
+      declarations.push(`${type} public constant min${width} = type(${type}).min; ${type} public constant max${width} = type(${type}).max;`);
+      literals.push(`${type} public constant min${width} = ${min}; ${type} public constant max${width} = ${max};`);
+    }
+    // uint/int aliases also resolve to 256-bit typed metatype AST nodes.
+    const alias = signed ? 'int' : 'uint';
+    declarations.push(`${alias} public constant aliasMax = type(${alias}).max;`);
+    literals.push(`${alias} public constant aliasMax = ${(1n << BigInt(signed ? 255 : 256)) - 1n};`);
+    const compile = (body) => compileSolidity({sources:[{path:'Limits.sol',content:`pragma solidity ^0.8.20; contract Limits {address public owner; ${body.join(' ')} function echo(address value) external pure returns(address) {return value;}}`}],contractName:'Limits',target:'pqvm',evmVersion:'shanghai'});
+    const native = await compile(declarations);
+    const literal = await compile(literals);
+    assert.deepEqual(native.abi, literal.abi);
+    assert.equal(executableBytecode(native), executableBytecode(literal));
+  }
+});
+
+test('typed owner calls accept integer type limits and preserve activation and rejection boundaries', async () => {
+  const content='pragma solidity ^0.8.20; interface I {function ownerOf(uint256 tokenId) external view returns(bytes32);} contract Reader {function last(address target) external view returns(bytes32){return I(target).ownerOf(type(uint256).max);} function zero(address target) external view returns(bytes32){return I(target).ownerOf(type(uint256).min);}}';
+  const args={sources:[{path:'Reader.sol',content}],contractName:'Reader',target:'pqvm',evmVersion:'shanghai'};
+  await assert.rejects(compileSolidity(args), /typed call requires nativeAddressContextHeight/);
+  const native = await compileSolidity({...args,nativeAddressContextHeight:2});
+  const literal = await compileSolidity({...args,sources:[{path:'Reader.sol',content:content.replace('type(uint256).max', ((1n << 256n) - 1n).toString()).replace('type(uint256).min','0')}],nativeAddressContextHeight:2});
+  assert.deepEqual(native.abi,literal.abi);
+  assert.equal(executableBytecode(native),executableBytecode(literal));
+  for (const body of [
+    'struct S {uint256 max;} function read(S memory value) external pure returns(uint256) {return value.max;}',
+    'function name() external pure returns(string memory) {return type(Other).name;}',
+    'function unsafe(address target,bytes memory data) external returns(bool,bytes memory) {return target.call{gas:100000}(data);}',
+  ]) {
+    await assert.rejects(compileSolidity({sources:[{path:'Unsupported.sol',content:`pragma solidity ^0.8.20; contract Other {} contract Unsupported {address stored; ${body}}`}],contractName:'Unsupported',target:'pqvm',nativeAddressContextHeight:2}), /does not yet support|optional simple value/);
+  }
+  await assert.rejects(compileSolidity({...args,sources:[{path:'Reader.sol',content:content.replace('type(uint256).max','type(int256).min')}],nativeAddressContextHeight:2}), /compile failed|compilation failed/i);
+});
