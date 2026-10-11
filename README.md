@@ -1127,8 +1127,8 @@ and function selectors. The default target remains `evm`. Recompile contracts
 for this target; its storage layout differs from a previously deployed contract
 that packed 20-byte addresses. Do not replace bytecode in an existing account.
 
-This initial target supports address values, comparisons, arrays, mappings and
-storage, events, explicit custom-error reverts and `require(bool, CustomError(...))`
+This initial target supports address values, comparisons, arrays, mappings,
+storage and memory struct fields (including nested structs), events, explicit custom-error reverts and `require(bool, CustomError(...))`
 (with Solidity 0.8.26 or newer). Event signature topics and
 custom-error selectors retain their original `address` type signatures, with
 full-word indexed topics, event data and error arguments. Integer
