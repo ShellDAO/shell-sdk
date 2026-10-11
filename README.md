@@ -1183,7 +1183,10 @@ returns one nonpayable `address`, `bytes32` or `uint256`. The target must be an 
 argument an identifier, literal or integer `type(T).min` / `type(T).max`
 expression, such as `IOwner(target).ownerOf(type(uint256).max)`.
 View and pure declarations use STATICCALL;
-other declarations use CALL. Callee revert data propagates, and an absent or
+pure callers of pure interfaces retain their original public ABI. The backend
+uses view annotations for these calls after checking the original source's
+purity, since the native STATICCALL helper requires view. Other declarations use
+CALL. Callee revert data propagates, and an absent or
 short return value reverts. Call options, named arguments, try/catch, contract
 variables and other ABI shapes still require further compiler support. This
 form requires the same unreleased profile and explicit activation option.

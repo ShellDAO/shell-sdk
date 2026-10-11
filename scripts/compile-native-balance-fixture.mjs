@@ -6,6 +6,7 @@ import solc from 'solc';
 if (!process.argv[2]) throw new Error('usage: node scripts/compile-native-balance-fixture.mjs <output.json>');
 const source=`pragma solidity ^0.8.20;
 interface IBalance { function balanceOf(address owner) external view returns(uint256); }
+interface IPureBalance { function balanceOf(address owner) external pure returns(uint256); }
 contract Reader {
     uint256 public selections;
     function lookup(address token,address owner) external view returns(uint256) {
@@ -14,6 +15,16 @@ contract Reader {
     function record(address token,address owner) external returns(uint256) {
         selections++;
         return IBalance(token).balanceOf(owner);
+    }
+}
+contract PureReader {
+    uint256 public selections;
+    function lookup(address token,address owner) external pure returns(uint256) {
+        return IPureBalance(token).balanceOf(owner);
+    }
+    function record(address token,address owner) external returns(uint256) {
+        selections++;
+        return IPureBalance(token).balanceOf(owner);
     }
 }
 contract Token {
@@ -25,7 +36,7 @@ contract Token {
     }
 }`;
 const artifacts={};
-for (const contractName of ['Reader','Token']) {
+for (const contractName of ['Reader','PureReader','Token']) {
     artifacts[contractName]=await compileSolidity({sources:[{path:'Balance.sol',content:source}],contractName,target:'pqvm',evmVersion:'shanghai',nativeAddressContextHeight:2});
 }
 // Deliberately violate the interface's view promise to check STATICCALL rollback.

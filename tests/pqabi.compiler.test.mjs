@@ -231,6 +231,35 @@ test('typed balance calls retain numeric uint256 results and the original addres
  }
 });
 
+test('pure typed callers preserve original ABI through imported internal calls and overrides', async () => {
+ for (const result of ['address','bytes32','uint256']) {
+  const sources=[
+   {path:'Base.sol',content:`pragma solidity ^0.8.20;
+interface I {function echo(address value) external pure returns(${result});}
+abstract contract Base {
+ function read(address target,address value) internal pure returns(${result}) {return I(target).echo(value);}
+ function lookup(address target,address value) external virtual pure returns(${result});
+}`},
+   {path:'Reader.sol',content:`pragma solidity ^0.8.20; import './Base.sol';
+contract Reader is Base {
+ modifier labeled(string memory label) {_;}
+ function lookup(address target,address value) external /* pure 地址 */ pure override labeled("pure") returns(${result}) {return read(target,value);}
+ function local(address value) external pure returns(address) {return value;}
+}`},
+  ];
+  const args={sources,contractName:'Reader',evmVersion:'shanghai'};
+  const original=await compileSolidity({...args,target:'evm'});
+  const native=await compileSolidity({...args,target:'pqvm',nativeAddressContextHeight:2});
+  assert.deepEqual(native.abi,original.abi);
+  assert.equal(native.abi.find(entry=>entry.name==='lookup').stateMutability,'pure');
+  await assert.rejects(compileSolidity({...args,target:'pqvm'}),/typed call requires nativeAddressContextHeight/);
+ }
+ const source='pragma solidity ^0.8.20; interface I {function echo(address value) external view returns(uint256);} contract Reader {function lookup(address target,address value) external pure returns(uint256){return I(target).echo(value);}}';
+ await assert.rejects(compileSolidity({sources:[{path:'Reader.sol',content:source}],contractName:'Reader',target:'pqvm',nativeAddressContextHeight:2}),/Function declared as pure/);
+ const writes=source.replace('return I(target).echo(value);','stored=value; return 1;').replace('contract Reader {','contract Reader {address stored;');
+ await assert.rejects(compileSolidity({sources:[{path:'Reader.sol',content:writes}],contractName:'Reader',target:'pqvm',nativeAddressContextHeight:2}),/Function cannot be declared as pure/);
+});
+
 // Independently compute limits from the integer width. Literal equivalents
 // exercise the same address lowering while providing a separate value oracle.
 function executableBytecode(artifact) {
