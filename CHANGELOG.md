@@ -29,6 +29,11 @@
 
 ### Added
 
+- Preserve typed struct fields used as interface-call arguments in the
+  experimental PQABI compiler, including full native address arguments and
+  integer words. Original selectors and single evaluation are retained; the
+  explicit unreleased native context profile is required.
+
 - Allow typed interface calls directly through address struct fields in the
   experimental PQABI compiler. Full-word targets, original selectors and
   STATICCALL behavior are retained; receiver expressions are evaluated once.

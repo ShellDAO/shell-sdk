@@ -362,3 +362,25 @@ test('typed calls accept stored, memory and nested address struct fields with th
   }
   await assert.rejects(compileSolidity({sources:[{path:'Ledger.sol',content:original.replaceAll('address owner','address payable owner')}],contractName:'Ledger',target:'pqvm',nativeAddressContextHeight:2}),/address variable or typed struct field/);
 });
+
+
+test('typed calls retain struct field arguments and their original ABI', async () => {
+  const original='pragma solidity ^0.8.35; interface I {function balanceOf(address beneficiary) external view returns(uint256);} contract Ledger {struct Entry {address token; address beneficiary;} mapping(uint256=>Entry) private entries; function set(uint256 id,address token,address beneficiary) external {entries[id]=Entry(token,beneficiary);} function lookup(uint256 id) external view returns(uint256) {return I(entries[id].token).balanceOf(entries[id].beneficiary);} }';
+  const sources=[original,
+    original.replace('return I(entries[id].token)', 'Entry memory entry=entries[id]; return I(entry.token)').replace('.balanceOf(entries[id].beneficiary)', '.balanceOf(entry.beneficiary)'),
+    original.replace('mapping(uint256=>Entry)', 'struct Book {Entry entry;} mapping(uint256=>Book)').replace('entries[id]=Entry(token,beneficiary)', 'entries[id]=Book(Entry(token,beneficiary))').replaceAll('entries[id].','entries[id].entry.'),
+    original.replace('function lookup(uint256 id) external view', 'uint256 public selections; function select(uint256 id) internal returns(uint256) {selections++; return id;} function lookup(uint256 id) external').replace('.balanceOf(entries[id].beneficiary)', '.balanceOf(entries[select(id)].beneficiary)'),
+  ];
+  for(const content of sources) {
+    const args={sources:[{path:'Ledger.sol',content}],contractName:'Ledger',evmVersion:'shanghai'};
+    const original=await compileSolidity({...args,target:'evm'});
+    const native=await compileSolidity({...args,target:'pqvm',nativeAddressContextHeight:2});
+    assert.deepEqual(native.abi,original.abi);
+    await assert.rejects(compileSolidity({...args,target:'pqvm'}),/typed call requires nativeAddressContextHeight/);
+  }
+  for(const field of ['uint256','uint96']) {
+    const content=original.replace('function balanceOf(address beneficiary)','function balanceOf(uint256 beneficiary)').replaceAll('address beneficiary',`${field} beneficiary`);
+    const args={sources:[{path:'Ledger.sol',content}],contractName:'Ledger',evmVersion:'shanghai'};
+    assert.deepEqual((await compileSolidity({...args,target:'pqvm',nativeAddressContextHeight:2})).abi,(await compileSolidity({...args,target:'evm'})).abi);
+  }
+});

@@ -1182,8 +1182,10 @@ complete address when the external function takes one nonpayable `address` or
 returns one nonpayable `address`, `bytes32` or `uint256`. The target can be an address variable or a typed address field of a storage
 or memory struct, including nested fields such as `I(entries[id].owner)`.
 The receiver expression is evaluated once, including any mapping index function. The
-argument an identifier, literal or integer `type(T).min` / `type(T).max`
-expression, such as `IOwner(target).ownerOf(type(uint256).max)`.
+argument can be an identifier, literal, typed struct field, or integer `type(T).min` / `type(T).max`
+expression, such as `IOwner(target).ownerOf(type(uint256).max)` or
+`IBalance(entries[id].token).balanceOf(entries[id].beneficiary)`. Struct field
+arguments are evaluated once and retain the complete native address or integer word.
 View and pure declarations use STATICCALL;
 pure callers of pure interfaces retain their original public ABI. The backend
 uses view annotations for these calls after checking the original source's
