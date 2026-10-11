@@ -27,6 +27,28 @@ contract PureReader {
         return IPureBalance(token).balanceOf(owner);
     }
 }
+interface IPureAddress { function balanceOf(address owner) external pure returns(address); }
+contract PureAddressReader {
+    uint256 public selections;
+    function lookup(address token,address owner) external pure returns(address) {
+        return IPureAddress(token).balanceOf(owner);
+    }
+    function record(address token,address owner) external returns(address) {
+        selections++;
+        return IPureAddress(token).balanceOf(owner);
+    }
+}
+interface IPureBytes { function balanceOf(address owner) external pure returns(bytes32); }
+contract PureBytesReader {
+    uint256 public selections;
+    function lookup(address token,address owner) external pure returns(bytes32) {
+        return IPureBytes(token).balanceOf(owner);
+    }
+    function record(address token,address owner) external returns(bytes32) {
+        selections++;
+        return IPureBytes(token).balanceOf(owner);
+    }
+}
 contract Token {
     mapping(address => uint256) private balances;
     error Missing(address owner);
@@ -36,7 +58,7 @@ contract Token {
     }
 }`;
 const artifacts={};
-for (const contractName of ['Reader','PureReader','Token']) {
+for (const contractName of ['Reader','PureReader','PureAddressReader','PureBytesReader','Token']) {
     artifacts[contractName]=await compileSolidity({sources:[{path:'Balance.sol',content:source}],contractName,target:'pqvm',evmVersion:'shanghai',nativeAddressContextHeight:2});
 }
 // Deliberately violate the interface's view promise to check STATICCALL rollback.
