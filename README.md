@@ -1179,7 +1179,9 @@ other receiver expressions remain unsupported.
 Typed `I(target).echo(value)` calls also preserve the original selector and
 complete address when the external function takes one nonpayable `address` or
 `uint256` and
-returns one nonpayable `address`, `bytes32` or `uint256`. The target must be an address variable and the
+returns one nonpayable `address`, `bytes32` or `uint256`. The target can be an address variable or a typed address field of a storage
+or memory struct, including nested fields such as `I(entries[id].owner)`.
+The receiver expression is evaluated once, including any mapping index function. The
 argument an identifier, literal or integer `type(T).min` / `type(T).max`
 expression, such as `IOwner(target).ownerOf(type(uint256).max)`.
 View and pure declarations use STATICCALL;

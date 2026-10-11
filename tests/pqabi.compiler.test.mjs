@@ -342,3 +342,23 @@ test('struct fields named max retain field access rather than integer metatype l
   const options={sources:[{path:'Fields.sol',content}],contractName:'Fields'};
   assert.deepEqual((await compileSolidity({...options,target:'pqvm'})).abi,(await compileSolidity(options)).abi);
 });
+
+
+test('typed calls accept stored, memory and nested address struct fields with the original ABI', async () => {
+  const original='pragma solidity ^0.8.35; interface I {function ownerOf(uint256 id) external view returns(bytes32);} contract Ledger { struct Entry {address owner;} mapping(uint256=>Entry) private entries; function set(uint256 id,address owner) external {entries[id].owner=owner;} function lookup(uint256 id) external view returns(bytes32) {return I(entries[id].owner).ownerOf(type(uint256).max);} }';
+  const sources=[original,
+    original.replace('return I(entries[id].owner)', 'Entry memory entry=entries[id]; return I(entry.owner)'),
+    original.replace('mapping(uint256=>Entry)', 'struct Book {Entry entry;} mapping(uint256=>Book)').replaceAll('entries[id].owner','entries[id].entry.owner'),
+    original.replace('function lookup(uint256 id) external view', 'uint256 public selections; function select(uint256 id) internal returns(uint256) {selections++; return id;} function lookup(uint256 id) external').replace('I(entries[id].owner)', 'I(entries[select(id)].owner)'),
+  ];
+  for(const source of sources) {
+    for(const result of ['bytes32','address','uint256']) {
+      const args={sources:[{path:'Ledger.sol',content:source.replaceAll('returns(bytes32)',`returns(${result})`)}],contractName:'Ledger',evmVersion:'shanghai'};
+      const evm=await compileSolidity({...args,target:'evm'});
+      const pqvm=await compileSolidity({...args,target:'pqvm',nativeAddressContextHeight:2});
+      assert.deepEqual(pqvm.abi,evm.abi);
+      await assert.rejects(compileSolidity({...args,target:'pqvm'}),/typed call requires nativeAddressContextHeight/);
+    }
+  }
+  await assert.rejects(compileSolidity({sources:[{path:'Ledger.sol',content:original.replaceAll('address owner','address payable owner')}],contractName:'Ledger',target:'pqvm',nativeAddressContextHeight:2}),/address variable or typed struct field/);
+});
