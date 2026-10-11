@@ -29,6 +29,11 @@
 
 ### Added
 
+- Allow typed interface calls directly through address struct fields in the
+  experimental PQABI compiler. Full-word targets, original selectors and
+  STATICCALL behavior are retained; receiver expressions are evaluated once.
+  This requires the explicit unreleased native context profile.
+
 - Support typed storage and memory struct fields in the experimental PQABI
   compiler, including nested structures and fields named `max`. Original ABI
   types and selectors are retained. Full-word addresses use the target's

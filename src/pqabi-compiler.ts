@@ -253,11 +253,11 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
             && (parameter.typeName as AstNode)?.stateMutability !== "payable";
           if (!definition || parameters?.length !== 1 || returns?.length !== 1
             || !(addressParameter(parameters[0]) || ["uint", "uint256"].includes(String((parameters[0].typeName as AstNode)?.name))) || !(addressParameter(returns[0]) || ["bytes32", "uint", "uint256"].includes(String((returns[0].typeName as AstNode)?.name)))
-            || (target.arguments as AstNode[])?.length !== 1 || receiver?.nodeType !== "Identifier"
+            || (target.arguments as AstNode[])?.length !== 1 || !(receiver?.nodeType === "Identifier" || (receiver && structMember(receiver)))
             || receiver.typeDescriptions?.typeString !== "address" || (node.arguments as AstNode[])?.length !== 1
             || (!["Identifier", "Literal"].includes(argument?.nodeType ?? "") && !integerLimit(argument))
             || (node.names as unknown[])?.length || node.tryCall) {
-            throw new Error("PQABI typed calls currently require an interface cast of an address variable, one address or uint256 argument and one address, bytes32 or uint256 result");
+            throw new Error("PQABI typed calls currently require an interface cast of an address variable or typed struct field, one address or uint256 argument and one address, bytes32 or uint256 result");
           }
           if (nativeHeight === undefined) throw new Error("PQABI typed call requires nativeAddressContextHeight matching an activated node profile");
           const selector = definition.functionSelector;
