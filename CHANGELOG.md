@@ -29,6 +29,11 @@
 
 ### Added
 
+- Support typed storage and memory struct fields in the experimental PQABI
+  compiler, including nested structures and fields named `max`. Original ABI
+  types and selectors are retained. Full-word addresses use the target's
+  expanded storage layout; recompilation is required.
+
 - Preserve original event signature topics and custom-error selectors in the
   experimental PQABI compiler target. Named and anonymous events retain full
   address topics/data; explicit custom-error reverts encode all 32 address

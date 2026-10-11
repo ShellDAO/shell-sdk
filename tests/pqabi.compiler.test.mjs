@@ -300,11 +300,45 @@ test('typed owner calls accept integer type limits and preserve activation and r
   assert.deepEqual(native.abi,literal.abi);
   assert.equal(executableBytecode(native),executableBytecode(literal));
   for (const body of [
-    'struct S {uint256 max;} function read(S memory value) external pure returns(uint256) {return value.max;}',
     'function name() external pure returns(string memory) {return type(Other).name;}',
     'function unsafe(address target,bytes memory data) external returns(bool,bytes memory) {return target.call{gas:100000}(data);}',
   ]) {
     await assert.rejects(compileSolidity({sources:[{path:'Unsupported.sol',content:`pragma solidity ^0.8.20; contract Other {} contract Unsupported {address stored; ${body}}`}],contractName:'Unsupported',target:'pqvm',nativeAddressContextHeight:2}), /does not yet support|optional simple value/);
   }
   await assert.rejects(compileSolidity({...args,sources:[{path:'Reader.sol',content:content.replace('type(uint256).max','type(int256).min')}],nativeAddressContextHeight:2}), /compile failed|compilation failed/i);
+});
+
+
+test('PQABI lowers typed storage and memory struct fields while retaining the original ABI', async () => {
+  const content = `pragma solidity ^0.8.20;
+  contract Ledger {
+    struct Entry {address owner; uint96 amount;}
+    struct Book {Entry entry; address backup;}
+    mapping(uint256 => Book) private entries;
+    function set(uint256 id,address owner,uint96 amount,address backup) external {
+      entries[id] = Book(Entry(owner,amount),backup);
+    }
+    function update(uint256 id,address owner,uint96 amount) external {
+      Entry storage entry=entries[id].entry; entry.owner=owner; entry.amount=amount;
+    }
+    function get(uint256 id) external view returns(address,uint96,address) {
+      Book memory book=entries[id]; return(book.entry.owner,book.entry.amount,book.backup);
+    }
+  }`;
+  const options={sources:[{path:'Ledger.sol',content}],contractName:'Ledger',evmVersion:'shanghai'};
+  const original=await compileSolidity(options);
+  const native=await compileSolidity({...options,target:'pqvm'});
+  assert.deepEqual(native.abi,original.abi);
+  const compiled=JSON.parse(solc.compile(JSON.stringify({language:'Solidity',sources:{'Ledger.sol':{content}},settings:{outputSelection:{'*':{'*':['evm.methodIdentifiers']}}}})));
+  for(const selector of Object.values(compiled.contracts['Ledger.sol'].Ledger.evm.methodIdentifiers)) {
+    assert.ok(native.deployedBytecode.includes(selector));
+  }
+  assert.notEqual(native.deployedBytecode,original.deployedBytecode);
+});
+
+
+test('struct fields named max retain field access rather than integer metatype lowering', async () => {
+  const content='pragma solidity ^0.8.20; contract Fields {address stored; struct S {uint256 max;} function read(S memory value) external pure returns(uint256) {return value.max;}}';
+  const options={sources:[{path:'Fields.sol',content}],contractName:'Fields'};
+  assert.deepEqual((await compileSolidity({...options,target:'pqvm'})).abi,(await compileSolidity(options)).abi);
 });

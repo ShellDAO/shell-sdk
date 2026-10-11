@@ -210,6 +210,19 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
   }
   if (!hasAddress) return compile(input);
 
+  const structMembers = new Set<number>();
+  for (const source of Object.values(original.sources) as AstSource[]) {
+    visit(source.ast, (node) => {
+      if (node.nodeType === "StructDefinition") {
+        for (const member of node.members as AstNode[]) structMembers.add(member.id!);
+      }
+    });
+  }
+  const structMember = (node: AstNode): boolean => node.nodeType === "MemberAccess"
+    && typeof node.referencedDeclaration === "number"
+    && structMembers.has(node.referencedDeclaration)
+    && (node.expression as AstNode)?.typeDescriptions?.typeIdentifier?.startsWith("t_struct$_") === true;
+
   const externalFunctions = new Map<number, AstNode>();
   for (const source of Object.values(original.sources) as AstSource[]) {
     visit(source.ast, (node) => {
@@ -350,7 +363,7 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
         || (node.nodeType === "ElementaryTypeName" && node.name === "address"
           && node.stateMutability === "payable")
         || (node.nodeType === "Identifier" && ["this", "super"].includes(node.name ?? ""))
-        || (node.nodeType === "MemberAccess" && !integerLimit(node)
+        || (node.nodeType === "MemberAccess" && !integerLimit(node) && !structMember(node)
           && !["length", "push", "pop"].includes(node.memberName ?? ""))) {
         throw new Error(`PQABI target does not yet support ${node.nodeType}${node.memberName ? ` .${node.memberName}` : ""} in ${path}; native context/calls require further compiler support`);
       }
