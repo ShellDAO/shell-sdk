@@ -4,6 +4,12 @@
 
 ### Compatibility and validation
 
+- Extend the canonical overload RPC regression through real ML-DSA mined writes,
+  rollback, fee/nonce and history checks, P2P follower import, and RocksDB crash
+  recovery with continued execution. Verified against shell-chain source
+  `3b20ea9efd9a52aa24149d97a195b8cc673dea8c` using isolated one-second dev nodes;
+  public package and native CREATE acceptance remain separate.
+
 - Add optional outer `gas_limit` and measured response fields for contract-paymaster
   simulation. Verified real HTTP calls and RocksDB restart against shell-chain
   source `6f257d53281ffc4eae14a7edae4252383ebd4b17`; the older published

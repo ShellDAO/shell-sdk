@@ -665,22 +665,109 @@ test('read and write helpers share explicit original overload selection', async 
 });
 
 
-test('canonical overload real RPC: original full ABI read and signed write admission',
-  {skip:!process.env.SHELL_NODE_BIN}, async () => {
-    const {mkdtemp,writeFile,rm}=await import('node:fs/promises');
+test('canonical overload real RPC: mined state, P2P import and crash recovery',
+  {skip:!process.env.SHELL_NODE_BIN, timeout:120000}, async () => {
+    const {mkdtemp,mkdir,writeFile,readFile,rm}=await import('node:fs/promises');
     const {openSync,closeSync}=await import('node:fs');
     const {tmpdir}=await import('node:os');
     const {join}=await import('node:path');
     const {spawn,spawnSync}=await import('node:child_process');
-    const {createServer,createConnection}=await import('node:net');
+    const {createServer}=await import('node:net');
     const {once}=await import('node:events');
+    const {randomBytes}=await import('node:crypto');
     const {MlDsa65Adapter}=await import('../dist/adapters.js');
     const {ShellSigner}=await import('../dist/signer.js');
     const binary=process.env.SHELL_NODE_BIN;
     const directory=await mkdtemp(join(tmpdir(),'shell-sdk-overload-'));
     const signer=new ShellSigner('MlDsa65',MlDsa65Adapter.generate());
-    const contract='0x'+'99'.repeat(32);
-    let child,exit,log,passed=false;
+    const contract='0x'+'99'.repeat(32), zero='0x'+'00'.repeat(32);
+    const second='0x'+'56'.repeat(12)+'12'.repeat(20);
+    const initialBalance=10000000000000000000n, maxFee=1000000000n;
+    const password=randomBytes(24).toString('hex');
+    const nodes={},receipts=[],history=[];
+    let passed=false, balance=initialBalance;
+    async function until(check, label, timeout=15000) {
+      const deadline=Date.now()+timeout;
+      while(Date.now()<deadline) {
+        for(const node of Object.values(nodes)) {
+          assert.equal(node.child.exitCode,null,`${node.name} exited during ${label}`);
+          assert.equal(node.child.signalCode,null,`${node.name} signalled during ${label}`);
+        }
+        if(await check())return;
+        await new Promise(resolve=>setTimeout(resolve,50));
+      }
+      assert.fail(`${label} timeout`);
+    }
+    async function port() {
+      const server=createServer();server.listen(0,'127.0.0.1');await once(server,'listening');
+      const result=server.address().port;await new Promise(resolve=>server.close(resolve));return result;
+    }
+    async function stop(name, signal='SIGTERM') {
+      const node=nodes[name];if(!node)return;
+      if(node.child.exitCode===null && node.child.signalCode===null)node.child.kill(signal);
+      const timer=setTimeout(()=>node.child.kill('SIGKILL'),5000);timer.unref();
+      try {await node.exit;} finally {clearTimeout(timer);closeSync(node.log);delete nodes[name];}
+    }
+    async function start(name, bootnode) {
+      const rpcPort=await port(),p2pPort=await port(),data=join(directory,name);
+      const logPath=join(directory,`${name}.log`),log=openSync(logPath,'a');
+      const args=['--log-level','info','--datadir',data,'run','--network','dev','--chain-id','1337',
+        '--block-time','1000','--max-idle-interval','0','--db','rocksdb','--consensus-engine','wpoa',
+        '--storage-profile','archive','--rpc-addr',`127.0.0.1:${rpcPort}`,
+        '--rpc-api','eth,net,web3,shell,debug','--config',join(directory,'config.toml'),
+        '--p2p','--p2p-addr',`127.0.0.1:${p2pPort}`];
+      if(name==='validator')args.push('--keystore',join(directory,'validator.json'),'--password-stdin','--node-role','validator');
+      else args.push('--node-role','prover');
+      if(bootnode)args.push('--bootnode',bootnode);
+      const child=spawn(binary,args,{stdio:['pipe',log,log]});
+      child.stdin.end(name==='validator'?password+'\n':'');
+      const node={name,child,exit:once(child,'exit'),log,logPath,
+        provider:createShellProvider({rpcHttpUrl:`http://127.0.0.1:${rpcPort}`})};
+      nodes[name]=node;
+      await until(async()=>{
+        try {return await node.provider.client.request({method:'eth_chainId',params:[]})==='0x539';}
+        catch {return false;}
+      },`${name} RPC startup`);
+      await until(async()=>{
+        const text=await readFile(logPath,'utf8');
+        node.bootnode=text.match(new RegExp(`/ip4/127\\.0\\.0\\.1/tcp/${p2pPort}/p2p/[A-Za-z0-9]+`))?.[0];
+        return Boolean(node.bootnode);
+      },`${name} transport identity`);
+      return node;
+    }
+    const rpc=(name,method,params=[])=>nodes[name].provider.client.request({method,params});
+    async function state(name) {
+      const tag='latest';
+      const words=[];
+      for(const slot of [0,1,2])words.push(await rpc(name,'eth_getStorageAt',[contract,'0x'+slot.toString(16),tag]));
+      return {words,nonce:BigInt(await rpc(name,'eth_getTransactionCount',[signer.getAddress(),tag])),
+        balance:BigInt(await rpc(name,'eth_getBalance',[signer.getAddress(),tag]))};
+    }
+    const word=value=>'0x'+BigInt(value).toString(16).padStart(64,'0');
+    async function wordsAt(name,tag) {
+      const words=[];
+      for(const functionName of ['owner()','amount()','writes()']) {
+        const value=await readContract({provider:nodes[name].provider,address:contract,
+          abi:artifact.abi,functionName,blockTag:tag});
+        words.push(typeof value==='bigint'?word(value):value);
+      }
+      return words;
+    }
+    let artifact;
+    async function synchronized(receipt,expected,checkLatest=true) {
+      await until(async()=>Boolean(await rpc('follower','eth_getTransactionReceipt',[receipt.transactionHash])), 'follower receipt',30000);
+      assert.deepEqual(await rpc('follower','eth_getTransactionReceipt',[receipt.transactionHash]),receipt);
+      const blocks=[];
+      for(const name of ['validator','follower']) {
+        const block=await rpc(name,'eth_getBlockByNumber',[receipt.blockNumber,false]);
+        assert.equal(block.hash,receipt.blockHash);
+        assert.deepEqual(await wordsAt(name,receipt.blockNumber),expected.words);
+        if(checkLatest)assert.deepEqual(await state(name),expected);
+        blocks.push(block);
+      }
+      assert.equal(blocks[0].stateRoot,blocks[1].stateRoot);
+      assert.equal(blocks[0].hash,blocks[1].hash);
+    }
     try {
       const content=`pragma solidity ^0.8.35;
 contract StatefulOverloads {
@@ -693,62 +780,106 @@ contract StatefulOverloads {
  function set(uint256 v) external returns(uint256) {amount=value(v);writes++;return amount;}
 }
 `;
-      const artifact=await compileSolidity({sources:[{path:'StatefulOverloads.sol',content}],
+      artifact=await compileSolidity({sources:[{path:'StatefulOverloads.sol',content}],
         contractName:'StatefulOverloads',target:'pqvm',evmVersion:'shanghai'});
-      const genesis={chain_id:1337,timestamp:0,network_type:'Dev',fee_accounting_activation_height:0,
-        consensus:{engine:'poa',authorities:[signer.getAddress()],authority_pubkeys:[Buffer.from(signer.getPublicKey()).toString('hex')],block_time_secs:600},
+      const key=spawnSync(binary,['--password-stdin','key','generate','--algorithm','mldsa65',
+        '--output',join(directory,'validator.json')],{input:password+'\n',encoding:'utf8',timeout:30000});
+      assert.equal(key.status,0,key.stderr||key.stdout);
+      const authority=JSON.parse(await readFile(join(directory,'validator.json'),'utf8'));
+      const genesis={chain_id:1337,timestamp:Math.floor(Date.now()/1000),network_type:'Dev',fee_accounting_activation_height:0,
+        consensus:{engine:'wpoa',authorities:[authority.address],authority_pubkeys:[authority.public_key],
+          weights:[1],block_time_secs:1,max_future_secs:60,epoch_length:0},
         alloc:{[signer.getAddress()]:{balance:'0x8ac7230489e80000'},
           [contract]:{balance:'0x0',code:artifact.deployedBytecode.slice(2)}}};
       const genesisPath=join(directory,'input-genesis.json');
       await writeFile(genesisPath,JSON.stringify(genesis));
-      const init=spawnSync(binary,['--datadir',directory,'init','--genesis',genesisPath,'--network','dev','--chain-id','1337'],{encoding:'utf8',timeout:30000});
-      assert.equal(init.status,0,init.stderr||init.stdout);
-      const listener=createServer();listener.listen(0,'127.0.0.1');await once(listener,'listening');
-      const port=listener.address().port;await new Promise(resolve=>listener.close(resolve));
-      const config=join(directory,'observer.toml');await writeFile(config,'[metrics]\nenabled = false\n');
-      log=openSync(join(directory,'cli.log'),'w');
-      child=spawn(binary,['--datadir',directory,'run','--network','dev','--chain-id','1337',
-        '--block-time','600000','--db','rocksdb','--consensus-engine','poa',
-        '--storage-profile','archive','--rpc-addr',`127.0.0.1:${port}`,'--config',config],{stdio:['ignore',log,log]});
-      exit=once(child,'exit');
-      const deadline=Date.now()+15000;
-      while(true) {
-        const ready=await new Promise(resolve=>{const socket=createConnection({host:'127.0.0.1',port});
-          socket.once('connect',()=>{socket.destroy();resolve(true);});socket.once('error',()=>{socket.destroy();resolve(false);});});
-        if(ready)break;
-        assert.equal(child.exitCode,null,'node exited during startup');assert.ok(Date.now()<deadline,'node RPC startup timeout');
-        await new Promise(resolve=>setTimeout(resolve,50));
+      await writeFile(join(directory,'config.toml'),'[metrics]\nenabled = false\n');
+      for(const name of ['validator','follower']) {
+        const data=join(directory,name);await mkdir(data);
+        const init=spawnSync(binary,['--datadir',data,'init','--genesis',genesisPath,'--network','dev','--chain-id','1337'],{encoding:'utf8',timeout:30000});
+        assert.equal(init.status,0,init.stderr||init.stdout);
       }
-      const provider=createShellProvider({rpcHttpUrl:`http://127.0.0.1:${port}`});
-      assert.equal(await provider.client.request({method:'eth_chainId',params:[]}), '0x539');
+      const validator=await start('validator');
       const abi=artifact.abi,original=structuredClone(abi);
       for(const [functionName,argument,selector,expected] of OVERLOAD_CASES) {
-        assert.equal(await readContract({provider,address:contract,abi,functionName,args:[argument]}),expected);
-        const encoded=encodeFunctionData({abi,functionName,args:[argument]});
-        assert.equal(encoded,selector+OVERLOAD_WORD.slice(2));
+        assert.equal(await readContract({provider:validator.provider,address:contract,abi,functionName,args:[argument]}),expected);
+        assert.equal(encodeFunctionData({abi,functionName,args:[argument]}),selector+OVERLOAD_WORD.slice(2));
       }
-      for(const slot of [0,1,2]) {
-        assert.equal(await provider.client.request({method:'eth_getStorageAt',params:[contract,'0x'+slot.toString(16),'latest']}),'0x'+'00'.repeat(32));
+      assert.deepEqual((await state('validator')).words,[zero,zero,zero]);
+      await start('follower',validator.bootnode);
+      await until(async()=>Number(await rpc('follower','net_peerCount'))>=1,'follower peer');
+      // Independent expectations from the original Solidity state transitions.
+      const steps=[
+        ['set(address)',OVERLOAD_WORD,true,[OVERLOAD_WORD,zero,word(1)]],
+        ['set(uint256)',OVERLOAD_AMOUNT,true,[OVERLOAD_WORD,word(OVERLOAD_AMOUNT+1n),word(2)]],
+        ['set(address)',second,true,[second,word(OVERLOAD_AMOUNT+1n),word(3)]],
+        ['set(address)',zero,false,[second,word(OVERLOAD_AMOUNT+1n),word(3)]],
+        ['set(uint256)',(1n<<256n)-1n,false,[second,word(OVERLOAD_AMOUNT+1n),word(3)]],
+        ['truncated',OVERLOAD_WORD,false,[second,word(OVERLOAD_AMOUNT+1n),word(3)]],
+        ['set(uint256)',0n,true,[second,word(1),word(4)]],
+      ];
+      async function execute(step,nonce,checkFollower=true) {
+        const [functionName,argument,success,words]=step;
+        let hash;
+        if(functionName==='truncated') {
+          const tx=buildContractCallTransaction({address:contract,abi,functionName:'set(address)',args:[argument],
+            chainId:1337,nonce,gasLimit:500000,maxFeePerGas:Number(maxFee),maxPriorityFeePerGas:0});
+          tx.data=tx.data.slice(0,-2);
+          hash=await validator.provider.sendTransaction(await signer.buildSignedTransaction({tx,includePublicKey:true}));
+        } else {
+          ({hash}=await writeContract({provider:nodes.validator.provider,signer,chainId:1337,nonce,address:contract,
+            abi,functionName,args:[argument],includePublicKey:true,wait:false,gasLimit:500000,
+            maxFeePerGas:Number(maxFee),maxPriorityFeePerGas:0}));
+        }
+        const receipt=await waitForTransactionReceipt({provider:nodes.validator.provider,hash,timeoutMs:30000,pollIntervalMs:100});
+        assert.equal(receipt.status,success?'0x1':'0x0');
+        assert.equal(receipt.from,signer.getAddress());assert.equal(receipt.to,contract);
+        const block=await rpc('validator','eth_getBlockByNumber',[receipt.blockNumber,false]);
+        assert.equal(block.hash,receipt.blockHash);assert.ok(block.transactions.includes(hash));
+        const baseFee=BigInt(block.baseFeePerGas),price=baseFee<maxFee?baseFee:maxFee;
+        assert.equal(BigInt(receipt.effectiveGasPrice),price);
+        balance-=BigInt(receipt.gasUsed)*price;
+        const expected={words,nonce:BigInt(nonce+1),balance};
+        assert.deepEqual(await state('validator'),expected);
+        await assert.rejects(rpc('validator','eth_getStorageAt',[contract,'0x0',receipt.blockNumber]),
+          /historical state queries are not supported/);
+        if(checkFollower)await synchronized(receipt,expected);
+        receipts.push(receipt);history.push(expected);
       }
-      // Real root signatures and RPC admission; no receipt or mined-state claim here.
-      for(const [nonce,[functionName,argument]] of OVERLOAD_CASES.entries()) {
-        const result=await writeContract({provider,signer,chainId:1337,nonce,address:contract,
-          abi,functionName,args:[argument],includePublicKey:true,wait:false,gasLimit:500000,
-          maxFeePerGas:1000000000,maxPriorityFeePerGas:0});
-        assert.match(result.hash,/^0x[0-9a-f]{64}$/);
+      for(const [nonce,step] of steps.entries())await execute(step,nonce);
+      for(const name of ['validator','follower']) {
+        const before=await state(name);
+        for(let i=receipts.length-1;i>=0;i--)assert.deepEqual(await wordsAt(name,receipts[i].blockNumber),history[i].words);
+        assert.deepEqual(await state(name),before);
       }
-      assert.equal(await provider.client.request({method:'eth_getTransactionCount',params:[signer.getAddress(),'pending']}),'0x2');
-      assert.deepEqual(abi,original);passed=true;
+      // SIGKILL bypasses normal shutdown: reopen the same WAL-backed databases.
+      await stop('follower','SIGKILL');
+      await execute(['set(address)',OVERLOAD_WORD,true,[OVERLOAD_WORD,word(1),word(5)]],steps.length,false);
+      await until(async()=>{
+        const finalized=await rpc('validator','eth_getBlockByNumber',['finalized',false]);
+        return finalized && BigInt(finalized.number)>=BigInt(receipts.at(-1).blockNumber);
+      },'offline write finality');
+      await stop('validator','SIGKILL');
+      const resumed=await start('validator');await start('follower',resumed.bootnode);
+      for(let i=0;i<receipts.length;i++)await synchronized(receipts[i],history[i],false);
+      assert.deepEqual(await state('validator'),history.at(-1));
+      await execute(['set(uint256)',23n,true,[OVERLOAD_WORD,word(24),word(6)]],steps.length+1);
+      await until(async()=>{
+        for(const name of ['validator','follower']) {
+          const finalized=await rpc(name,'eth_getBlockByNumber',['finalized',false]);
+          if(!finalized || BigInt(finalized.number)<BigInt(receipts.at(-1).blockNumber))return false;
+        }
+        return true;
+      },'continued write finality');
+      assert.deepEqual(abi,original);
+      console.log('canonical overload live acceptance',JSON.stringify({chainId:1337,algorithm:'ML-DSA-65',
+        receipts,history,crashRecovery:true,offlineFollowerCatchup:true,continuedWrite:true,finalized:true},(_,value)=>typeof value==='bigint'?value.toString():value));
+      passed=true;
     } catch(error) {
       throw new Error(`overload RPC regression failed; retained ${directory}`,{cause:error});
     } finally {
       signer.dispose();
-      if(child) {
-        if(child.exitCode===null && child.signalCode===null)child.kill('SIGTERM');
-        const timer=setTimeout(()=>{if(child.exitCode===null && child.signalCode===null)child.kill('SIGKILL');},5000);timer.unref();
-        try {await exit;} finally {clearTimeout(timer);}
-      }
-      if(log!==undefined)closeSync(log);
+      try {await stop('follower');} finally {await stop('validator');}
       if(passed)await rm(directory,{recursive:true});
     }
   });
