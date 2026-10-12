@@ -670,7 +670,7 @@ test('read and write helpers share explicit original overload selection', async 
 const derivedLiveCases=JSON.parse(readFileSync(new URL('./fixtures/native-derived-overloads.json',import.meta.url),'utf8'));
 for(const variant of [{kind:'canonical',array:false},...derivedLiveCases]) {
  for(const algorithm of ['MlDsa65','Dilithium3']) {
-  for(const entry of ['ordinary','AA']) {
+  for(const entry of ['ordinary','AA','CLI']) {
  test(`canonical overload real RPC: ${variant.kind}/${algorithm}/${entry} mined state, P2P import and crash recovery`,
   {skip:!process.env.SHELL_NODE_BIN, timeout:120000}, async () => {
     const {mkdtemp,mkdir,writeFile,readFile,rm}=await import('node:fs/promises');
@@ -685,13 +685,19 @@ for(const variant of [{kind:'canonical',array:false},...derivedLiveCases]) {
     const {ShellSigner}=await import('../dist/signer.js');
     const binary=process.env.SHELL_NODE_BIN;
     const directory=await mkdtemp(join(tmpdir(),`shell-sdk-overload-${variant.kind}-${algorithm}-${entry}-`));
-    const signer=new ShellSigner(algorithm,generateAdapter(algorithm));
+    let signer=new ShellSigner(algorithm,generateAdapter(algorithm));
     const contract='0x'+'99'.repeat(32), zero='0x'+'00'.repeat(32);
     const second='0x'+'56'.repeat(12)+'12'.repeat(20);
     const initialBalance=10000000000000000000n, maxFee=1000000000n;
     const password=randomBytes(24).toString('hex');
     const nodes={},receipts=[],history=[];
     let passed=false, balance=initialBalance;
+    const artifactPath=join(directory,'Stateful.json'),signerPath=join(directory,'signer.json');
+    function cli(command,options=[]) {
+      return spawnSync(process.execPath,[new URL('../dist/cli.js',import.meta.url).pathname,'contract',command,...options],
+        {encoding:'utf8',timeout:30000,env:{...process.env,SHELL_KEYSTORE_PASSWORD:password}});
+    }
+    const jsonArgs=args=>JSON.stringify(args,(_key,value)=>typeof value==='bigint'?value.toString()+'n':value);
     async function until(check, label, timeout=15000) {
       const deadline=Date.now()+timeout;
       while(Date.now()<deadline) {
@@ -727,7 +733,7 @@ for(const variant of [{kind:'canonical',array:false},...derivedLiveCases]) {
       if(bootnode)args.push('--bootnode',bootnode);
       const child=spawn(binary,args,{stdio:['pipe',log,log]});
       child.stdin.end(name==='validator'?password+'\n':'');
-      const node={name,child,exit:once(child,'exit'),log,logPath,
+      const node={name,child,exit:once(child,'exit'),log,logPath,url:`http://127.0.0.1:${rpcPort}`,
         provider:createShellProvider({rpcHttpUrl:`http://127.0.0.1:${rpcPort}`})};
       nodes[name]=node;
       await until(async()=>{
@@ -753,7 +759,13 @@ for(const variant of [{kind:'canonical',array:false},...derivedLiveCases]) {
     async function wordsAt(name,tag) {
       const words=[];
       for(const functionName of [variant.kind==='canonical'?'owner()':'nativeOwner()',variant.kind==='canonical'?'amount()':'nativeAmount()','writes()']) {
-        const value=await readContract({provider:nodes[name].provider,address:contract,
+        let value;
+        if(entry==='CLI'&&tag==='latest') {
+          const result=cli('read',['--artifact',artifactPath,'--address',contract,'--function',functionName,
+            '--rpc',nodes[name].url]);
+          assert.equal(result.status,0,result.stderr);value=JSON.parse(result.stdout);
+          if(functionName!=='nativeOwner()'&&functionName!=='owner()')value=BigInt(value);
+        } else value=await readContract({provider:nodes[name].provider,address:contract,
           abi:artifact.abi,functionName,blockTag:tag});
         words.push(typeof value==='bigint'?word(value):value);
       }
@@ -791,6 +803,17 @@ contract StatefulOverloads {
       const originalArtifact=await compileSolidity({...options,target:'evm'});
       artifact=await compileSolidity({...options,target:'pqvm'});
       assert.deepEqual(artifact.abi,originalArtifact.abi);
+      if(entry==='CLI') {
+        const source=join(directory,'Stateful.sol');await writeFile(source,content);
+        const compiled=cli('compile',['--source',source,'--contract',options.contractName,'--out',artifactPath,'--pqvm']);
+        assert.equal(compiled.status,0,compiled.stderr);
+        artifact=JSON.parse(await readFile(artifactPath,'utf8'));assert.deepEqual(artifact.abi,originalArtifact.abi);
+        const account=spawnSync(binary,['--password-stdin','key','generate','--algorithm',algorithm==='MlDsa65'?'mldsa65':'dilithium3',
+          '--output',signerPath],{input:password+'\n',encoding:'utf8',timeout:30000});
+        assert.equal(account.status,0,account.stderr||account.stdout);
+        const {decryptKeystore}=await import('../dist/keystore.js');signer.dispose();
+        signer=await decryptKeystore(JSON.parse(await readFile(signerPath,'utf8')),password);
+      }
       const key=spawnSync(binary,['--password-stdin','key','generate','--algorithm','mldsa65',
         '--output',join(directory,'validator.json')],{input:password+'\n',encoding:'utf8',timeout:30000});
       assert.equal(key.status,0,key.stderr||key.stdout);
@@ -837,7 +860,7 @@ contract StatefulOverloads {
         ...(variant.array?[[[['set(address)',OVERLOAD_WORD],['empty',null]],false,[second,word(OVERLOAD_AMOUNT+1n),word(3)]]]:[]),
         [[['set(uint256)',0n],['set(address)',OVERLOAD_WORD]],true,[OVERLOAD_WORD,word(1),word(5)]],
       ];
-      const steps=entry==='AA'?aaSteps:ordinarySteps;
+      const steps=entry==='AA'?aaSteps:entry==='CLI'?ordinarySteps.filter(step=>step[0]!=='truncated'):ordinarySteps;
       async function execute(step,nonce,checkFollower=true) {
         const [functionName,argument]=step;
         const success=step[entry==='AA'?1:2],words=step[entry==='AA'?2:3];
@@ -874,7 +897,22 @@ contract StatefulOverloads {
           const signature=variant.array?functionName.replace('address)','address[])').replace('uint256)','uint256[])'):functionName;
           const args=[variant.array?[argument,typeof argument==='bigint'?23n:second]:argument];
           const addressSignature=variant.array?'set(address[])':'set(address)';
-          if(functionName==='truncated'||functionName==='empty') {
+          if(entry==='CLI') {
+            const cliSignature=functionName==='empty'?addressSignature:signature;
+            const cliArgs=functionName==='empty'?[[]]:args;
+            const encoded=encodeFunctionData({abi,functionName:cliSignature,args:cliArgs});
+            const result=cli('write',['--artifact',artifactPath,'--keystore',signerPath,'--address',contract,'--function',cliSignature,
+              '--args',jsonArgs(cliArgs),'--rpc',nodes.validator.url,'--chain-id','1337','--gas-limit','500000']);
+            assert.equal(result.status,success?0:1,result.stderr);
+            if(success) {
+              const output=JSON.parse(result.stdout);assert.equal(output.nonce,nonce);hash=output.hash;
+            } else {
+              assert.match(result.stderr,/contract write reverted:/);hash=result.stderr.match(/0x[0-9a-f]{64}/)?.[0];assert.ok(hash);
+            }
+            const submitted=await rpc('validator','eth_getTransactionByHash',[hash]);
+            assert.equal(submitted.input,encoded);
+            assert.deepEqual(await wordsAt('validator','latest'),words);
+          } else if(functionName==='truncated'||functionName==='empty') {
             const tx=buildContractCallTransaction({address:contract,abi,functionName:addressSignature,args:functionName==='empty'?[[]]:args,
               chainId:1337,nonce,gasLimit:500000,maxFeePerGas:Number(maxFee),maxPriorityFeePerGas:0});
             if(functionName==='truncated')tx.data=tx.data.slice(0,-2);
@@ -895,7 +933,10 @@ contract StatefulOverloads {
         assert.equal(receipt.type,entry==='AA'?'0x7e':'0x2');
         const block=await rpc('validator','eth_getBlockByNumber',[receipt.blockNumber,false]);
         assert.equal(block.hash,receipt.blockHash);assert.ok(block.transactions.includes(hash));
-        const baseFee=BigInt(block.baseFeePerGas),price=baseFee<maxFee?baseFee:maxFee;
+        const submitted=entry==='CLI'?await rpc('validator','eth_getTransactionByHash',[hash]):null;
+        const feeCap=submitted?BigInt(submitted.maxFeePerGas):maxFee;
+        const priority=submitted?BigInt(submitted.maxPriorityFeePerGas):0n;
+        const baseFee=BigInt(block.baseFeePerGas),price=baseFee+priority<feeCap?baseFee+priority:feeCap;
         assert.equal(BigInt(receipt.effectiveGasPrice),price);
         balance-=BigInt(receipt.gasUsed)*price;
         const expected={words,nonce:BigInt(nonce+1),balance};

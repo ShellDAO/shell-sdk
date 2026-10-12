@@ -88,16 +88,19 @@ function parseJsonArgs(raw: string | undefined): unknown[] {
   if (!raw) {
     return [];
   }
-  const parsed = JSON.parse(raw);
-  if (!Array.isArray(parsed)) {
-    throw new Error("--args must be a JSON array");
-  }
-  return parsed.map((value) => {
-    if (typeof value === "string" && /^\d+n$/.test(value)) {
+  const parsed: unknown = JSON.parse(raw, (_key, value: unknown) => {
+    if (typeof value === "string" && /^-?\d+n$/.test(value)) {
       return BigInt(value.slice(0, -1));
+    }
+    if (typeof value === "number" && Number.isInteger(value) && !Number.isSafeInteger(value)) {
+      throw new Error('--args contains an unsafe integer; use an n-suffixed string');
     }
     return value;
   });
+  if (!Array.isArray(parsed)) {
+    throw new Error("--args must be a JSON array");
+  }
+  return parsed;
 }
 
 async function loadSigner(options: CliOptions) {
