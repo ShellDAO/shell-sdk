@@ -4,6 +4,15 @@
 
 ### Compatibility and validation
 
+- Extend the live overload entry to root-signed AA batches for both ML-DSA-65
+  and Dilithium3 across canonical, inherited, internal, free-function and array
+  forms. Verify tampered-data/signature/algorithm rejection, later-call atomic
+  rollback, mined state and outer fees/nonces, live P2P import, historical reads,
+  offline catch-up and finalized crash recovery followed by a new batch.
+  Node source remains `e94038717a1522080ecf701edacbde21cf37b870`; genesis
+  predeployment is explicit. Native CREATE, CLI contract-write entries and
+  matching public package/profile acceptance remain separate.
+
 - Verify inherited, internal, free-function and array overloads through their
   original selectors on a real isolated memory node, including full-word
   address/MAX versus integer results, SDK ABI codecs and exact rejection data.
@@ -12,8 +21,8 @@
   rollback, fee/nonce and historical getters, independent P2P follower import,
   offline catch-up and finalized RocksDB crash recovery with continued writes.
   Checked against shell-chain source `e94038717a1522080ecf701edacbde21cf37b870`.
-  These isolated dev cases use genesis predeployment; SDK live AA, native CREATE
-  and matching public package/profile acceptance remain open.
+  These isolated dev cases use genesis predeployment; native CREATE, CLI
+  contract-write entries and matching public package/profile acceptance remain open.
 
 - Extend the canonical overload RPC regression through real ML-DSA mined writes,
   rollback, fee/nonce and history checks, P2P follower import, and RocksDB crash
