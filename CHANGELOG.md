@@ -77,6 +77,11 @@
 
 ### Fixed
 
+- Select contract overloads by their original canonical signature across encoding,
+  building, reading, writing and decoding. Preserve full 32-byte address ABI values,
+  reject truly ambiguous names and bind read results to the selected argument count.
+  This support is in the unreleased source; matching public package delivery is pending.
+
 - Allow `ShellSigner` to retain an existing account address after key rotation,
   so transfers and AA batches use the new key without changing the sender.
 

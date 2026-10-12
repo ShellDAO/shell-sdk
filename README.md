@@ -1153,6 +1153,39 @@ result alongside the integer result. Invalid or ambiguous original Solidity
 still fails its original type check. This support is in the unreleased compiler
 source; matching public package delivery remains pending.
 
+For overloaded contract calls, pass the original canonical signature in
+`functionName`, such as `"echo(address)"` or `"echo(uint256)"`. Encoding,
+transaction building, reading, writing and result decoding all select the same
+original ABI declaration. Bare names with ambiguous parameter counts reject;
+reads with a unique parameter count retain the selected declaration for decoding.
+This helper support is in the unreleased source.
+
+```typescript
+import { encodeFunctionData, decodeFunctionResult } from "shell-sdk";
+import { parseAbi } from "viem";
+
+const abi = parseAbi([
+  "function echo(address value) pure returns (address)",
+  "function echo(uint256 value) pure returns (uint256)",
+]);
+const value = `0x${"34".repeat(12)}${"12".repeat(20)}` as const;
+const data = encodeFunctionData({ abi, functionName: "echo(address)", args: [value] });
+// Decode a full-word address result using the same selected declaration.
+const decoded = decodeFunctionResult({ abi, functionName: "echo(address)", data: value });
+```
+
+The isolated helper RPC regression creates its own genesis, temporary account,
+node database and loopback port. After installing SDK dependencies, use a
+compatible node source build with RocksDB support:
+
+```bash
+npm run build
+SHELL_NODE_BIN=/path/to/shell-node node --test --test-name-pattern='canonical overload real RPC' tests/contracts.test.mjs
+```
+
+It checks actual simulated read results and signed write admission for both
+original overloads; mining and public release acceptance remain separate.
+
 Unreleased `native-address-context-v1` nodes can also compile `msg.sender`,
 `tx.origin`, `block.coinbase` and `address(this)` as full words. Set
 `nativeAddressContextHeight` to the node's immutable activation height:
