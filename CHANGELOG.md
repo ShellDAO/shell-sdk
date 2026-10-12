@@ -4,6 +4,12 @@
 
 ### Compatibility and validation
 
+- Verify inherited, internal, free-function and array overloads through their
+  original selectors on a real isolated memory node, including full-word
+  address/MAX versus integer results, SDK ABI codecs and exact rejection data.
+  Checked against shell-chain source `3b20ea9efd9a52aa24149d97a195b8cc673dea8c`;
+  stateful/persistent and public package acceptance for these forms remain open.
+
 - Extend the canonical overload RPC regression through real ML-DSA mined writes,
   rollback, fee/nonce and history checks, P2P follower import, and RocksDB crash
   recovery with continued execution. Verified against shell-chain source

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import solc from 'solc';
 import { compileSolidity } from '../dist/contracts-compiler.js';
+import { encodeFunctionData, decodeFunctionResult } from '../dist/contracts.js';
 
 const source = `// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
@@ -404,13 +405,19 @@ test('PQABI overloads keep address and uint256 declarations and original public 
   assert.deepEqual(await compileSolidity(overloadedOptions),original);
 });
 
+const derivedOverloads = [
+  {kind:'inherited',addressSelector:'fc68521a',integerSelector:'b3de648b',array:false,
+    content:'pragma solidity ^0.8.35; contract Base {function f(address value) public pure virtual returns(address){return value;}} contract Derived is Base {function f(address value) public pure override returns(address){return value;} function f(uint256 value) public pure returns(uint256){return value+1;}}'},
+  {kind:'internal',addressSelector:'666e1b39',integerSelector:'8b0d0258',array:false,
+    content:'pragma solidity ^0.8.35; contract Derived {function f(address value) internal pure returns(address){return value;} function f(uint256 value) internal pure returns(uint256){return value+1;} function owner(address value) public pure returns(address){return f(value);} function amount(uint256 value) public pure returns(uint256){return f(value);}}'},
+  {kind:'free',addressSelector:'666e1b39',integerSelector:'8b0d0258',array:false,
+    content:'pragma solidity ^0.8.35; function f(address value) pure returns(address){return value;} function f(uint256 value) pure returns(uint256){return value+1;} contract Derived {function owner(address value) public pure returns(address){return f(value);} function amount(uint256 value) public pure returns(uint256){return f(value);}}'},
+  {kind:'array',addressSelector:'290c05ea',integerSelector:'7bc5bbbf',array:true,
+    content:'pragma solidity ^0.8.35; contract Derived {function f(address[] memory values) public pure returns(address){return values[0];} function f(uint256[] memory values) public pure returns(uint256){return values[0]+1;}}'},
+];
+
 test('PQABI overloads preserve inherited overrides and nonpublic typed references', async () => {
-  for (const content of [
-    'pragma solidity ^0.8.35; contract Base {function f(address value) public pure virtual returns(address){return value;}} contract Derived is Base {function f(address value) public pure override returns(address){return value;} function f(uint256 value) public pure returns(uint256){return value+1;}}',
-    'pragma solidity ^0.8.35; contract Derived {function f(address value) internal pure returns(address){return value;} function f(uint256 value) internal pure returns(uint256){return value+1;} function owner(address value) public pure returns(address){return f(value);} function amount(uint256 value) public pure returns(uint256){return f(value);}}',
-    'pragma solidity ^0.8.35; function f(address value) pure returns(address){return value;} function f(uint256 value) pure returns(uint256){return value+1;} contract Derived {function owner(address value) public pure returns(address){return f(value);} function amount(uint256 value) public pure returns(uint256){return f(value);}}',
-    'pragma solidity ^0.8.35; contract Derived {function f(address[] memory values) public pure returns(address){return values[0];} function f(uint256[] memory values) public pure returns(uint256){return values[0]+1;}}',
-  ]) {
+  for (const {content} of derivedOverloads) {
     const options={sources:[{path:'Derived.sol',content}],contractName:'Derived',evmVersion:'shanghai'};
     const original=await compileSolidity(options);
     assert.deepEqual((await compileSolidity({...options,target:'pqvm'})).abi,original.abi);
@@ -444,3 +451,112 @@ test('PQABI overload real VM: original selectors distinguish full-word address a
     assert.equal(result.result,expected);
   }
 });
+
+
+test('PQABI derived overload real VM: inherited internal free and array dispatch',
+  {skip:!process.env.SHELL_NODE_BIN,timeout:120000}, async () => {
+    const {mkdtemp,writeFile,rm}=await import('node:fs/promises');
+    const {openSync,closeSync}=await import('node:fs');
+    const {tmpdir}=await import('node:os');
+    const {join}=await import('node:path');
+    const {spawn,spawnSync}=await import('node:child_process');
+    const {createServer}=await import('node:net');
+    const {once}=await import('node:events');
+    const {MlDsa65Adapter}=await import('../dist/adapters.js');
+    const {ShellSigner}=await import('../dist/signer.js');
+    const binary=process.env.SHELL_NODE_BIN;
+    const directory=await mkdtemp(join(tmpdir(),'shell-sdk-derived-overloads-'));
+    const signer=new ShellSigner('MlDsa65',MlDsa65Adapter.generate());
+    let child,exit,log,passed=false;
+    const results=[];
+    try {
+      const genesis={chain_id:1337,timestamp:0,network_type:'Dev',
+        consensus:{engine:'poa',authorities:[signer.getAddress()],
+          authority_pubkeys:[Buffer.from(signer.getPublicKey()).toString('hex')],block_time_secs:600}};
+      const input=join(directory,'input-genesis.json');await writeFile(input,JSON.stringify(genesis));
+      const init=spawnSync(binary,['--datadir',directory,'init','--genesis',input,'--network','dev','--chain-id','1337'],{encoding:'utf8',timeout:30000});
+      assert.equal(init.status,0,init.stderr||init.stdout);
+      const server=createServer();server.listen(0,'127.0.0.1');await once(server,'listening');
+      const port=server.address().port;await new Promise(resolve=>server.close(resolve));
+      const config=join(directory,'config.toml');await writeFile(config,'[metrics]\nenabled = false\n');
+      log=openSync(join(directory,'node.log'),'w');
+      child=spawn(binary,['--datadir',directory,'run','--network','dev','--chain-id','1337',
+        '--block-time','600000','--db','memory','--consensus-engine','poa',
+        '--rpc-addr',`127.0.0.1:${port}`,'--config',config],{stdio:['ignore',log,log]});
+      exit=once(child,'exit');
+      async function rpc(method,params) {
+        const response=await fetch(`http://127.0.0.1:${port}`,{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({jsonrpc:'2.0',id:1,method,params}),signal:AbortSignal.timeout(30000)});
+        assert.ok(response.ok);const body=await response.json();assert.equal(body.error,undefined,JSON.stringify(body));return body.result;
+      }
+      const deadline=Date.now()+15000;
+      while(true) {
+        try {if(await rpc('eth_chainId',[])==='0x539')break;} catch {}
+        assert.equal(child.exitCode,null,'node exited during startup');assert.equal(child.signalCode,null);
+        assert.ok(Date.now()<deadline,'node RPC startup timeout');await new Promise(resolve=>setTimeout(resolve,50));
+      }
+      const before=await rpc('eth_getBlockByNumber',['latest',false]);
+      const padded=value=>BigInt(value).toString(16).padStart(64,'0');
+      for(const variant of derivedOverloads) {
+        const options={sources:[{path:'Derived.sol',content:variant.content}],contractName:'Derived',evmVersion:'shanghai'};
+        const original=await compileSolidity(options);
+        for(const target of ['evm','pqvm']) {
+          const artifact=target==='evm'?original:await compileSolidity({...options,target});
+          assert.deepEqual(artifact.abi,original.abi);
+          const {addressSelector,integerSelector,array}=variant;
+          const signature=i=>i===3
+            ?(array?'f(uint256[])':variant.kind==='inherited'?'f(uint256)':'amount(uint256)')
+            :(array?'f(address[])':variant.kind==='inherited'?'f(address)':'owner(address)');
+          // Original ABI words and selectors are independent of the lowered compiler output.
+          const input=(selector,value)=>`mstore(0,shl(224,0x${selector})) ${array?'mstore(4,32) mstore(36,1)':''} mstore(${array?68:4},0x${padded(value)})`;
+          const length=array?100:36;
+          const calls=[[addressSelector,'0x'+first],[addressSelector,'0x'+second],
+            [addressSelector,(1n<<256n)-1n],[integerSelector,'0x'+first]];
+          const valid=calls.map(([selector,value],i)=>`${input(selector,value)} mstore(128,0)
+            mstore(${256+i*64},staticcall(gas(),child,0,${length},128,32)) mstore(${288+i*64},mload(128))`).join('\n');
+          const panic=code=>`if iszero(eq(returndatasize(),36)){revert(0,0)} returndatacopy(0,0,36)
+            if iszero(eq(shr(224,mload(0)),0x4e487b71)){revert(0,0)} if iszero(eq(mload(4),${code})){revert(0,0)}`;
+          const invalid=`${input(addressSelector,'0x'+first)} if staticcall(gas(),child,0,${length-1},0,0){revert(0,0)}
+            mstore(0,shl(224,0xffffffff)) if staticcall(gas(),child,0,${length},0,0){revert(0,0)}
+            ${input(integerSelector,(1n<<256n)-1n)} if staticcall(gas(),child,0,${length},0,0){revert(0,0)} ${panic('0x11')}
+            ${array?[addressSelector,integerSelector].map(selector=>`mstore(0,shl(224,0x${selector})) mstore(4,32) mstore(36,0)
+              if staticcall(gas(),child,0,68,0,0){revert(0,0)} ${panic('0x32')}`).join('\n'):''}`;
+          const probe=`object "Probe" {code {datacopy(0,dataoffset("child"),datasize("child"))
+            let child:=create(0,0,datasize("child")) if iszero(child){revert(0,0)} ${valid} ${invalid} return(256,256)}
+            data "child" hex"${artifact.bytecode.slice(2)}"}`;
+          const output=JSON.parse(solc.compile(JSON.stringify({language:'Yul',sources:{'Probe.yul':{content:probe}},
+            settings:{evmVersion:'shanghai',outputSelection:{'*':{'*':['evm.bytecode.object']}}}})));
+          assert.equal(output.errors?.filter(error=>error.severity==='error').length??0,0);
+          const actual=await rpc('eth_call',[{data:'0x'+output.contracts['Probe.yul'].Probe.evm.bytecode.object,gas:'0x989680'},'latest']);
+          const expected='0x'+calls.map(([,value],i)=>target==='evm'&&i<3?padded(0n)+padded(0n):padded(1n)+padded(i===3?BigInt(value)+1n:value)).join('');
+          assert.equal(actual,expected,`${variant.kind}/${target}`);
+          if(target==='pqvm') {
+            for(const [i,[selector,value]] of calls.entries()) {
+              const argument=i===3?BigInt(value):'0x'+padded(value);
+              const encoded=encodeFunctionData({abi:artifact.abi,functionName:signature(i),args:[array?[argument]:argument]});
+              assert.equal(encoded,'0x'+selector+(array?padded(32)+padded(1):'')+padded(value));
+              const data='0x'+actual.slice(2+i*128+64,2+(i+1)*128);
+              assert.equal(decodeFunctionResult({abi:artifact.abi,functionName:signature(i),data}),
+                i===3?BigInt(value)+1n:'0x'+padded(value));
+            }
+          }
+          results.push({kind:variant.kind,target,actual,expected,malformedRejected:true,
+            unknownRejected:true,overflowPanic:'0x11',...(array?{emptyArrayPanic:'0x32'}:{})});
+        }
+      }
+      const after=await rpc('eth_getBlockByNumber',['latest',false]);
+      assert.equal(after.hash,before.hash);assert.equal(after.stateRoot,before.stateRoot);
+      console.log('derived overload VM acceptance',JSON.stringify(results));passed=true;
+    } catch(error) {
+      throw new Error(`derived overload VM regression failed; retained ${directory}`,{cause:error});
+    } finally {
+      signer.dispose();
+      if(child) {
+        if(child.exitCode===null && child.signalCode===null)child.kill('SIGTERM');
+        const timer=setTimeout(()=>{if(child.exitCode===null && child.signalCode===null)child.kill('SIGKILL');},5000);timer.unref();
+        try {await exit;} finally {clearTimeout(timer);}
+      }
+      if(log!==undefined)closeSync(log);
+      if(passed)await rm(directory,{recursive:true});
+    }
+  });
