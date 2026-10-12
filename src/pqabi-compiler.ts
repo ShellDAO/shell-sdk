@@ -130,6 +130,109 @@ function restoreTopicsAndErrors(
   return output;
 }
 
+/** Give only collapsed overloads distinct backend names. Equal byte widths
+ * preserve the original AST/source markers used by event and error recovery.
+ * References follow Solidity's already-resolved declaration ids, so lowering
+ * must never choose an overload again after address becomes uint256.
+ */
+function nativeOverloadAliases(
+  input: CompilerInput,
+  originalSources: Record<string, AstSource>,
+  contracts: Record<string, Record<string, { evm: { methodIdentifiers: Record<string, string> } }>>,
+) {
+  const functions: AstNode[] = [];
+  const contractsById = new Map<number, AstNode>();
+  const used = new Set<string>();
+  for (const source of Object.values(originalSources)) {
+    visit(source.ast, (node) => {
+      if (node.name) used.add(node.name);
+      if (node.memberName) used.add(node.memberName);
+      if (node.nodeType === "FunctionDefinition" && node.name) functions.push(node);
+      if (node.nodeType === "ContractDefinition") contractsById.set(node.id!, node);
+    });
+  }
+  const publicSelectors = new Set<string>();
+  for (const file of Object.values(contracts)) for (const contract of Object.values(file)) {
+    const groups = new Map<string, Set<string>>();
+    for (const signature of Object.keys(contract.evm.methodIdentifiers)) {
+      const lowered = signature.replace(/\baddress\b/g, "uint256");
+      const group = groups.get(lowered) ?? new Set<string>();
+      group.add(signature); groups.set(lowered, group);
+    }
+    for (const group of groups.values()) if (group.size > 1) {
+      for (const signature of group) if (/\baddress\b/.test(signature)) {
+        publicSelectors.add(contract.evm.methodIdentifiers[signature]);
+      }
+    }
+  }
+  const signature = (node: AstNode) => {
+    const parameters = (node.parameters as { parameters: AstNode[] }).parameters;
+    return `${node.name}(${parameters.map((parameter) => parameter.typeDescriptions!.typeString!
+      .replace(/\s+(?:memory|storage|calldata)(?:\s+(?:ref|pointer))?/g, "")).join(",")})`;
+  };
+  const collapsed = new Set<string>();
+  const scopes = [...contractsById.values()].map((contract) =>
+    (contract.linearizedBaseContracts as number[]).flatMap((id) => contractsById.get(id)!.nodes as AstNode[]));
+  scopes.push(functions.filter((node) => node.kind === "freeFunction"));
+  for (const scope of scopes) {
+    const groups = new Map<string, Set<string>>();
+    for (const node of scope) {
+      if (node.nodeType !== "FunctionDefinition" || !node.name) continue;
+      const before = signature(node);
+      const lowered = before.replace(/\baddress\b/g, "uint256");
+      const group = groups.get(lowered) ?? new Set<string>();
+      group.add(before); groups.set(lowered, group);
+    }
+    for (const group of groups.values()) if (group.size > 1) {
+      for (const before of group) if (/\baddress\b/.test(before)) collapsed.add(before);
+    }
+  }
+  const byId = new Map<number, string>();
+  const bySignature = new Map<string, string>();
+  const bySelector = new Map<string, string>();
+  for (const node of functions) {
+    const key = signature(node);
+    if (!collapsed.has(key) && !publicSelectors.has(node.functionSelector as string)) continue;
+    let alias = bySignature.get(key);
+    if (!alias) {
+      const width = Buffer.byteLength(node.name!);
+      const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+      const limit = Math.min(alphabet.length ** width, used.size + 1);
+      for (let candidate = 0; candidate < limit && !alias; candidate++) {
+        let remaining = candidate; let value = "";
+        for (let i = 0; i < width; i++) {
+          value += alphabet[remaining % alphabet.length];
+          remaining = Math.floor(remaining / alphabet.length);
+        }
+        if (!used.has(value)) alias = value;
+      }
+      if (!alias) throw new Error("PQABI overload backend identifier space exhausted");
+      used.add(alias); bySignature.set(key, alias);
+    }
+    byId.set(node.id!, alias);
+    if (typeof node.functionSelector === "string") bySelector.set(node.functionSelector, alias);
+  }
+  const sources: CompilerInput["sources"] = {};
+  for (const [path, source] of Object.entries(input.sources)) {
+    const replacements: { start: number; length: number; alias: string }[] = [];
+    visit(originalSources[path].ast, (node) => {
+      const alias = byId.get(node.nodeType === "FunctionDefinition" ? node.id! : node.referencedDeclaration as number);
+      if (!alias) return;
+      const location = node.nodeType === "FunctionDefinition" ? node.nameLocation :
+        node.nodeType === "Identifier" ? node.src : undefined;
+      if (node.nodeType !== "FunctionDefinition" && node.nodeType !== "Identifier") return;
+      if (typeof location !== "string") throw new Error("PQABI overload name source range unavailable");
+      const [start, length] = location.split(":").map(Number);
+      if (length !== Buffer.byteLength(alias)) throw new Error("PQABI overload name source range mismatch");
+      replacements.push({ start, length, alias });
+    });
+    const content = Buffer.from(source.content);
+    for (const { start, length, alias } of replacements) content.write(alias, start, length, "utf8");
+    sources[path] = { content: content.toString("utf8") };
+  }
+  return { sources, bySelector };
+}
+
 function compile(input: unknown) {
   const output = JSON.parse(solc.compile(JSON.stringify(input)));
   const errors = (output.errors ?? []).filter((error: { severity: string }) => error.severity === "error");
@@ -210,6 +313,8 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
   }
   if (!hasAddress) return compile(input);
 
+  const overloads = nativeOverloadAliases(input, original.sources, original.contracts);
+
   const structMembers = new Set<number>();
   for (const source of Object.values(original.sources) as AstSource[]) {
     visit(source.ast, (node) => {
@@ -231,7 +336,7 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
   }
   const sources: CompilerInput["sources"] = {};
   let hasPureTypedCall = false;
-  for (const [path, source] of Object.entries(input.sources)) {
+  for (const [path, source] of Object.entries(overloads.sources)) {
     const replacements: { start: number; length: number; text: string }[] = [];
     const handled = new Set<number>();
     const helpers = new Map<string, string>();
@@ -421,7 +526,9 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
     const loweredContract = lowered.contracts[path][contractName];
     const selectors = new Map<string, string>();
     for (const [signature, selector] of Object.entries(originalContract.evm.methodIdentifiers)) {
-      const loweredSignature = signature.replace(/\baddress\b/g, "uint256");
+      const alias = overloads.bySelector.get(selector);
+      const loweredSignature = signature.replace(/\baddress\b/g, "uint256")
+        .replace(/^[^(]+/, alias ?? signature.slice(0, signature.indexOf("(")));
       const loweredSelector = loweredContract.evm.methodIdentifiers[loweredSignature];
       if (!loweredSelector) throw new Error(`missing lowered selector for ${signature}`);
       selectors.set(loweredSelector.toLowerCase(), selector);

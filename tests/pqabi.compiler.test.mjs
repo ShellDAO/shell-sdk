@@ -384,3 +384,63 @@ test('typed calls retain struct field arguments and their original ABI', async (
     assert.deepEqual((await compileSolidity({...args,target:'pqvm',nativeAddressContextHeight:2})).abi,(await compileSolidity({...args,target:'evm'})).abi);
   }
 });
+
+const overloadedSource = `pragma solidity ^0.8.35;
+contract Overloads {
+  function echo(address value) public pure returns(address) { return value; }
+  function echo(uint256 value) public pure returns(uint256) { return value + 1; }
+  function pick(address value) external pure returns(address) { return echo(value); }
+  function pick(uint256 value) external pure returns(uint256) { return echo(value); }
+}`;
+const overloadedOptions = {sources:[{path:'Overloads.sol',content:overloadedSource}],contractName:'Overloads',evmVersion:'shanghai'};
+
+test('PQABI overloads keep address and uint256 declarations and original public selectors', async () => {
+  const original = await compileSolidity(overloadedOptions);
+  const native = await compileSolidity({...overloadedOptions,target:'pqvm',nativeAddressContextHeight:2});
+  assert.deepEqual(native.abi,original.abi);
+  for (const selector of ['2ffdbf1a','6279e43c','a0eba259','7701ea4a']) {
+    assert.ok(native.deployedBytecode.includes(selector));
+  }
+  assert.deepEqual(await compileSolidity(overloadedOptions),original);
+});
+
+test('PQABI overloads preserve inherited overrides and nonpublic typed references', async () => {
+  for (const content of [
+    'pragma solidity ^0.8.35; contract Base {function f(address value) public pure virtual returns(address){return value;}} contract Derived is Base {function f(address value) public pure override returns(address){return value;} function f(uint256 value) public pure returns(uint256){return value+1;}}',
+    'pragma solidity ^0.8.35; contract Derived {function f(address value) internal pure returns(address){return value;} function f(uint256 value) internal pure returns(uint256){return value+1;} function owner(address value) public pure returns(address){return f(value);} function amount(uint256 value) public pure returns(uint256){return f(value);}}',
+    'pragma solidity ^0.8.35; function f(address value) pure returns(address){return value;} function f(uint256 value) pure returns(uint256){return value+1;} contract Derived {function owner(address value) public pure returns(address){return f(value);} function amount(uint256 value) public pure returns(uint256){return f(value);}}',
+    'pragma solidity ^0.8.35; contract Derived {function f(address[] memory values) public pure returns(address){return values[0];} function f(uint256[] memory values) public pure returns(uint256){return values[0]+1;}}',
+  ]) {
+    const options={sources:[{path:'Derived.sol',content}],contractName:'Derived',evmVersion:'shanghai'};
+    const original=await compileSolidity(options);
+    assert.deepEqual((await compileSolidity({...options,target:'pqvm'})).abi,original.abi);
+  }
+});
+
+test('PQABI overloads do not repair invalid original type resolution', async () => {
+  const content='pragma solidity ^0.8.35; contract Invalid {function f(uint8 value) public pure returns(uint256){return value;} function f(uint256 value) public pure returns(uint256){return value;} function bad() public pure returns(uint256){return f(50);}}';
+  for (const target of ['evm','pqvm']) {
+    await assert.rejects(compileSolidity({sources:[{path:'Invalid.sol',content}],contractName:'Invalid',target}),/No unique declaration/);
+  }
+});
+
+test('PQABI overload real VM: original selectors distinguish full-word address and integer results', {skip:!process.env.SHELL_PQABI_RPC_URL}, async () => {
+  const word=BigInt('0x'+first);const padded=value=>value.toString(16).padStart(64,'0');
+  const cases=[['2ffdbf1a',word],['6279e43c',word+1n],['a0eba259',word],['7701ea4a',word+1n]];
+  for (const target of ['evm','pqvm']) {
+    const artifact=await compileSolidity({...overloadedOptions,target,...(target==='pqvm'?{nativeAddressContextHeight:2}:{})});
+    const calls=cases.map(([selector],index)=>`mstore(0,shl(224,0x${selector})) mstore(4,0x${first}) mstore(128,0) let success${index}:=staticcall(gas(),child,0,36,128,32) mstore(${256+index*64},success${index}) mstore(${288+index*64},mload(128))`).join('\n');
+    const refusals = `mstore(0,shl(224,0x2ffdbf1a)) if staticcall(gas(),child,0,35,0,0){revert(0,0)}
+      mstore(0,shl(224,0xffffffff)) if staticcall(gas(),child,0,36,0,0){revert(0,0)}
+      mstore(0,shl(224,0x6279e43c)) mstore(4,not(0)) if staticcall(gas(),child,0,36,0,0){revert(0,0)}
+      if iszero(eq(returndatasize(),36)){revert(0,0)} returndatacopy(0,0,36)
+      if iszero(eq(shr(224,mload(0)),0x4e487b71)){revert(0,0)} if iszero(eq(mload(4),0x11)){revert(0,0)}`;
+    const harness=`object "Probe" {code {datacopy(0,dataoffset("child"),datasize("child")) let child:=create(0,0,datasize("child")) if iszero(child){revert(0,0)} ${calls} ${refusals} return(256,256)} data "child" hex"${artifact.bytecode.slice(2)}"}`;
+    const output=JSON.parse(solc.compile(JSON.stringify({language:'Yul',sources:{'Probe.yul':{content:harness}},settings:{evmVersion:'shanghai',outputSelection:{'*':{'*':['evm.bytecode.object']}}}})));
+    assert.equal(output.errors?.filter(error=>error.severity==='error').length??0,0);
+    const response=await fetch(process.env.SHELL_PQABI_RPC_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method:'eth_call',params:[{data:'0x'+output.contracts['Probe.yul'].Probe.evm.bytecode.object,gas:'0x989680'},'latest']}),signal:AbortSignal.timeout(30000)});
+    assert.ok(response.ok);const result=await response.json();
+    const expected='0x'+cases.map(([,value],index)=>target==='evm'&&index%2===0?padded(0n)+padded(0n):padded(1n)+padded(value)).join('');
+    assert.equal(result.result,expected);
+  }
+});
