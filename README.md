@@ -1309,3 +1309,22 @@ full-width echo, a storage update and malformed-write rollback with original
 selectors. The event/error probe also checks full-width revert data, rollback
 and user constants equal to lowered signature values. Simulated state is discarded; restart and persistent-node acceptance
 remain separate checks.
+
+The self-contained derived-overload regression starts its own temporary memory
+node and generates a fresh test authority. In the shell-chain checkout, build
+`cargo build -p shell-cli --no-default-features`; then run in the SDK checkout:
+
+```bash
+npm run build
+SHELL_NODE_BIN=/path/to/shell-node node --test --test-name-pattern='PQABI derived overload real VM' tests/pqabi.compiler.test.mjs
+```
+
+It runs the unchanged inherited, internal, free-function and array overload
+sources through their original selectors. Native compilation preserves distinct
+full-word address results and integer arithmetic; the default EVM control refuses
+wide addresses. It checks SDK encoding and result decoding against independent
+ABI words, malformed and unknown calls, overflow panic `0x11`, and empty-array
+panic `0x32`. The live head and root stay unchanged. This is readonly source
+acceptance; signed stateful execution, persistence and public package delivery
+for these forms remain separate. Successful temporary runtimes are removed
+after the child exits; failures retain their runtime for diagnosis.
