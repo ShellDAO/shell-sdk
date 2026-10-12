@@ -1144,7 +1144,9 @@ full-word indexed topics, event data and error arguments. Integer
 unsigned integer width, including the `int` and `uint` aliases.
 
 Address and integer overloads retain their original Solidity type resolution,
-ABI and selectors, including internal calls between overloaded functions:
+ABI and selectors, including internal calls between overloaded functions.
+Backend names also remain distinct when source declarations occupy every
+short name; longer names preserve event/error signature recovery:
 
 ```solidity
 pragma solidity ^0.8.35;
@@ -1332,11 +1334,12 @@ node and generates a fresh test authority. In the shell-chain checkout, build
 
 ```bash
 npm run build
-SHELL_NODE_BIN=/path/to/shell-node node --test --test-name-pattern='PQABI derived overload real VM' tests/pqabi.compiler.test.mjs
+SHELL_NODE_BIN=/path/to/shell-node node --test --test-name-pattern='PQABI (derived|crowded) overload real VM' tests/pqabi.compiler.test.mjs
 ```
 
 It runs the unchanged inherited, internal, free-function and array overload
-sources through their original selectors. Native compilation preserves distinct
+sources through their original selectors, and repeats the dispatch checks with
+all single-character names and several fallback names occupied. Native compilation preserves distinct
 full-word address results and integer arithmetic; the default EVM control refuses
 wide addresses. It checks SDK encoding and result decoding against independent
 ABI words, malformed and unknown calls, overflow panic `0x11`, and empty-array

@@ -4,6 +4,11 @@
 
 ### Compatibility and validation
 
+- Fix PQABI overload compilation when source declarations occupy all short
+  backend names. Allocate longer private names without changing the original
+  ABI or selectors, and preserve typed references, native-call rewrites,
+  pure-call normalization and shifted event/error signature recovery.
+
 - Fix CLI `--args` conversion for nested bigint arrays and named/positional
   tuples, including signed values. Previously `[["9007199254740993n"]]` failed
   before RPC while the scalar form encoded correctly. Reject unsafe numeric
