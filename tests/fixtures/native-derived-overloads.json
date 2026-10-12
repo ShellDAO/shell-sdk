@@ -1,0 +1,22 @@
+[
+  {
+    "kind": "inherited",
+    "content": "pragma solidity ^0.8.35; contract Base {function f(address value) public pure virtual returns(address){return value;}} contract Derived is Base {function f(address value) public pure override returns(address){return value;} function f(uint256 value) public pure returns(uint256){return value+1;}}\ncontract StatefulDerived is Derived {\n address public nativeOwner;\n uint256 public nativeAmount;\n uint256 public writes;\n function set(address v) external returns(address) {nativeOwner=f(v);writes++;require(v!=address(0));return nativeOwner;}\n function set(uint256 v) external returns(uint256) {nativeAmount=f(v);writes++;return nativeAmount;}\n}\n",
+    "array": false
+  },
+  {
+    "kind": "internal",
+    "content": "pragma solidity ^0.8.35; contract Derived {function f(address value) internal pure returns(address){return value;} function f(uint256 value) internal pure returns(uint256){return value+1;} function owner(address value) public pure returns(address){return f(value);} function amount(uint256 value) public pure returns(uint256){return f(value);}}\ncontract StatefulDerived is Derived {\n address public nativeOwner;\n uint256 public nativeAmount;\n uint256 public writes;\n function set(address v) external returns(address) {nativeOwner=f(v);writes++;require(v!=address(0));return nativeOwner;}\n function set(uint256 v) external returns(uint256) {nativeAmount=f(v);writes++;return nativeAmount;}\n}\n",
+    "array": false
+  },
+  {
+    "kind": "free",
+    "content": "pragma solidity ^0.8.35; function f(address value) pure returns(address){return value;} function f(uint256 value) pure returns(uint256){return value+1;} contract Derived {function owner(address value) public pure returns(address){return f(value);} function amount(uint256 value) public pure returns(uint256){return f(value);}}\ncontract StatefulDerived is Derived {\n address public nativeOwner;\n uint256 public nativeAmount;\n uint256 public writes;\n function set(address v) external returns(address) {nativeOwner=f(v);writes++;require(v!=address(0));return nativeOwner;}\n function set(uint256 v) external returns(uint256) {nativeAmount=f(v);writes++;return nativeAmount;}\n}\n",
+    "array": false
+  },
+  {
+    "kind": "array",
+    "content": "pragma solidity ^0.8.35; contract Derived {function f(address[] memory values) public pure returns(address){return values[0];} function f(uint256[] memory values) public pure returns(uint256){return values[0]+1;}}\ncontract StatefulDerived is Derived {\n address public nativeOwner;\n uint256 public nativeAmount;\n uint256 public writes;\n function set(address[] memory v) external returns(address) {nativeOwner=f(v);writes++;require(v[0]!=address(0));return nativeOwner;}\n function set(uint256[] memory v) external returns(uint256) {nativeAmount=f(v);writes++;return nativeAmount;}\n}\n",
+    "array": true
+  }
+]

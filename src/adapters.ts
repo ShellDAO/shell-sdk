@@ -6,8 +6,9 @@
  *
  * **Algorithm distinction**: `"Dilithium3"` (type_id=0) and `"ML-DSA-65"` /
  * `"MlDsa65"` (type_id=1) are now separate algorithms on chain with distinct
- * address derivation. `MlDsa65Adapter` and `DilithiumAdapter` both use the
- * same underlying `ml_dsa65` crypto (FIPS 204), but produce different addresses.
+ * address derivation. `generateAdapter` uses `MlDsa65Adapter` for both names
+ * and the same underlying `ml_dsa65` crypto (FIPS 204). `ShellSigner` applies
+ * the selected algorithm identifier when deriving the address.
  *
  * @module adapters
  */
