@@ -29,6 +29,11 @@
 
 ### Added
 
+- Preserve address/integer overloads and their original ABI selectors in the
+  experimental PQABI compiler, including typed internal calls. Original invalid
+  or ambiguous Solidity still rejects before lowering. Source support only; no
+  package release or native network activation is implied.
+
 - Preserve typed struct fields used as interface-call arguments in the
   experimental PQABI compiler, including full native address arguments and
   integer words. Original selectors and single evaluation are retained; the

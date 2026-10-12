@@ -1135,6 +1135,24 @@ full-word indexed topics, event data and error arguments. Integer
 `type(T).min` and `type(T).max` preserve Solidity limits for every signed and
 unsigned integer width, including the `int` and `uint` aliases.
 
+Address and integer overloads retain their original Solidity type resolution,
+ABI and selectors, including internal calls between overloaded functions:
+
+```solidity
+pragma solidity ^0.8.35;
+contract Overloads {
+    function echo(address value) public pure returns (address) { return value; }
+    function echo(uint256 value) public pure returns (uint256) { return value + 1; }
+    function pick(address value) external pure returns (address) { return echo(value); }
+    function pick(uint256 value) external pure returns (uint256) { return echo(value); }
+}
+```
+
+Compile this unchanged source with `target: "pqvm"` to retain a full-word address
+result alongside the integer result. Invalid or ambiguous original Solidity
+still fails its original type check. This support is in the unreleased compiler
+source; matching public package delivery remains pending.
+
 Unreleased `native-address-context-v1` nodes can also compile `msg.sender`,
 `tx.origin`, `block.coinbase` and `address(this)` as full words. Set
 `nativeAddressContextHeight` to the node's immutable activation height:
