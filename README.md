@@ -638,6 +638,14 @@ npx shell-sdk contract read \
   --function getNumber
 ```
 
+CLI `--args` converts decimal strings ending in `n` to bigint at every level,
+including arrays and named or positional tuples. For example,
+`--args '[ ["9007199254740993n", "7n"] ]'` preserves both `uint256[]` elements;
+signed integer arguments can use `"-7n"`. JSON numeric integers outside the safe
+JavaScript range are rejected; use the string form to retain the exact value.
+For overloads, pass the original signature, such as `--function 'set(uint256[])'`,
+with the complete artifact ABI.
+
 ---
 
 ### System contracts
@@ -1187,7 +1195,9 @@ SHELL_NODE_BIN=/path/to/shell-node node --test --test-name-pattern='canonical ov
 
 It checks the original scalar overloads and inherited, internal, free-function
 and array compositions through genuinely signed ML-DSA-65 and Dilithium3
-ordinary writes and root-signed AA batches. AA cases reject tampered inner
+ordinary writes, root-signed AA batches and actual CLI compile/write/read
+commands using fresh encrypted keystores. CLI cases verify nested bigint arguments
+and 32-byte address values. AA cases reject tampered inner
 calldata, corrupt signatures and a mismatched algorithm identifier, and verify
 that a later failing call rolls back earlier writes in the same batch while the
 outer fee and nonce still apply. The original ABI is retained, and fixed
