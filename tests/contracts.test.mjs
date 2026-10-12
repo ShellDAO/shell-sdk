@@ -17,6 +17,7 @@ import {
 import { compileSolidity } from '../dist/contracts-compiler.js';
 import { createShellProvider } from '../dist/provider.js';
 import { acknowledgementHash } from './helpers.mjs';
+import { buildBatchTransaction } from '../dist/transactions.js';
 
 const ADDRESS = '0x' + '11'.repeat(32);
 const CONTRACT = '0x' + '22'.repeat(32);
@@ -669,7 +670,8 @@ test('read and write helpers share explicit original overload selection', async 
 const derivedLiveCases=JSON.parse(readFileSync(new URL('./fixtures/native-derived-overloads.json',import.meta.url),'utf8'));
 for(const variant of [{kind:'canonical',array:false},...derivedLiveCases]) {
  for(const algorithm of ['MlDsa65','Dilithium3']) {
- test(`canonical overload real RPC: ${variant.kind}/${algorithm} mined state, P2P import and crash recovery`,
+  for(const entry of ['ordinary','AA']) {
+ test(`canonical overload real RPC: ${variant.kind}/${algorithm}/${entry} mined state, P2P import and crash recovery`,
   {skip:!process.env.SHELL_NODE_BIN, timeout:120000}, async () => {
     const {mkdtemp,mkdir,writeFile,readFile,rm}=await import('node:fs/promises');
     const {openSync,closeSync}=await import('node:fs');
@@ -682,7 +684,7 @@ for(const variant of [{kind:'canonical',array:false},...derivedLiveCases]) {
     const {generateAdapter}=await import('../dist/adapters.js');
     const {ShellSigner}=await import('../dist/signer.js');
     const binary=process.env.SHELL_NODE_BIN;
-    const directory=await mkdtemp(join(tmpdir(),`shell-sdk-overload-${variant.kind}-${algorithm}-`));
+    const directory=await mkdtemp(join(tmpdir(),`shell-sdk-overload-${variant.kind}-${algorithm}-${entry}-`));
     const signer=new ShellSigner(algorithm,generateAdapter(algorithm));
     const contract='0x'+'99'.repeat(32), zero='0x'+'00'.repeat(32);
     const second='0x'+'56'.repeat(12)+'12'.repeat(20);
@@ -816,7 +818,7 @@ contract StatefulOverloads {
       await start('follower',validator.bootnode);
       await until(async()=>Number(await rpc('follower','net_peerCount'))>=1,'follower peer');
       // Independent expectations from the original Solidity state transitions.
-      const steps=[
+      const ordinarySteps=[
         ['set(address)',OVERLOAD_WORD,true,[OVERLOAD_WORD,zero,word(1)]],
         ['set(uint256)',OVERLOAD_AMOUNT,true,[OVERLOAD_WORD,word(OVERLOAD_AMOUNT+1n),word(2)]],
         ['set(address)',second,true,[second,word(OVERLOAD_AMOUNT+1n),word(3)]],
@@ -826,29 +828,71 @@ contract StatefulOverloads {
         ...(variant.array?[['empty',null,false,[second,word(OVERLOAD_AMOUNT+1n),word(3)]]]:[]),
         ['set(uint256)',0n,true,[second,word(1),word(4)]],
       ];
+      const aaSteps=[
+        [[['set(address)',OVERLOAD_WORD],['set(uint256)',OVERLOAD_AMOUNT]],true,[OVERLOAD_WORD,word(OVERLOAD_AMOUNT+1n),word(2)]],
+        [[['set(address)',second]],true,[second,word(OVERLOAD_AMOUNT+1n),word(3)]],
+        [[['set(uint256)',0n],['set(address)',zero]],false,[second,word(OVERLOAD_AMOUNT+1n),word(3)]],
+        [[['set(address)',OVERLOAD_WORD],['set(uint256)',(1n<<256n)-1n]],false,[second,word(OVERLOAD_AMOUNT+1n),word(3)]],
+        [[['set(uint256)',23n],['truncated',OVERLOAD_WORD]],false,[second,word(OVERLOAD_AMOUNT+1n),word(3)]],
+        ...(variant.array?[[[['set(address)',OVERLOAD_WORD],['empty',null]],false,[second,word(OVERLOAD_AMOUNT+1n),word(3)]]]:[]),
+        [[['set(uint256)',0n],['set(address)',OVERLOAD_WORD]],true,[OVERLOAD_WORD,word(1),word(5)]],
+      ];
+      const steps=entry==='AA'?aaSteps:ordinarySteps;
       async function execute(step,nonce,checkFollower=true) {
-        const [functionName,argument,success,words]=step;
+        const [functionName,argument]=step;
+        const success=step[entry==='AA'?1:2],words=step[entry==='AA'?2:3];
         let hash;
-        const signature=variant.array?functionName.replace('address)','address[])').replace('uint256)','uint256[])'):functionName;
-        const args=[variant.array?[argument,typeof argument==='bigint'?23n:second]:argument];
-        const addressSignature=variant.array?'set(address[])':'set(address)';
-        if(functionName==='truncated'||functionName==='empty') {
-          const tx=buildContractCallTransaction({address:contract,abi,functionName:addressSignature,args:functionName==='empty'?[[]]:args,
-            chainId:1337,nonce,gasLimit:500000,maxFeePerGas:Number(maxFee),maxPriorityFeePerGas:0});
-          if(functionName==='truncated')tx.data=tx.data.slice(0,-2);
-          hash=await validator.provider.sendTransaction(await signer.buildSignedTransaction({tx,includePublicKey:true}));
+        if(entry==='AA') {
+          const innerCalls=functionName.map(([name,value])=>{
+            const signature=variant.array?name.replace('address)','address[])').replace('uint256)','uint256[])'):name;
+            const addressSignature=variant.array?'set(address[])':'set(address)';
+            const args=[variant.array?[value,typeof value==='bigint'?23n:second]:value];
+            let data=encodeFunctionData({abi,functionName:name==='truncated'||name==='empty'?addressSignature:signature,args:name==='empty'?[[]]:args});
+            if(name==='truncated')data=data.slice(0,-2);
+            else if(name!=='empty') {
+              const selector=signature==='set(address)'?'0x2801617e':signature==='set(uint256)'?'0x60fe47b1':signature==='set(address[])'?'0x11f2a107':'0x6ea9bfc5';
+              assert.equal(data,selector+(variant.array?word(32).slice(2)+word(2).slice(2):'')+word(value).slice(2)
+                +(variant.array?word(typeof value==='bigint'?23n:second).slice(2):''));
+            }
+            return {to:contract,value:'0x0',data,gas_limit:'0x7a120'};
+          });
+          const {tx,aa_bundle}=buildBatchTransaction({chainId:1337,nonce,innerCalls,gasLimit:1500000,
+            maxFeePerGas:Number(maxFee),maxPriorityFeePerGas:0});
+          const signed=await signer.buildSignedTransaction({tx,aaBundle:aa_bundle,includePublicKey:true});
+          if(nonce===0) {
+            const before=await state('validator');
+            const changed=structuredClone(signed);changed.aa_bundle.inner_calls[0].data=changed.aa_bundle.inner_calls[0].data.slice(0,-2)+'ff';
+            await assert.rejects(nodes.validator.provider.sendTransaction(changed),/signature|hash|invalid|mismatch/i);
+            const corrupt=structuredClone(signed);corrupt.signature.data[0]^=1;
+            await assert.rejects(nodes.validator.provider.sendTransaction(corrupt),/signature|hash|invalid|mismatch/i);
+            const cross=structuredClone(signed);cross.signature.sig_type=algorithm==='MlDsa65'?'Dilithium3':'MlDsa65';
+            await assert.rejects(nodes.validator.provider.sendTransaction(cross),/signature|hash|invalid|mismatch|sender|address/i);
+            assert.deepEqual(await state('validator'),before);
+          }
+          hash=await nodes.validator.provider.sendTransaction(signed);
         } else {
-          const selector=signature==='set(address)'?'0x2801617e':signature==='set(uint256)'?'0x60fe47b1':signature==='set(address[])'?'0x11f2a107':'0x6ea9bfc5';
-          const expectedData=selector+(variant.array?word(32).slice(2)+word(2).slice(2):'')+word(argument).slice(2)
-            +(variant.array?word(typeof argument==='bigint'?23n:second).slice(2):'');
-          assert.equal(encodeFunctionData({abi,functionName:signature,args}),expectedData);
-          ({hash}=await writeContract({provider:nodes.validator.provider,signer,chainId:1337,nonce,address:contract,
-            abi,functionName:signature,args,includePublicKey:true,wait:false,gasLimit:500000,
-            maxFeePerGas:Number(maxFee),maxPriorityFeePerGas:0}));
+          const signature=variant.array?functionName.replace('address)','address[])').replace('uint256)','uint256[])'):functionName;
+          const args=[variant.array?[argument,typeof argument==='bigint'?23n:second]:argument];
+          const addressSignature=variant.array?'set(address[])':'set(address)';
+          if(functionName==='truncated'||functionName==='empty') {
+            const tx=buildContractCallTransaction({address:contract,abi,functionName:addressSignature,args:functionName==='empty'?[[]]:args,
+              chainId:1337,nonce,gasLimit:500000,maxFeePerGas:Number(maxFee),maxPriorityFeePerGas:0});
+            if(functionName==='truncated')tx.data=tx.data.slice(0,-2);
+            hash=await validator.provider.sendTransaction(await signer.buildSignedTransaction({tx,includePublicKey:true}));
+          } else {
+            const selector=signature==='set(address)'?'0x2801617e':signature==='set(uint256)'?'0x60fe47b1':signature==='set(address[])'?'0x11f2a107':'0x6ea9bfc5';
+            const expectedData=selector+(variant.array?word(32).slice(2)+word(2).slice(2):'')+word(argument).slice(2)
+              +(variant.array?word(typeof argument==='bigint'?23n:second).slice(2):'');
+            assert.equal(encodeFunctionData({abi,functionName:signature,args}),expectedData);
+            ({hash}=await writeContract({provider:nodes.validator.provider,signer,chainId:1337,nonce,address:contract,
+              abi,functionName:signature,args,includePublicKey:true,wait:false,gasLimit:500000,
+              maxFeePerGas:Number(maxFee),maxPriorityFeePerGas:0}));
+          }
         }
         const receipt=await waitForTransactionReceipt({provider:nodes.validator.provider,hash,timeoutMs:30000,pollIntervalMs:100});
         assert.equal(receipt.status,success?'0x1':'0x0');
-        assert.equal(receipt.from,signer.getAddress());assert.equal(receipt.to,contract);
+        assert.equal(receipt.from,signer.getAddress());assert.equal(receipt.to,entry==='AA'?null:contract);
+        assert.equal(receipt.type,entry==='AA'?'0x7e':'0x2');
         const block=await rpc('validator','eth_getBlockByNumber',[receipt.blockNumber,false]);
         assert.equal(block.hash,receipt.blockHash);assert.ok(block.transactions.includes(hash));
         const baseFee=BigInt(block.baseFeePerGas),price=baseFee<maxFee?baseFee:maxFee;
@@ -869,7 +913,8 @@ contract StatefulOverloads {
       }
       // SIGKILL bypasses normal shutdown: reopen the same WAL-backed databases.
       await stop('follower','SIGKILL');
-      await execute(['set(address)',OVERLOAD_WORD,true,[OVERLOAD_WORD,word(1),word(5)]],steps.length,false);
+      await execute(entry==='AA'?[[['set(address)',second]],true,[second,word(1),word(6)]]
+        :['set(address)',OVERLOAD_WORD,true,[OVERLOAD_WORD,word(1),word(5)]],steps.length,false);
       await until(async()=>{
         const finalized=await rpc('validator','eth_getBlockByNumber',['finalized',false]);
         return finalized && BigInt(finalized.number)>=BigInt(receipts.at(-1).blockNumber);
@@ -878,7 +923,8 @@ contract StatefulOverloads {
       const resumed=await start('validator');await start('follower',resumed.bootnode);
       for(let i=0;i<receipts.length;i++)await synchronized(receipts[i],history[i],false);
       assert.deepEqual(await state('validator'),history.at(-1));
-      await execute(['set(uint256)',23n,true,[OVERLOAD_WORD,word(24),word(6)]],steps.length+1);
+      await execute(entry==='AA'?[[['set(address)',OVERLOAD_WORD],['set(uint256)',23n]],true,[OVERLOAD_WORD,word(24),word(8)]]
+        :['set(uint256)',23n,true,[OVERLOAD_WORD,word(24),word(6)]],steps.length+1);
       await until(async()=>{
         for(const name of ['validator','follower']) {
           const finalized=await rpc(name,'eth_getBlockByNumber',['finalized',false]);
@@ -887,7 +933,7 @@ contract StatefulOverloads {
         return true;
       },'continued write finality');
       assert.deepEqual(abi,original);
-      console.log('canonical overload live acceptance',JSON.stringify({chainId:1337,algorithm,variant:variant.kind,ordinary:true,
+      console.log('canonical overload live acceptance',JSON.stringify({chainId:1337,algorithm,variant:variant.kind,entry,
         receipts,history,crashRecovery:true,offlineFollowerCatchup:true,continuedWrite:true,finalized:true},(_,value)=>typeof value==='bigint'?value.toString():value));
       passed=true;
     } catch(error) {
@@ -898,6 +944,7 @@ contract StatefulOverloads {
       if(passed)await rm(directory,{recursive:true});
     }
   });
+  }
  }
 }
 

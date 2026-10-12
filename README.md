@@ -1187,8 +1187,11 @@ SHELL_NODE_BIN=/path/to/shell-node node --test --test-name-pattern='canonical ov
 
 It checks the original scalar overloads and inherited, internal, free-function
 and array compositions through genuinely signed ML-DSA-65 and Dilithium3
-writes. The original ABI is retained, and fixed selectors and manually encoded
-words check SDK calldata. Assertions cover mined receipts and state,
+ordinary writes and root-signed AA batches. AA cases reject tampered inner
+calldata, corrupt signatures and a mismatched algorithm identifier, and verify
+that a later failing call rolls back earlier writes in the same batch while the
+outer fee and nonce still apply. The original ABI is retained, and fixed
+selectors and manually encoded words check SDK calldata. Assertions cover mined receipts and state,
 zero/MAX/truncated-input rollback, empty-array rejection, independent fee and
 nonce accounting, historical queries, P2P follower import, offline follower
 catch-up, and crash recovery with a new write after restart.
