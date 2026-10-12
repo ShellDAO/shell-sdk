@@ -14,6 +14,7 @@ import {
   encodeDeployData,
   encodeFunctionData as viemEncodeFunctionData,
   toFunctionSelector,
+  toFunctionSignature,
   type Abi,
   type Hex,
 } from "viem";
@@ -82,6 +83,7 @@ export interface BuildContractCallTransactionOptions {
   nonce: number;
   address: AddressLike;
   abi: Abi;
+  /** Function name or canonical signature, such as "echo(address)". */
   functionName: string;
   args?: readonly unknown[];
   gasLimit?: number;
@@ -112,6 +114,7 @@ export interface ContractReadOptions {
   provider: ShellProvider;
   address: AddressLike;
   abi: Abi;
+  /** Function name or canonical signature, such as "echo(address)". */
   functionName: string;
   args?: readonly unknown[];
   blockTag?: string;
@@ -119,12 +122,14 @@ export interface ContractReadOptions {
 
 export interface EncodeContractFunctionDataOptions {
   abi: Abi;
+  /** Function name or canonical signature, such as "echo(address)". */
   functionName: string;
   args?: readonly unknown[];
 }
 
 export interface DecodeContractFunctionResultOptions {
   abi: Abi;
+  /** Function name or canonical signature, such as "echo(address)". */
   functionName: string;
   data: HexString;
 }
@@ -217,32 +222,22 @@ function transformShellAddressValue(parameter: AbiParameterLike, value: unknown,
   return value;
 }
 
-function findFunctionAbi(abi: Abi, functionName: string, argCount: number): AbiFunctionLike {
+function findFunctionAbi(abi: Abi, functionName: string, argCount?: number): AbiFunctionLike {
+  const signature = functionName.includes("(");
   const matches = (abi as readonly unknown[]).filter((entry): entry is AbiFunctionLike => {
     const candidate = entry as Partial<AbiFunctionLike>;
     return candidate.type === "function"
-      && candidate.name === functionName
-      && (candidate.inputs?.length ?? 0) === argCount;
+      && (signature
+        ? toFunctionSignature(candidate as never) === functionName
+        : candidate.name === functionName)
+      && (argCount === undefined || (candidate.inputs?.length ?? 0) === argCount);
   });
   if (matches.length === 0) {
-    throw new Error(`function ${functionName}(${argCount} args) not found in ABI`);
+    const arity = argCount === undefined ? "" : `(${argCount} args)`;
+    throw new Error(`function ${functionName}${arity} not found in ABI`);
   }
   if (matches.length > 1) {
-    throw new Error(`ambiguous overloaded function ${functionName}; use an ABI with one matching overload`);
-  }
-  return matches[0];
-}
-
-function findFunctionAbiByName(abi: Abi, functionName: string): AbiFunctionLike {
-  const matches = (abi as readonly unknown[]).filter((entry): entry is AbiFunctionLike => {
-    const candidate = entry as Partial<AbiFunctionLike>;
-    return candidate.type === "function" && candidate.name === functionName;
-  });
-  if (matches.length === 0) {
-    throw new Error(`function ${functionName} not found in ABI`);
-  }
-  if (matches.length > 1) {
-    throw new Error(`ambiguous overloaded function ${functionName}; use an ABI with one matching overload`);
+    throw new Error(`ambiguous overloaded function ${functionName}; use the canonical function signature`);
   }
   return matches[0];
 }
@@ -301,11 +296,11 @@ export function encodeFunctionData(parameters: EncodeContractFunctionDataOptions
     const encodedArgs = encodeShellAddressArgs(fn.inputs ?? [], parameters.args ?? []);
     return normalizeHexData(`${selector}${encodedArgs.slice(2)}`, "encoded function data");
   }
-  return normalizeHexData(viemEncodeFunctionData(parameters as never), "encoded function data");
+  return normalizeHexData(viemEncodeFunctionData({ ...parameters, abi: [fn], functionName: fn.name } as never), "encoded function data");
 }
 
 export function decodeFunctionResult(parameters: DecodeContractFunctionResultOptions): unknown {
-  const fn = findFunctionAbiByName(parameters.abi, parameters.functionName);
+  const fn = findFunctionAbi(parameters.abi, parameters.functionName);
   if (hasShellAddressParameter(fn.outputs ?? [])) {
     const decoded = decodeAbiParameters(
       (fn.outputs ?? []).map(transformShellAddressParameter) as never,
@@ -313,7 +308,7 @@ export function decodeFunctionResult(parameters: DecodeContractFunctionResultOpt
     ) as readonly unknown[];
     return decoded.length === 1 ? decoded[0] : decoded;
   }
-  return viemDecodeFunctionResult(parameters as never);
+  return viemDecodeFunctionResult({ ...parameters, abi: [fn], functionName: fn.name } as never);
 }
 
 export function buildDeployTransaction(options: BuildDeployTransactionOptions): ShellTransactionRequest {
@@ -519,9 +514,12 @@ export async function writeContract(options: ContractWriteOptions): Promise<Cont
 
 export async function readContract(options: ContractReadOptions): Promise<unknown> {
   validateAddress(options.address, "address");
+  const functionName = toFunctionSignature(findFunctionAbi(
+    options.abi, options.functionName, options.args?.length ?? 0,
+  ) as never);
   const data = encodeFunctionData({
     abi: options.abi,
-    functionName: options.functionName,
+    functionName,
     args: options.args ?? [],
   } as never);
   const result = await rpcRequest<HexString>(options.provider, "eth_call", [
@@ -530,7 +528,7 @@ export async function readContract(options: ContractReadOptions): Promise<unknow
   ]);
   return decodeFunctionResult({
     abi: options.abi,
-    functionName: options.functionName,
+    functionName,
     data: result,
   } as never);
 }

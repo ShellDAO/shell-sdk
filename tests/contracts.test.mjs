@@ -609,3 +609,156 @@ test('compileSolidity returns normalized Shell contract artifact', async () => {
   assert.match(artifact.bytecode, /^0x[0-9a-f]+/i);
   assert.match(artifact.solcVersion, /^\d+\.\d+\.\d+/);
 });
+
+
+const OVERLOADED_ABI = parseAbi([
+  'function set(address value) returns (address)',
+  'function set(uint256 value) returns (uint256)',
+]);
+const OVERLOAD_WORD = '0x' + '34'.repeat(12) + '12'.repeat(20);
+const OVERLOAD_AMOUNT = BigInt(OVERLOAD_WORD);
+const OVERLOAD_CASES = [
+  ['set(address)', OVERLOAD_WORD, '0x2801617e', OVERLOAD_WORD, OVERLOAD_WORD],
+  ['set(uint256)', OVERLOAD_AMOUNT, '0x60fe47b1', OVERLOAD_AMOUNT + 1n,
+    '0x' + (OVERLOAD_AMOUNT + 1n).toString(16).padStart(64, '0')],
+];
+
+test('canonical overload signatures retain full ABI, original selectors and result types', () => {
+  const original = structuredClone(OVERLOADED_ABI);
+  for (const [functionName, argument, selector, value, result] of OVERLOAD_CASES) {
+    const data = selector + OVERLOAD_WORD.slice(2);
+    assert.equal(encodeFunctionData({abi:OVERLOADED_ABI,functionName,args:[argument]}), data);
+    assert.equal(buildContractCallTransaction({chainId:1337,nonce:0,address:CONTRACT,
+      abi:OVERLOADED_ABI,functionName,args:[argument]}).data, data);
+    assert.equal(decodeFunctionResult({abi:OVERLOADED_ABI,functionName,data:result}),value);
+  }
+  assert.deepEqual(OVERLOADED_ABI,original);
+  assert.throws(() => encodeFunctionData({abi:OVERLOADED_ABI,functionName:'set',args:[OVERLOAD_WORD]}),/ambiguous overloaded/);
+  assert.throws(() => decodeFunctionResult({abi:OVERLOADED_ABI,functionName:'set',data:OVERLOAD_WORD}),/ambiguous overloaded/);
+  assert.throws(() => encodeFunctionData({abi:OVERLOADED_ABI,functionName:'set(bytes32)',args:[OVERLOAD_WORD]}),/not found/);
+  assert.throws(() => encodeFunctionData({abi:OVERLOADED_ABI,functionName:'set(address)',args:[]}),/not found/);
+  assert.throws(() => encodeFunctionData({abi:OVERLOADED_ABI,functionName:'set(address)',args:['0x'+'12'.repeat(20)]}),/Shell address/);
+});
+
+test('canonical tuple overload selects original address components without narrowing ABI', () => {
+  const abi=parseAbi(['function inspect((address owner,uint256 value) entry) returns (address)',
+    'function inspect(uint256 value) returns (uint256)']);
+  const data=encodeFunctionData({abi,functionName:'inspect((address,uint256))',
+    args:[{owner:OVERLOAD_WORD,value:19n}]});
+  assert.equal(data,toFunctionSelector('inspect((address,uint256))')+OVERLOAD_WORD.slice(2)+19n.toString(16).padStart(64,'0'));
+  assert.equal(decodeFunctionResult({abi,functionName:'inspect((address,uint256))',data:OVERLOAD_WORD}),OVERLOAD_WORD);
+});
+
+test('read and write helpers share explicit original overload selection', async () => {
+  for (const [functionName, argument, selector, value, result] of OVERLOAD_CASES) {
+    const {provider,calls,fetchMock}=makeProvider({callResult:result});
+    const signer=makeSigner();
+    await withFetchMock(fetchMock,async () => {
+      assert.equal(await readContract({provider,address:CONTRACT,abi:OVERLOADED_ABI,
+        functionName,args:[argument]}),value);
+      await writeContract({provider,signer,address:CONTRACT,abi:OVERLOADED_ABI,
+        functionName,args:[argument],chainId:1337,nonce:0,includePublicKey:true});
+    });
+    assert.equal(calls.find(call=>call.method==='eth_call').params[0].data,selector+OVERLOAD_WORD.slice(2));
+    assert.equal(signer.signed[0].tx.data,selector+OVERLOAD_WORD.slice(2));
+  }
+});
+
+
+test('canonical overload real RPC: original full ABI read and signed write admission',
+  {skip:!process.env.SHELL_NODE_BIN}, async () => {
+    const {mkdtemp,writeFile,rm}=await import('node:fs/promises');
+    const {openSync,closeSync}=await import('node:fs');
+    const {tmpdir}=await import('node:os');
+    const {join}=await import('node:path');
+    const {spawn,spawnSync}=await import('node:child_process');
+    const {createServer,createConnection}=await import('node:net');
+    const {once}=await import('node:events');
+    const {MlDsa65Adapter}=await import('../dist/adapters.js');
+    const {ShellSigner}=await import('../dist/signer.js');
+    const binary=process.env.SHELL_NODE_BIN;
+    const directory=await mkdtemp(join(tmpdir(),'shell-sdk-overload-'));
+    const signer=new ShellSigner('MlDsa65',MlDsa65Adapter.generate());
+    const contract='0x'+'99'.repeat(32);
+    let child,exit,log,passed=false;
+    try {
+      const content=`pragma solidity ^0.8.35;
+contract StatefulOverloads {
+ address public owner;
+ uint256 public amount;
+ uint256 public writes;
+ function value(address v) internal pure returns(address) {return v;}
+ function value(uint256 v) internal pure returns(uint256) {return v+1;}
+ function set(address v) external returns(address) {owner=value(v);writes++;require(v!=address(0));return owner;}
+ function set(uint256 v) external returns(uint256) {amount=value(v);writes++;return amount;}
+}
+`;
+      const artifact=await compileSolidity({sources:[{path:'StatefulOverloads.sol',content}],
+        contractName:'StatefulOverloads',target:'pqvm',evmVersion:'shanghai'});
+      const genesis={chain_id:1337,timestamp:0,network_type:'Dev',fee_accounting_activation_height:0,
+        consensus:{engine:'poa',authorities:[signer.getAddress()],authority_pubkeys:[Buffer.from(signer.getPublicKey()).toString('hex')],block_time_secs:600},
+        alloc:{[signer.getAddress()]:{balance:'0x8ac7230489e80000'},
+          [contract]:{balance:'0x0',code:artifact.deployedBytecode.slice(2)}}};
+      const genesisPath=join(directory,'input-genesis.json');
+      await writeFile(genesisPath,JSON.stringify(genesis));
+      const init=spawnSync(binary,['--datadir',directory,'init','--genesis',genesisPath,'--network','dev','--chain-id','1337'],{encoding:'utf8',timeout:30000});
+      assert.equal(init.status,0,init.stderr||init.stdout);
+      const listener=createServer();listener.listen(0,'127.0.0.1');await once(listener,'listening');
+      const port=listener.address().port;await new Promise(resolve=>listener.close(resolve));
+      const config=join(directory,'observer.toml');await writeFile(config,'[metrics]\nenabled = false\n');
+      log=openSync(join(directory,'cli.log'),'w');
+      child=spawn(binary,['--datadir',directory,'run','--network','dev','--chain-id','1337',
+        '--block-time','600000','--db','rocksdb','--consensus-engine','poa',
+        '--storage-profile','archive','--rpc-addr',`127.0.0.1:${port}`,'--config',config],{stdio:['ignore',log,log]});
+      exit=once(child,'exit');
+      const deadline=Date.now()+15000;
+      while(true) {
+        const ready=await new Promise(resolve=>{const socket=createConnection({host:'127.0.0.1',port});
+          socket.once('connect',()=>{socket.destroy();resolve(true);});socket.once('error',()=>{socket.destroy();resolve(false);});});
+        if(ready)break;
+        assert.equal(child.exitCode,null,'node exited during startup');assert.ok(Date.now()<deadline,'node RPC startup timeout');
+        await new Promise(resolve=>setTimeout(resolve,50));
+      }
+      const provider=createShellProvider({rpcHttpUrl:`http://127.0.0.1:${port}`});
+      assert.equal(await provider.client.request({method:'eth_chainId',params:[]}), '0x539');
+      const abi=artifact.abi,original=structuredClone(abi);
+      for(const [functionName,argument,selector,expected] of OVERLOAD_CASES) {
+        assert.equal(await readContract({provider,address:contract,abi,functionName,args:[argument]}),expected);
+        const encoded=encodeFunctionData({abi,functionName,args:[argument]});
+        assert.equal(encoded,selector+OVERLOAD_WORD.slice(2));
+      }
+      for(const slot of [0,1,2]) {
+        assert.equal(await provider.client.request({method:'eth_getStorageAt',params:[contract,'0x'+slot.toString(16),'latest']}),'0x'+'00'.repeat(32));
+      }
+      // Real root signatures and RPC admission; no receipt or mined-state claim here.
+      for(const [nonce,[functionName,argument]] of OVERLOAD_CASES.entries()) {
+        const result=await writeContract({provider,signer,chainId:1337,nonce,address:contract,
+          abi,functionName,args:[argument],includePublicKey:true,wait:false,gasLimit:500000,
+          maxFeePerGas:1000000000,maxPriorityFeePerGas:0});
+        assert.match(result.hash,/^0x[0-9a-f]{64}$/);
+      }
+      assert.equal(await provider.client.request({method:'eth_getTransactionCount',params:[signer.getAddress(),'pending']}),'0x2');
+      assert.deepEqual(abi,original);passed=true;
+    } catch(error) {
+      throw new Error(`overload RPC regression failed; retained ${directory}`,{cause:error});
+    } finally {
+      signer.dispose();
+      if(child) {
+        if(child.exitCode===null && child.signalCode===null)child.kill('SIGTERM');
+        const timer=setTimeout(()=>{if(child.exitCode===null && child.signalCode===null)child.kill('SIGKILL');},5000);timer.unref();
+        try {await exit;} finally {clearTimeout(timer);}
+      }
+      if(log!==undefined)closeSync(log);
+      if(passed)await rm(directory,{recursive:true});
+    }
+  });
+
+
+test('read helper binds result decoding to the overload selected by argument count', async () => {
+  const abi=parseAbi(['function lookup() returns (address)','function lookup(uint256 value) returns (uint256)']);
+  for(const [args,value] of [[[],OVERLOAD_WORD],[[19n],OVERLOAD_AMOUNT]]) {
+    const {provider,fetchMock}=makeProvider({callResult:OVERLOAD_WORD});
+    await withFetchMock(fetchMock,async()=>assert.equal(await readContract({provider,
+      address:CONTRACT,abi,functionName:'lookup',args}),value));
+  }
+});
