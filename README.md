@@ -1176,15 +1176,26 @@ const decoded = decodeFunctionResult({ abi, functionName: "echo(address)", data:
 
 The isolated helper RPC regression creates its own genesis, temporary account,
 node database and loopback port. After installing SDK dependencies, use a
-compatible node source build with RocksDB support:
+compatible node source build with RocksDB and libp2p support. In the shell-chain
+checkout, build it with `cargo build -p shell-cli --features libp2p`; then run
+these commands in the SDK checkout:
 
 ```bash
 npm run build
 SHELL_NODE_BIN=/path/to/shell-node node --test --test-name-pattern='canonical overload real RPC' tests/contracts.test.mjs
 ```
 
-It checks actual simulated read results and signed write admission for both
-original overloads; mining and public release acceptance remain separate.
+It checks both original overloads through simulated reads and genuinely signed
+ML-DSA writes, mined receipts and state, zero/MAX/truncated-input rollback,
+independent fee and nonce accounting, historical queries, P2P follower import,
+offline follower catch-up, and crash recovery with a new write after restart.
+It waits for finality before testing receipt identity across validator restart,
+since startup may rewind and requeue an unfinalized suffix.
+It generates a temporary
+validator keystore and account, uses one-second isolated dev blocks, and removes
+its own runtime after success. Failed runtimes are retained for diagnosis.
+Genesis predeployment is used; native CREATE and public package acceptance
+remain separate.
 
 Unreleased `native-address-context-v1` nodes can also compile `msg.sender`,
 `tx.origin`, `block.coinbase` and `address(this)` as full words. Set
