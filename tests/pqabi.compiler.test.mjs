@@ -424,6 +424,95 @@ test('PQABI overloads preserve inherited overrides and nonpublic typed reference
   }
 });
 
+// Occupy every legal one-character identifier, plus likely fallback names.
+const occupiedNames = [...'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz$'].filter(name=>name!=='f')
+  .concat(['$0','$1','AA','_a']).map(name=>`uint256 private ${name};`).join('');
+const crowdedOverloads = [
+  {kind:'public',scalar:true,addressSelector:'fc68521a',integerSelector:'b3de648b',array:false,
+    content:`pragma solidity ^0.8.35; contract Derived {${occupiedNames}
+      // Non-ASCII source text checks byte offsets: 地址
+      function f(address value) public pure returns(address){return value;}
+      function f(uint256 value) public pure returns(uint256){return value+1;}}`},
+  {kind:'inherited',addressSelector:'fc68521a',integerSelector:'b3de648b',array:false,
+    content:derivedOverloads[0].content.replace('contract Derived is Base {',`contract Derived is Base {${occupiedNames}`)},
+  {kind:'internal',addressSelector:'666e1b39',integerSelector:'8b0d0258',array:false,
+    content:derivedOverloads[1].content.replace('contract Derived {',`contract Derived {${occupiedNames}`)},
+  {kind:'free',addressSelector:'666e1b39',integerSelector:'8b0d0258',array:false,
+    content:derivedOverloads[2].content.replace('contract Derived {',`contract Derived {${occupiedNames}`)},
+  {kind:'array',addressSelector:'290c05ea',integerSelector:'7bc5bbbf',array:true,
+    content:derivedOverloads[3].content.replace('contract Derived {',`contract Derived {${occupiedNames}`)},
+];
+
+test('PQABI crowded overloads allocate longer names without changing the original ABI', async () => {
+  for(const {content} of crowdedOverloads) {
+    const options={sources:[{path:'Derived.sol',content}],contractName:'Derived',evmVersion:'shanghai'};
+    assert.deepEqual((await compileSolidity({...options,target:'pqvm'})).abi,(await compileSolidity(options)).abi);
+  }
+});
+
+const crowdedSignatureSource=`pragma solidity ^0.8.35; contract Derived {${occupiedNames}
+    uint256 public count;
+    function f(address value) public returns(address){count++;emit Seen(value);if(value==address(0))revert Bad(value);return value;}
+    function f(uint256 value) public pure returns(uint256){return value+1;}
+    event Seen(address value); error Bad(address value); error Denied(address value);
+    function reject(address value) public {count++;emit Seen(value);require(false,Denied(value));}
+  }`;
+
+test('PQABI longer overload names preserve shifted event and custom-error signatures', async () => {
+  const options={sources:[{path:'Derived.sol',content:crowdedSignatureSource}],contractName:'Derived',evmVersion:'shanghai',optimizer:{enabled:false}};
+  const original=await compileSolidity(options);
+  const native=await compileSolidity({...options,target:'pqvm'});
+  assert.deepEqual(native.abi,original.abi);
+  const {keccak256,stringToHex}=await import('viem');
+  const topic=keccak256(stringToHex('Seen(address)')).slice(2);
+  const error=keccak256(stringToHex('Denied(address)')).slice(2,10);
+  assert.ok(native.deployedBytecode.includes(topic));assert.ok(native.deployedBytecode.includes(error));
+  assert.ok(!native.deployedBytecode.includes(keccak256(stringToHex('Seen(uint256)')).slice(2)));
+});
+
+test('PQABI longer overload names translate signature locations across source files', async () => {
+  const sources=[{path:'Base.sol',content:'pragma solidity ^0.8.35; contract Base {event Seen(address value);error Denied(address value);function f(address value) public pure virtual returns(address){return value;}}'},
+    {path:'Derived.sol',content:`pragma solidity ^0.8.35; import "./Base.sol"; contract Derived is Base {${occupiedNames}
+      function f(address value) public pure override returns(address){return value;}
+      function f(uint256 value) public pure returns(uint256){return value+1;}
+      event Later(address value);
+      function invoke(address value) public {emit Seen(value);emit Later(value);revert Denied(value);}
+    }`}];
+  const options={sources,contractName:'Derived',evmVersion:'shanghai'};
+  const original=await compileSolidity(options);
+  const native=await compileSolidity({...options,target:'pqvm'});
+  assert.deepEqual(native.abi,original.abi);
+  const {keccak256,stringToHex}=await import('viem');
+  for(const signature of ['Seen(address)','Later(address)']) {
+    // Reverts erase logs at runtime; unoptimized IR still contains typed emission.
+    const unoptimized=await compileSolidity({...options,target:'pqvm',optimizer:{enabled:false}});
+    assert.ok(unoptimized.deployedBytecode.includes(keccak256(stringToHex(signature)).slice(2)));
+  }
+});
+
+test('PQABI longer overload names preserve later typed pure-call normalization', async () => {
+  const content=`pragma solidity ^0.8.35; interface Echo {function echo(address value) external pure returns(address);}
+    contract Derived {${occupiedNames}
+      function f(address value) public pure returns(address){return value;}
+      function f(uint256 value) public pure returns(uint256){return value+1;}
+      function invoke(address target,address value) public pure returns(address){return Echo(target).echo(value);}
+    }`;
+  const options={sources:[{path:'Derived.sol',content}],contractName:'Derived',evmVersion:'shanghai'};
+  assert.deepEqual((await compileSolidity({...options,target:'pqvm',nativeAddressContextHeight:2})).abi,
+    (await compileSolidity(options)).abi);
+});
+
+test('PQABI longer overload references survive whole native-call rewrites', async () => {
+  const content=`pragma solidity ^0.8.35; contract Derived {${occupiedNames}
+    function f(address value) internal pure returns(address){return value;}
+    function f(uint256 value) internal pure returns(uint256){return value+1;}
+    function invoke(address target,bytes memory data) public returns(bool,bytes memory){return f(target).call(data);}
+  }`;
+  const options={sources:[{path:'Derived.sol',content}],contractName:'Derived',evmVersion:'shanghai'};
+  assert.deepEqual((await compileSolidity({...options,target:'pqvm',nativeAddressContextHeight:2})).abi,
+    (await compileSolidity(options)).abi);
+});
+
 test('PQABI overloads do not repair invalid original type resolution', async () => {
   const content='pragma solidity ^0.8.35; contract Invalid {function f(uint8 value) public pure returns(uint256){return value;} function f(uint256 value) public pure returns(uint256){return value;} function bad() public pure returns(uint256){return f(50);}}';
   for (const target of ['evm','pqvm']) {
@@ -453,8 +542,7 @@ test('PQABI overload real VM: original selectors distinguish full-word address a
 });
 
 
-test('PQABI derived overload real VM: inherited internal free and array dispatch',
-  {skip:!process.env.SHELL_NODE_BIN,timeout:120000}, async () => {
+async function runDerivedOverloadVm(variants, signatureChecks=false) {
     const {mkdtemp,writeFile,rm}=await import('node:fs/promises');
     const {openSync,closeSync}=await import('node:fs');
     const {tmpdir}=await import('node:os');
@@ -497,7 +585,7 @@ test('PQABI derived overload real VM: inherited internal free and array dispatch
       }
       const before=await rpc('eth_getBlockByNumber',['latest',false]);
       const padded=value=>BigInt(value).toString(16).padStart(64,'0');
-      for(const variant of derivedOverloads) {
+      for(const variant of variants) {
         const options={sources:[{path:'Derived.sol',content:variant.content}],contractName:'Derived',evmVersion:'shanghai'};
         const original=await compileSolidity(options);
         for(const target of ['evm','pqvm']) {
@@ -505,8 +593,8 @@ test('PQABI derived overload real VM: inherited internal free and array dispatch
           assert.deepEqual(artifact.abi,original.abi);
           const {addressSelector,integerSelector,array}=variant;
           const signature=i=>i===3
-            ?(array?'f(uint256[])':variant.kind==='inherited'?'f(uint256)':'amount(uint256)')
-            :(array?'f(address[])':variant.kind==='inherited'?'f(address)':'owner(address)');
+            ?(array?'f(uint256[])':variant.kind==='inherited'||variant.scalar?'f(uint256)':'amount(uint256)')
+            :(array?'f(address[])':variant.kind==='inherited'||variant.scalar?'f(address)':'owner(address)');
           // Original ABI words and selectors are independent of the lowered compiler output.
           const input=(selector,value)=>`mstore(0,shl(224,0x${selector})) ${array?'mstore(4,32) mstore(36,1)':''} mstore(${array?68:4},0x${padded(value)})`;
           const length=array?100:36;
@@ -544,6 +632,36 @@ test('PQABI derived overload real VM: inherited internal free and array dispatch
             unknownRejected:true,overflowPanic:'0x11',...(array?{emptyArrayPanic:'0x32'}:{})});
         }
       }
+      if(signatureChecks) {
+        const {toFunctionSelector}=await import('viem');
+        const artifact=await compileSolidity({sources:[{path:'Derived.sol',content:crowdedSignatureSource}],
+          contractName:'Derived',target:'pqvm',evmVersion:'shanghai'});
+        const selector=signature=>toFunctionSelector(signature).slice(2);
+        const revert=signature=>`if iszero(eq(returndatasize(),36)){revert(0,0)} returndatacopy(128,0,36)
+          if iszero(eq(shr(224,mload(128)),0x${selector(signature)})){revert(0,0)}`;
+        const probe=`object "Probe" {code {datacopy(0,dataoffset("child"),datasize("child"))
+          let child:=create(0,0,datasize("child")) if iszero(child){revert(0,0)}
+          mstore(0,shl(224,0xfc68521a)) mstore(4,0x${first})
+          if iszero(call(gas(),child,0,0,36,256,32)){revert(0,0)}
+          if iszero(eq(mload(256),0x${first})){revert(0,0)}
+          mstore(4,0) if call(gas(),child,0,0,36,0,0){revert(0,0)} ${revert('Bad(address)')}
+          if mload(132){revert(0,0)}
+          mstore(0,shl(224,0x${selector('reject(address)')})) mstore(4,0x${second})
+          if call(gas(),child,0,0,36,0,0){revert(0,0)} ${revert('Denied(address)')}
+          if iszero(eq(mload(132),0x${second})){revert(0,0)}
+          mstore(0,shl(224,0x${selector('count()')}))
+          if iszero(staticcall(gas(),child,0,4,288,32)){revert(0,0)}
+          if iszero(eq(mload(288),1)){revert(0,0)} return(256,64)}
+          data "child" hex"${artifact.bytecode.slice(2)}"}`;
+        const output=JSON.parse(solc.compile(JSON.stringify({language:'Yul',sources:{'Probe.yul':{content:probe}},
+          settings:{evmVersion:'shanghai',outputSelection:{'*':{'*':['evm.bytecode.object']}}}})));
+        assert.equal(output.errors?.filter(error=>error.severity==='error').length??0,0);
+        const actual=await rpc('eth_call',[{data:'0x'+output.contracts['Probe.yul'].Probe.evm.bytecode.object,gas:'0x989680'},'latest']);
+        const expected='0x'+first+padded(1);
+        assert.equal(actual,expected);
+        results.push({kind:'shifted-signatures',target:'pqvm',actual,expected,
+          revertSelector:selector('Bad(address)'),requireSelector:selector('Denied(address)'),fullWordError:true,rollback:true});
+      }
       const after=await rpc('eth_getBlockByNumber',['latest',false]);
       assert.equal(after.hash,before.hash);assert.equal(after.stateRoot,before.stateRoot);
       console.log('derived overload VM acceptance',JSON.stringify(results));passed=true;
@@ -559,4 +677,9 @@ test('PQABI derived overload real VM: inherited internal free and array dispatch
       if(log!==undefined)closeSync(log);
       if(passed)await rm(directory,{recursive:true});
     }
-  });
+  }
+
+test('PQABI derived overload real VM: inherited internal free and array dispatch',
+  {skip:!process.env.SHELL_NODE_BIN,timeout:120000},()=>runDerivedOverloadVm(derivedOverloads));
+test('PQABI crowded overload real VM: longer names preserve dispatch and rejection',
+  {skip:!process.env.SHELL_NODE_BIN,timeout:120000},()=>runDerivedOverloadVm(crowdedOverloads,true));

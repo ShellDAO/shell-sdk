@@ -32,12 +32,13 @@ function restoreTopicsAndErrors(
   ir: string,
   originalSources: Record<string, AstSource>,
   loweredSources: Record<string, AstSource>,
+  sourceLocation: (location: string) => string,
 ): string {
   const originalDefinitions = new Map<string, AstNode>();
   for (const source of Object.values(originalSources)) {
     visit(source.ast, (node) => {
       if (node.nodeType === "EventDefinition" || node.nodeType === "ErrorDefinition") {
-        originalDefinitions.set(node.src!, node);
+        originalDefinitions.set(sourceLocation(node.src!), node);
       }
     });
   }
@@ -45,9 +46,8 @@ function restoreTopicsAndErrors(
   for (const source of Object.values(loweredSources)) {
     visit(source.ast, (node) => {
       if (node.nodeType !== "EventDefinition" && node.nodeType !== "ErrorDefinition") return;
-      // Both address and uint256 are seven ASCII bytes: every source range
-      // remains unchanged. Validate the declaration pairing rather than rely on
-      // the compiler assigning identical AST ids in the two compilations.
+      // Pair declarations by translated byte ranges, including longer overload
+      // names, rather than assuming identical AST ids across compilations.
       const original = originalDefinitions.get(node.src!);
       if (!original || original.name !== node.name || original.nodeType !== node.nodeType) {
         throw new Error("PQABI signature declaration source mismatch");
@@ -130,8 +130,8 @@ function restoreTopicsAndErrors(
   return output;
 }
 
-/** Give only collapsed overloads distinct backend names. Equal byte widths
- * preserve the original AST/source markers used by event and error recovery.
+/** Give only collapsed overloads distinct backend names. Prefer equal byte
+ * widths; defer longer names until other original AST edits are complete.
  * References follow Solidity's already-resolved declaration ids, so lowering
  * must never choose an overload again after address becomes uint256.
  */
@@ -204,15 +204,22 @@ function nativeOverloadAliases(
           value += alphabet[remaining % alphabet.length];
           remaining = Math.floor(remaining / alphabet.length);
         }
-        if (!used.has(value)) alias = value;
+        // An uppercase initial excludes Solidity keywords and reserved names.
+        if (/^[A-Z]/.test(value) && !used.has(value)) alias = value;
       }
-      if (!alias) throw new Error("PQABI overload backend identifier space exhausted");
+      if (!alias) {
+        // Source can occupy every name of the original width. The dollar
+        // prefix is legal in Solidity and cannot produce a reserved keyword.
+        let candidate = 0;
+        do { alias = `$${String(candidate++).padStart(width, "0")}`; } while (used.has(alias));
+      }
       used.add(alias); bySignature.set(key, alias);
     }
     byId.set(node.id!, alias);
     if (typeof node.functionSelector === "string") bySelector.set(node.functionSelector, alias);
   }
   const sources: CompilerInput["sources"] = {};
+  const longerNames = new Map<string, { start: number; length: number; alias: string }[]>();
   for (const [path, source] of Object.entries(input.sources)) {
     const replacements: { start: number; length: number; alias: string }[] = [];
     visit(originalSources[path].ast, (node) => {
@@ -223,14 +230,17 @@ function nativeOverloadAliases(
       if (node.nodeType !== "FunctionDefinition" && node.nodeType !== "Identifier") return;
       if (typeof location !== "string") throw new Error("PQABI overload name source range unavailable");
       const [start, length] = location.split(":").map(Number);
-      if (length !== Buffer.byteLength(alias)) throw new Error("PQABI overload name source range mismatch");
+      if (length !== Buffer.byteLength(node.name!)) throw new Error("PQABI overload name source range mismatch");
       replacements.push({ start, length, alias });
     });
     const content = Buffer.from(source.content);
-    for (const { start, length, alias } of replacements) content.write(alias, start, length, "utf8");
+    longerNames.set(path, replacements.filter(({ length, alias }) => length !== Buffer.byteLength(alias)));
+    for (const { start, length, alias } of replacements) {
+      if (length === Buffer.byteLength(alias)) content.write(alias, start, length, "utf8");
+    }
     sources[path] = { content: content.toString("utf8") };
   }
-  return { sources, bySelector };
+  return { sources, bySelector, longerNames };
 }
 
 function compile(input: unknown) {
@@ -336,7 +346,18 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
   }
   const sources: CompilerInput["sources"] = {};
   let hasPureTypedCall = false;
+  const longerNames = new Map<string, { start: number; length: number; alias: string }[]>();
   for (const [path, source] of Object.entries(overloads.sources)) {
+    const read = (node: AstNode) => {
+      const [start, length] = node.src!.split(":").map(Number);
+      let content = Buffer.from(source.content).subarray(start, start + length);
+      for (const edit of [...overloads.longerNames.get(path)!].sort((a, b) => b.start - a.start)) {
+        if (edit.start < start || edit.start + edit.length > start + length) continue;
+        const offset = edit.start - start;
+        content = Buffer.concat([content.subarray(0, offset), Buffer.from(edit.alias), content.subarray(offset + edit.length)]);
+      }
+      return content.toString("utf8");
+    };
     const replacements: { start: number; length: number; text: string }[] = [];
     const handled = new Set<number>();
     const helpers = new Map<string, string>();
@@ -379,10 +400,6 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
             helpers.set(key, name);
             typedDeclarations.set(name, `function ${name}(uint256 target, uint256 value) ${operation === "staticcall" ? "view " : ""}returns (${resultType}) { (bool success, bytes memory output) = ${lowName}(target, abi.encodeWithSelector(bytes4(0x${selector}), value)); if (!success) { assembly { revert(add(output, 32), mload(output)) } } return abi.decode(output, (${resultType})); }`);
           }
-          const read = (argument: AstNode) => {
-            const [start, length] = argument.src!.split(":").map(Number);
-            return Buffer.from(source.content).subarray(start, start + length).toString("utf8");
-          };
           const text = `${name}(${read(receiver)},${read(argument)})`;
           const [start, length] = node.src!.split(":").map(Number);
           if (Buffer.byteLength(text) > length) throw new Error("unsupported PQABI typed call source range");
@@ -406,10 +423,6 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
             || (value && !["Identifier", "Literal"].includes(value.nodeType ?? ""))) {
             throw new Error("PQABI native call currently requires address and bytes variables, with an optional simple value");
           }
-          const read = (argument: AstNode) => {
-            const [start, length] = argument.src!.split(":").map(Number);
-            return Buffer.from(source.content).subarray(start, start + length).toString("utf8");
-          };
           const operation = value ? "callvalue" : member.memberName!;
           const letter = value ? "v" : ({call:"k",staticcall:"s",delegatecall:"d"} as Record<string,string>)[operation];
           const name = `_${letter}${node.src!.split(":")[2]}`;
@@ -447,10 +460,9 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
       visit(node, (child) => { if (child.id !== undefined) handled.add(child.id); });
       const [start, length] = node.src!.split(":").map(Number);
       const expression = node.expression as AstNode;
-      const [receiverStart, receiverLength] = member ? expression.src!.split(":").map(Number) : [0, 0];
       const receiverOpcode = member ? builtin(expression) : undefined;
       const receiver = receiverOpcode ? `${helperName(receiverOpcode)}()`
-        : member ? Buffer.from(source.content).subarray(receiverStart, receiverStart + receiverLength).toString("utf8") : "";
+        : member ? read(expression) : "";
       const text = `${name}(${receiver})`;
       if (Buffer.byteLength(text) > length) throw new Error("unsupported PQABI native context source range");
       replacements.push({ start, length, text: text + " ".repeat(length - Buffer.byteLength(text)) });
@@ -478,6 +490,9 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
         replacements.push({ start, length, text: "uint256" });
       }
     });
+    // Whole-expression edits already render any renamed references they contain.
+    longerNames.set(path, overloads.longerNames.get(path)!.filter((edit) =>
+      !replacements.some(({ start, length }) => edit.start >= start && edit.start + edit.length <= start + length)));
     let content = Buffer.from(source.content);
     for (const { start, length, text } of replacements.sort((a, b) => b.start - a.start)) {
       content = Buffer.concat([content.subarray(0, start), Buffer.from(text), content.subarray(start + length)]);
@@ -519,6 +534,22 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
       sources[path] = {content: content.toString("utf8")};
     }
   }
+  const locationEdits = new Map<string, { start: number; length: number; alias: string }[]>();
+  for (const [path, edits] of longerNames) {
+    let content = Buffer.from(sources[path].content);
+    for (const { start, length, alias } of [...edits].sort((a, b) => b.start - a.start)) {
+      content = Buffer.concat([content.subarray(0, start), Buffer.from(alias), content.subarray(start + length)]);
+    }
+    sources[path] = { content: content.toString("utf8") };
+    locationEdits.set(original.sources[path].ast.src.split(":")[2], edits);
+  }
+  const sourceLocation = (location: string) => {
+    const [start, length, file] = location.split(":").map(Number);
+    const shift = (offset: number) => (locationEdits.get(String(file)) ?? []).reduce((delta, edit) =>
+      delta + (edit.start + edit.length <= offset ? Buffer.byteLength(edit.alias) - edit.length : 0), 0);
+    const loweredStart = start + shift(start);
+    return `${loweredStart}:${start + length + shift(start + length) - loweredStart}:${file}`;
+  };
   const lowered = compile({ ...input, sources, settings: { ...input.settings, viaIR: true, outputSelection: selection } });
   for (const [path, contracts] of Object.entries(original.contracts) as [string, Record<string, { abi: unknown; evm: { methodIdentifiers: Record<string, string> } }>][] ) {
     const originalContract = contracts[contractName];
@@ -546,7 +577,7 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
     for (const selector of selectors.keys()) {
       if (seen.get(selector) !== 1) throw new Error(`ambiguous or missing PQABI dispatcher selector ${selector}`);
     }
-    ir = restoreTopicsAndErrors(ir, original.sources, lowered.sources);
+    ir = restoreTopicsAndErrors(ir, original.sources, lowered.sources, sourceLocation);
     const yul = compile({
       language: "Yul",
       sources: { [path]: { content: ir } },
