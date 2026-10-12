@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import { setImmediate as flushTasks } from 'node:timers/promises';
 import { parseAbi, toFunctionSelector } from 'viem';
 
@@ -665,7 +666,10 @@ test('read and write helpers share explicit original overload selection', async 
 });
 
 
-test('canonical overload real RPC: mined state, P2P import and crash recovery',
+const derivedLiveCases=JSON.parse(readFileSync(new URL('./fixtures/native-derived-overloads.json',import.meta.url),'utf8'));
+for(const variant of [{kind:'canonical',array:false},...derivedLiveCases]) {
+ for(const algorithm of ['MlDsa65','Dilithium3']) {
+ test(`canonical overload real RPC: ${variant.kind}/${algorithm} mined state, P2P import and crash recovery`,
   {skip:!process.env.SHELL_NODE_BIN, timeout:120000}, async () => {
     const {mkdtemp,mkdir,writeFile,readFile,rm}=await import('node:fs/promises');
     const {openSync,closeSync}=await import('node:fs');
@@ -675,11 +679,11 @@ test('canonical overload real RPC: mined state, P2P import and crash recovery',
     const {createServer}=await import('node:net');
     const {once}=await import('node:events');
     const {randomBytes}=await import('node:crypto');
-    const {MlDsa65Adapter}=await import('../dist/adapters.js');
+    const {generateAdapter}=await import('../dist/adapters.js');
     const {ShellSigner}=await import('../dist/signer.js');
     const binary=process.env.SHELL_NODE_BIN;
-    const directory=await mkdtemp(join(tmpdir(),'shell-sdk-overload-'));
-    const signer=new ShellSigner('MlDsa65',MlDsa65Adapter.generate());
+    const directory=await mkdtemp(join(tmpdir(),`shell-sdk-overload-${variant.kind}-${algorithm}-`));
+    const signer=new ShellSigner(algorithm,generateAdapter(algorithm));
     const contract='0x'+'99'.repeat(32), zero='0x'+'00'.repeat(32);
     const second='0x'+'56'.repeat(12)+'12'.repeat(20);
     const initialBalance=10000000000000000000n, maxFee=1000000000n;
@@ -746,7 +750,7 @@ test('canonical overload real RPC: mined state, P2P import and crash recovery',
     const word=value=>'0x'+BigInt(value).toString(16).padStart(64,'0');
     async function wordsAt(name,tag) {
       const words=[];
-      for(const functionName of ['owner()','amount()','writes()']) {
+      for(const functionName of [variant.kind==='canonical'?'owner()':'nativeOwner()',variant.kind==='canonical'?'amount()':'nativeAmount()','writes()']) {
         const value=await readContract({provider:nodes[name].provider,address:contract,
           abi:artifact.abi,functionName,blockTag:tag});
         words.push(typeof value==='bigint'?word(value):value);
@@ -769,7 +773,7 @@ test('canonical overload real RPC: mined state, P2P import and crash recovery',
       assert.equal(blocks[0].hash,blocks[1].hash);
     }
     try {
-      const content=`pragma solidity ^0.8.35;
+      const content=variant.content??`pragma solidity ^0.8.35;
 contract StatefulOverloads {
  address public owner;
  uint256 public amount;
@@ -780,8 +784,11 @@ contract StatefulOverloads {
  function set(uint256 v) external returns(uint256) {amount=value(v);writes++;return amount;}
 }
 `;
-      artifact=await compileSolidity({sources:[{path:'StatefulOverloads.sol',content}],
-        contractName:'StatefulOverloads',target:'pqvm',evmVersion:'shanghai'});
+      const options={sources:[{path:'StatefulOverloads.sol',content}],
+        contractName:variant.kind==='canonical'?'StatefulOverloads':'StatefulDerived',evmVersion:'shanghai'};
+      const originalArtifact=await compileSolidity({...options,target:'evm'});
+      artifact=await compileSolidity({...options,target:'pqvm'});
+      assert.deepEqual(artifact.abi,originalArtifact.abi);
       const key=spawnSync(binary,['--password-stdin','key','generate','--algorithm','mldsa65',
         '--output',join(directory,'validator.json')],{input:password+'\n',encoding:'utf8',timeout:30000});
       assert.equal(key.status,0,key.stderr||key.stdout);
@@ -801,7 +808,7 @@ contract StatefulOverloads {
       }
       const validator=await start('validator');
       const abi=artifact.abi,original=structuredClone(abi);
-      for(const [functionName,argument,selector,expected] of OVERLOAD_CASES) {
+      for(const [functionName,argument,selector,expected] of variant.kind==='canonical'?OVERLOAD_CASES:[]) {
         assert.equal(await readContract({provider:validator.provider,address:contract,abi,functionName,args:[argument]}),expected);
         assert.equal(encodeFunctionData({abi,functionName,args:[argument]}),selector+OVERLOAD_WORD.slice(2));
       }
@@ -816,19 +823,27 @@ contract StatefulOverloads {
         ['set(address)',zero,false,[second,word(OVERLOAD_AMOUNT+1n),word(3)]],
         ['set(uint256)',(1n<<256n)-1n,false,[second,word(OVERLOAD_AMOUNT+1n),word(3)]],
         ['truncated',OVERLOAD_WORD,false,[second,word(OVERLOAD_AMOUNT+1n),word(3)]],
+        ...(variant.array?[['empty',null,false,[second,word(OVERLOAD_AMOUNT+1n),word(3)]]]:[]),
         ['set(uint256)',0n,true,[second,word(1),word(4)]],
       ];
       async function execute(step,nonce,checkFollower=true) {
         const [functionName,argument,success,words]=step;
         let hash;
-        if(functionName==='truncated') {
-          const tx=buildContractCallTransaction({address:contract,abi,functionName:'set(address)',args:[argument],
+        const signature=variant.array?functionName.replace('address)','address[])').replace('uint256)','uint256[])'):functionName;
+        const args=[variant.array?[argument,typeof argument==='bigint'?23n:second]:argument];
+        const addressSignature=variant.array?'set(address[])':'set(address)';
+        if(functionName==='truncated'||functionName==='empty') {
+          const tx=buildContractCallTransaction({address:contract,abi,functionName:addressSignature,args:functionName==='empty'?[[]]:args,
             chainId:1337,nonce,gasLimit:500000,maxFeePerGas:Number(maxFee),maxPriorityFeePerGas:0});
-          tx.data=tx.data.slice(0,-2);
+          if(functionName==='truncated')tx.data=tx.data.slice(0,-2);
           hash=await validator.provider.sendTransaction(await signer.buildSignedTransaction({tx,includePublicKey:true}));
         } else {
+          const selector=signature==='set(address)'?'0x2801617e':signature==='set(uint256)'?'0x60fe47b1':signature==='set(address[])'?'0x11f2a107':'0x6ea9bfc5';
+          const expectedData=selector+(variant.array?word(32).slice(2)+word(2).slice(2):'')+word(argument).slice(2)
+            +(variant.array?word(typeof argument==='bigint'?23n:second).slice(2):'');
+          assert.equal(encodeFunctionData({abi,functionName:signature,args}),expectedData);
           ({hash}=await writeContract({provider:nodes.validator.provider,signer,chainId:1337,nonce,address:contract,
-            abi,functionName,args:[argument],includePublicKey:true,wait:false,gasLimit:500000,
+            abi,functionName:signature,args,includePublicKey:true,wait:false,gasLimit:500000,
             maxFeePerGas:Number(maxFee),maxPriorityFeePerGas:0}));
         }
         const receipt=await waitForTransactionReceipt({provider:nodes.validator.provider,hash,timeoutMs:30000,pollIntervalMs:100});
@@ -872,7 +887,7 @@ contract StatefulOverloads {
         return true;
       },'continued write finality');
       assert.deepEqual(abi,original);
-      console.log('canonical overload live acceptance',JSON.stringify({chainId:1337,algorithm:'ML-DSA-65',
+      console.log('canonical overload live acceptance',JSON.stringify({chainId:1337,algorithm,variant:variant.kind,ordinary:true,
         receipts,history,crashRecovery:true,offlineFollowerCatchup:true,continuedWrite:true,finalized:true},(_,value)=>typeof value==='bigint'?value.toString():value));
       passed=true;
     } catch(error) {
@@ -883,6 +898,9 @@ contract StatefulOverloads {
       if(passed)await rm(directory,{recursive:true});
     }
   });
+ }
+}
+
 
 
 test('read helper binds result decoding to the overload selected by argument count', async () => {

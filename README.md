@@ -1185,10 +1185,13 @@ npm run build
 SHELL_NODE_BIN=/path/to/shell-node node --test --test-name-pattern='canonical overload real RPC' tests/contracts.test.mjs
 ```
 
-It checks both original overloads through simulated reads and genuinely signed
-ML-DSA writes, mined receipts and state, zero/MAX/truncated-input rollback,
-independent fee and nonce accounting, historical queries, P2P follower import,
-offline follower catch-up, and crash recovery with a new write after restart.
+It checks the original scalar overloads and inherited, internal, free-function
+and array compositions through genuinely signed ML-DSA-65 and Dilithium3
+writes. The original ABI is retained, and fixed selectors and manually encoded
+words check SDK calldata. Assertions cover mined receipts and state,
+zero/MAX/truncated-input rollback, empty-array rejection, independent fee and
+nonce accounting, historical queries, P2P follower import, offline follower
+catch-up, and crash recovery with a new write after restart.
 It waits for finality before testing receipt identity across validator restart,
 since startup may rewind and requeue an unfinalized suffix.
 It generates a temporary
