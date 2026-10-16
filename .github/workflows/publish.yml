@@ -21,7 +21,6 @@ jobs:
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '24'
-          registry-url: 'https://registry.npmjs.org'
           cache: 'npm'
 
       - name: Install npm with trusted publishing support
@@ -43,7 +42,22 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Publish
+      - name: Pack and verify the release archive
+        id: package
+        run: |
+          npm pack --json --pack-destination "$RUNNER_TEMP" > "$RUNNER_TEMP/pack.json"
+          filename=$(node -p "JSON.parse(require('fs').readFileSync(process.env.RUNNER_TEMP + '/pack.json'))[0].filename")
+          archive="$RUNNER_TEMP/$filename"
+          node scripts/check-release-package.mjs "$archive"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+
+      - name: Publish the verified archive
         env:
           NPM_DIST_TAG: ${{ steps.release.outputs.dist_tag }}
-        run: npm publish --provenance --access public --tag "$NPM_DIST_TAG"
+          RELEASE_ARCHIVE: ${{ steps.package.outputs.archive }}
+        run: npm publish "$RELEASE_ARCHIVE" --provenance --access public --registry https://registry.npmjs.org/ --tag "$NPM_DIST_TAG"
+
+      - name: Verify the published registry package
+        run: |
+          version=$(node -p "require('./package.json').version")
+          node scripts/check-release-package.mjs "shell-sdk@$version"
