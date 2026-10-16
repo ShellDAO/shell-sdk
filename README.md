@@ -7,14 +7,14 @@
 
 ---
 
-> **V2 signing release candidate: 0.14.0-rc.1**
+> **V2 signing release candidate: 0.14.0-rc.2**
 >
 > This source uses V2 transaction signing with canonical access-list commitments.
 > The published `shell-sdk@0.13.0` package uses V1. Match the SDK to the node's
 > signing format; mixing these versions causes signature rejection. This candidate
 > was verified against [shell-chain source `e5e759c`](https://github.com/ShellDAO/shell-chain/commit/e5e759c68948e30ccff671bfe9cb7041f0bbec10),
 > not the older `v0.27.4` release tag or the public testnet. See the
-> [compatibility notes](CHANGELOG.md#0140-rc1--unreleased) before upgrading.
+> [compatibility notes](CHANGELOG.md#0140-rc2--unreleased) before upgrading.
 
 
 ## Table of Contents
@@ -61,9 +61,9 @@
 ## Installation
 
 The default registry installation below currently selects the stable V1 release.
-For a V2 node, use a matching source build while `0.14.0-rc.1` is unreleased.
+For a V2 node, use a matching source build while `0.14.0-rc.2` is unreleased.
 After the candidate is published, opt in explicitly with
-`npm install shell-sdk@0.14.0-rc.1`; prereleases are published to `next` and do not
+`npm install shell-sdk@0.14.0-rc.2`; prereleases are published to `next` and do not
 replace `latest`. See the [contract guide](https://shell.org/zh/docs/smart-contracts)
 for a verified source-build workflow.
 
@@ -535,7 +535,9 @@ Runtime helpers are available from `shell-sdk/contracts`; Node-only Solidity
 compiler helpers are available from `shell-sdk/contracts/compiler`.
 
 Use `contracts` in browser and Node apps. Use `contracts/compiler` only from
-Node scripts because it imports `solc`.
+Node scripts. Compilation loads the optional `solc` peer on demand; install it
+with `npm install solc@^0.8.30` before compiling. CLI help and artifact reads do
+not require the compiler.
 
 | Helper | Description |
 |---|---|
@@ -1084,6 +1086,15 @@ Before publishing a `shell-sdk` release candidate:
    Publish workflow also requires this tag for manual dispatch, checks the
    lockfile version, and selects `next` for prereleases or `latest` for stable
    releases. Merging a release-preparation PR does not publish a package.
+9. Configure the npm package's **Trusted Publisher** for GitHub Actions with
+   organization `ShellDAO`, repository `shell-sdk`, workflow filename
+   `publish.yml`, no environment name, and permission to publish directly.
+   The workflow uses OIDC; it does not require an npm token secret. A registry
+   `E404` during publication can indicate a missing or mismatched publisher.
+10. The workflow packs once, installs that archive in an isolated consumer,
+    checks all public entry points, declarations and CLI, and publishes the
+    same archive. After publication it installs the exact registry version
+    again. For a manual retry, select the matching version tag in **Run workflow**.
 
 ---
 

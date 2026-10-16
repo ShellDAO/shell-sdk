@@ -1,13 +1,13 @@
 {
   "name": "shell-sdk",
-  "version": "0.14.0-rc.1",
+  "version": "0.14.0-rc.2",
   "description": "TypeScript SDK for Shell Chain — build quantum-safe dApps before Q-Day.",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "shell-sdk": "./dist/cli.js"
+    "shell-sdk": "dist/cli.js"
   },
   "exports": {
     ".": {
@@ -74,7 +74,8 @@
     "contract:compile": "npm run build && node scripts/compile-contract-fixture.mjs",
     "test:e2e:testnet": "npm run contract:compile && SHELL_SDK_E2E_TESTNET=1 node --test tests/pqvm.contract.testnet.e2e.test.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --test tests/*.test.mjs"
+    "test": "npm run build && node --test tests/*.test.mjs",
+    "test:package": "node scripts/check-release-package.mjs"
   },
   "keywords": [
     "shell-chain",

@@ -11,12 +11,10 @@
  */
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import solc from "solc";
 import type { Abi } from "viem";
 
 import type { HexString } from "./types.js";
 import type { ShellContractArtifact } from "./contracts.js";
-import { compilePqabi } from "./pqabi-compiler.js";
 
 export interface CompileSoliditySource {
   path: string;
@@ -98,8 +96,14 @@ export async function compileSolidity(
   if (options.nativeAddressContextHeight !== undefined && options.target !== "pqvm") {
     throw new Error("nativeAddressContextHeight requires the pqvm target");
   }
+  const { default: solc } = await import("solc").catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code === "ERR_MODULE_NOT_FOUND") {
+      throw new Error("Solidity compilation requires the optional solc peer; install solc@^0.8.30", { cause: error });
+    }
+    throw error;
+  });
   const output = options.target === "pqvm"
-    ? compilePqabi(input, options.contractName, options.nativeAddressContextHeight)
+    ? (await import("./pqabi-compiler.js")).compilePqabi(input, options.contractName, options.nativeAddressContextHeight)
     : JSON.parse(solc.compile(JSON.stringify(input)));
   const errors = ((output.errors ?? []) as SolcError[]).filter((entry) => entry.severity === "error");
   if (errors.length > 0) {

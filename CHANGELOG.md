@@ -1,8 +1,13 @@
 # Changelog
 
-## [0.14.0-rc.1] — Unreleased
+## [0.14.0-rc.2] — Unreleased
 
 ### Compatibility and validation
+
+- Load the optional Solidity compiler only when compilation is requested.
+  A fresh SDK installation now supports CLI help and artifact loading without
+  `solc`; compilation without that peer reports an installation instruction.
+  Package checks exercise both EVM and PQABI compilation after installing it.
 
 - Fix PQABI overload compilation when source declarations occupy all short
   backend names. Allocate longer private names without changing the original
@@ -61,6 +66,13 @@
   remain on their existing release until a coordinated stable release is ready.
 
 ### Release tooling
+
+- Verify the packed package in an isolated consumer before publication, including
+  all public entry points, type declarations and the installed CLI. Publish that
+  same archive, then verify installation from the registry.
+- Use OIDC trusted publishing without a placeholder registry token. Configure
+  the matching GitHub publisher on npm before creating a release tag.
+- The rc.1 tag did not publish to npm because registry authorization failed.
 
 - Validate that the Git release tag, package version, and lockfile version agree
   before publishing. Manual publication must also select the matching tag.
