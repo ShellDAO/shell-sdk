@@ -3,6 +3,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { setTimeout } from 'node:timers/promises';
 
 const expected = JSON.parse(readFileSync('package.json', 'utf8'));
 const consumer = mkdtempSync(path.join(tmpdir(), 'shell-sdk-package-'));
@@ -16,8 +17,22 @@ function run(command, args) {
 try {
   const spec = process.argv[2] ?? path.join(consumer, JSON.parse(execFileSync('npm',
     ['pack', '--json', '--pack-destination', consumer], { encoding: 'utf8' }))[0].filename);
-  run('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund',
-    '--no-package-lock', spec]);
+  for (let attempt = 0; ; attempt++) {
+    try {
+      run('npm', ['install', '--ignore-scripts', '--no-audit', '--no-fund',
+        '--no-package-lock', '--prefer-online', spec]);
+      break;
+    } catch (error) {
+      const message = String(error?.message);
+      const versionNotVisible = spec === `${expected.name}@${expected.version}` &&
+        message.includes('npm error code ETARGET') &&
+        message.includes(`No matching version found for ${spec}.`);
+      if (!versionNotVisible || attempt >= 2) throw error;
+      const delay = 5000 * (attempt + 1);
+      console.error(`Registry has not exposed ${spec}; retrying in ${delay / 1000}s`);
+      await setTimeout(delay);
+    }
+  }
   const root = path.join(consumer, 'node_modules', expected.name);
   const installed = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
   assert.equal(installed.version, expected.version, 'Installed version must match the release');
