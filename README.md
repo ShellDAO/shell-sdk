@@ -108,6 +108,36 @@ console.log("tx hash:", hash);
 
 ---
 
+## HD wallet recovery
+
+Shell PQ-HD v1 normalizes recovery phrases with NFKD, lowercase and single
+spaces. BIP-39 passphrases use NFKD while preserving their case and spaces.
+After securely collecting `recoveryPhrase` and `passphrase`, derive an account:
+
+```ts
+import { deriveAccount, mnemonicToSeed, mnemonicToSeedLegacy } from "shell-sdk";
+
+const seed = mnemonicToSeed(recoveryPhrase, passphrase);
+const account = deriveAccount(seed, "ml-dsa-65", 0, 0, 0);
+seed.fill(0);
+```
+
+SDK 0.14.0-rc.2 and earlier retained boundary spaces in recovery phrases and
+did not normalize Unicode passphrases. If those inputs created an existing
+wallet, recover its previous address with the original input strings:
+
+```ts
+const previousSeed = mnemonicToSeedLegacy(originalPhrase, originalPassphrase);
+const previousAccount = deriveAccount(previousSeed, "ml-dsa-65", 0, 0, 0);
+previousSeed.fill(0);
+```
+
+Match the known wallet address before using the recovered account. This
+compatibility function reproduces the previous SDK derivation; use
+`mnemonicToSeed` for new wallets. Existing encrypted seeds and account keys
+remain usable without conversion. Never log recovery phrases, seeds or account
+secret keys.
+
 ## Architecture overview
 
 ### PQ addresses

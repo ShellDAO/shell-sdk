@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.14.0-rc.3] — 2026-10-23
+
+### Fixed
+
+- Normalize PQ-HD recovery phrases and BIP-39 passphrases before seed derivation.
+  Leading/trailing mnemonic whitespace and Unicode passphrases previously
+  produced different accounts from the Rust node and the PQ-HD v1 specification.
+  Canonical mnemonics with ASCII passphrases retain their existing addresses.
+  Export `mnemonicToSeedLegacy` to recover addresses created with the previous
+  SDK normalization; encrypted seeds and account keys require no migration.
+
 ## [0.14.0-rc.2] — Unreleased
 
 ### Compatibility and validation

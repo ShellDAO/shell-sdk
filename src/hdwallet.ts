@@ -117,7 +117,12 @@ export function generateMnemonic(strength: 128 | 256 = 256): string {
  * @returns `true` if all words are in the BIP-39 English wordlist and checksum is valid.
  */
 export function validateHdMnemonic(mnemonic: string): boolean {
-  return validateMnemonic(mnemonic, english);
+  return validateMnemonic(normalizeMnemonic(mnemonic), english);
+}
+
+function normalizeMnemonic(mnemonic: string): string {
+  // Match Rust's split_whitespace (Unicode White_Space), including U+0085.
+  return mnemonic.normalize("NFKD").toLowerCase().split(/\p{White_Space}+/u).filter(Boolean).join(" ");
 }
 
 // ── Seed derivation ───────────────────────────────────────────────────────────
@@ -125,23 +130,41 @@ export function validateHdMnemonic(mnemonic: string): boolean {
 /**
  * Derive the 512-bit seed from a BIP-39 mnemonic (PBKDF2-HMAC-SHA512).
  *
- * Normalization: NFKD, lowercase, single-space-joined — applied before PBKDF2.
+ * Mnemonic normalization: NFKD, lowercase, trimmed and single-space-joined.
+ * The passphrase uses BIP-39 NFKD normalization, preserving case and spaces.
  *
  * @param mnemonic - BIP-39 mnemonic (12 or 24 words).
  * @param passphrase - Optional BIP-39 passphrase (default: empty string).
  * @returns 64-byte seed (512 bits).
  */
 export function mnemonicToSeed(mnemonic: string, passphrase = ""): Uint8Array {
+  return seedFromText(normalizeMnemonic(mnemonic), passphrase.normalize("NFKD"));
+}
+
+/**
+ * Recover a wallet created with the SDK's previous input normalization.
+ *
+ * Preserves leading/trailing mnemonic spaces and unnormalized passphrase bytes
+ * exactly as SDK 0.14.0-rc.2 and earlier did. Use only to recover a known legacy
+ * address; new wallets should use {@link mnemonicToSeed}.
+ */
+export function mnemonicToSeedLegacy(mnemonic: string, passphrase = ""): Uint8Array {
   const normalized = mnemonic
     .split(/\s+/)
     .map(w => w.normalize("NFKD").toLowerCase())
     .join(" ");
+  return seedFromText(normalized, passphrase);
+}
+
+function seedFromText(normalized: string, passphrase: string): Uint8Array {
   const mnemonicBytes = new TextEncoder().encode(normalized);
   const saltBytes = new TextEncoder().encode("mnemonic" + passphrase);
-  const seed = pbkdf2(sha512, mnemonicBytes, saltBytes, { c: 2048, dkLen: 64 });
-  mnemonicBytes.fill(0);
-  saltBytes.fill(0);
-  return seed;
+  try {
+    return pbkdf2(sha512, mnemonicBytes, saltBytes, { c: 2048, dkLen: 64 });
+  } finally {
+    mnemonicBytes.fill(0);
+    saltBytes.fill(0);
+  }
 }
 
 // ── HD tree ───────────────────────────────────────────────────────────────────

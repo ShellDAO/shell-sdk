@@ -220,6 +220,7 @@ export {
   generateMnemonic,
   masterNodeFromSeed,
   mnemonicToSeed,
+  mnemonicToSeedLegacy,
   parsePath,
   validateHdMnemonic,
   type HdAccount,
