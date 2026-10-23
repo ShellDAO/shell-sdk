@@ -9,6 +9,8 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { pbkdf2Sync } from "node:crypto";
+import { mnemonicToSeedLegacy } from "../dist/index.js";
 
 import {
   generateMnemonic,
@@ -89,6 +91,33 @@ test("mnemonicToSeed: different passphrases produce different seeds", () => {
   const s1 = mnemonicToSeed(m, "");
   const s2 = mnemonicToSeed(m, "passphrase");
   assert.notEqual(bytesToHex(s1), bytesToHex(s2));
+});
+
+test("mnemonic recovery follows normalized BIP-39 text and preserves passphrase spaces", () => {
+  const mnemonic = generateMnemonic();
+  const input = " \t" + mnemonic.toUpperCase().replaceAll(" ", "\u3000  ") + "\n";
+  const passphrase = " é㍍パスフレーズ ";
+  const expected = pbkdf2Sync(mnemonic, "mnemonic" + passphrase.normalize("NFKD"), 2048, 64, "sha512");
+  assert.ok(Buffer.from(mnemonicToSeed(input, passphrase)).equals(expected));
+  assert.ok(Buffer.from(mnemonicToSeed(input, passphrase.normalize("NFD"))).equals(expected));
+  assert.equal(validateHdMnemonic(input), true);
+  assert.ok(!Buffer.from(mnemonicToSeed(input, passphrase.trim())).equals(expected));
+});
+
+test("legacy recovery retains the previous seed and both algorithm addresses", () => {
+  const input = "  " + generateMnemonic() + "  ";
+  const passphrase = "é㍍";
+  const previousText = input.split(/\s+/).map(w => w.normalize("NFKD").toLowerCase()).join(" ");
+  const previousSeed = pbkdf2Sync(previousText, "mnemonic" + passphrase, 2048, 64, "sha512");
+  const recovered = mnemonicToSeedLegacy(input, passphrase);
+  assert.ok(Buffer.from(recovered).equals(previousSeed));
+  assert.ok(!Buffer.from(mnemonicToSeed(input, passphrase)).equals(previousSeed));
+  for (const algo of ["ml-dsa-65", "slh-dsa-sha2-256f"]) {
+    assert.equal(deriveAccount(recovered, algo).address, deriveAccount(previousSeed, algo).address);
+    assert.notEqual(deriveAccount(recovered, algo).address, deriveAccount(mnemonicToSeed(input, passphrase), algo).address);
+  }
+  const canonical = generateMnemonic();
+  assert.ok(Buffer.from(mnemonicToSeedLegacy(canonical, "ascii")).equals(Buffer.from(mnemonicToSeed(canonical, "ascii"))));
 });
 
 // ── Master node ───────────────────────────────────────────────────────────────
