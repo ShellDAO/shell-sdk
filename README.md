@@ -7,14 +7,15 @@
 
 ---
 
-> **V2 signing release candidate: 0.14.0-rc.2**
+> **V2 signing release candidate: 0.14.0-rc.3**
 >
 > This source uses V2 transaction signing with canonical access-list commitments.
 > The published `shell-sdk@0.13.0` package uses V1. Match the SDK to the node's
 > signing format; mixing these versions causes signature rejection. This candidate
 > was verified against [shell-chain source `e5e759c`](https://github.com/ShellDAO/shell-chain/commit/e5e759c68948e30ccff671bfe9cb7041f0bbec10),
 > not the older `v0.27.4` release tag or the public testnet. See the
-> [compatibility notes](CHANGELOG.md#0140-rc2--unreleased) before upgrading.
+> [compatibility notes](CHANGELOG.md#0140-rc2--unreleased) and
+> [PQ-HD recovery correction](CHANGELOG.md#0140-rc3--2026-10-23) before upgrading.
 
 
 ## Table of Contents
@@ -61,9 +62,8 @@
 ## Installation
 
 The default registry installation below currently selects the stable V1 release.
-For a V2 node, use a matching source build while `0.14.0-rc.2` is unreleased.
-After the candidate is published, opt in explicitly with
-`npm install shell-sdk@0.14.0-rc.2`; prereleases are published to `next` and do not
+For a V2 node, opt in explicitly to the published candidate with
+`npm install shell-sdk@0.14.0-rc.3`. Prereleases use the `next` channel and do not
 replace `latest`. See the [contract guide](https://shell.org/zh/docs/smart-contracts)
 for a verified source-build workflow.
 
@@ -109,6 +109,10 @@ console.log("tx hash:", hash);
 ---
 
 ## HD wallet recovery
+
+Use `npm install shell-sdk@0.14.0-rc.3` for the corrected recovery behavior and
+`mnemonicToSeedLegacy` helper below. This is a V2 signing package; match the
+network signing format before sending transactions.
 
 Shell PQ-HD v1 normalizes recovery phrases with NFKD, lowercase and single
 spaces. BIP-39 passphrases use NFKD while preserving their case and spaces.
