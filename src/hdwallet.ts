@@ -121,7 +121,8 @@ export function validateHdMnemonic(mnemonic: string): boolean {
 }
 
 function normalizeMnemonic(mnemonic: string): string {
-  return mnemonic.normalize("NFKD").toLowerCase().trim().split(/\s+/).join(" ");
+  // Match Rust's split_whitespace (Unicode White_Space), including U+0085.
+  return mnemonic.normalize("NFKD").toLowerCase().split(/\p{White_Space}+/u).filter(Boolean).join(" ");
 }
 
 // ── Seed derivation ───────────────────────────────────────────────────────────

@@ -101,6 +101,9 @@ test("mnemonic recovery follows normalized BIP-39 text and preserves passphrase 
   assert.ok(Buffer.from(mnemonicToSeed(input, passphrase)).equals(expected));
   assert.ok(Buffer.from(mnemonicToSeed(input, passphrase.normalize("NFD"))).equals(expected));
   assert.equal(validateHdMnemonic(input), true);
+  const unicodeSpaceInput = "\u0085" + mnemonic.replaceAll(" ", "\u0085 ") + "\u0085";
+  assert.equal(validateHdMnemonic(unicodeSpaceInput), true);
+  assert.ok(Buffer.from(mnemonicToSeed(unicodeSpaceInput, passphrase)).equals(expected));
   assert.ok(!Buffer.from(mnemonicToSeed(input, passphrase.trim())).equals(expected));
 });
 
