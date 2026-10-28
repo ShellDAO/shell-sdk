@@ -1,4 +1,5 @@
 import solc from "solc";
+import { rejectEcrecover } from "./compiler-restrictions.js";
 
 interface CompilerInput {
   language: string;
@@ -315,6 +316,7 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
     "*": { "": ["ast"], "*": ["abi", "evm.methodIdentifiers", "ir"] },
   };
   const original = compile({ ...input, settings: { ...input.settings, outputSelection: selection } });
+  rejectEcrecover(original.sources);
   let hasAddress = false;
   for (const source of Object.values(original.sources) as { ast: unknown }[]) {
     visit(source.ast, (node) => {

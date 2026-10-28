@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Reject Solidity's built-in `ecrecover` during compilation for every Shell
+  target, before saving an artifact. A contract using classical recovery could
+  previously compile and deploy, then return a zero identity for a valid ECDSA
+  signature on the native node. Diagnose the resolved builtin before PQABI
+  lowering while allowing shadowed user functions and PQ precompile calls.
+
 ## [0.14.0-rc.3] — 2026-10-23
 
 ### Fixed
