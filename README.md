@@ -1173,14 +1173,17 @@ nonce or funding and does not guarantee sponsorship at a later state or height.
 
 ### Experimental PQABI compiler target
 
-The unreleased compiler rejects Solidity's built-in `ecrecover` in every target,
-including the default `evm` target. The error identifies its source file and byte
-offset before an artifact is saved. Shell Chain replaces classical recovery with
-post-quantum verification, so an Ethereum recovery dependency must be replaced
-before deployment. This check uses resolved Solidity identifiers; comments,
-strings and user-defined functions named `ecrecover` are unaffected. Direct
+The unreleased compiler rejects Solidity's built-in `ecrecover`, `sha256` and
+`ripemd160` in every target, including the default `evm` target. The error
+identifies its source file and byte offset before an artifact is saved. Those
+classical precompile addresses host Shell's PQ suite, so an Ethereum dependency
+can otherwise execute a different operation and return an incorrect identity or
+digest. Adapt dependencies to explicit Shell PQ precompile calls before
+deployment; hash migrations must also update expected digests and protocols that
+depend on them. This check uses resolved Solidity identifiers; comments,
+strings and user-defined functions with those names are unaffected. Direct
 assembly and low-level calls are outside this source check. Published SDK
-0.14.0-rc.3 and earlier do not provide this diagnostic.
+0.14.0-rc.3 and earlier do not provide these diagnostics.
 
 In the development version, `compileSolidity({ ...options, target: "pqvm" })`
 (or `shell-sdk contract compile ... --pqvm`) compiles Solidity `address` values

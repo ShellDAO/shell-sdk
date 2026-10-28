@@ -42,6 +42,26 @@ test('resolved recovery in a Solidity library dependency is rejected', async () 
   }), /ecrecover builtin \(Recover\.sol, byte \d+\)/);
 });
 
+test('classical hash builtins reject for every compiler target before saving an artifact', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'shell-compiler-hash-'));
+  try {
+    for (const target of [undefined, 'evm', 'pqvm']) {
+      for (const [builtin, result] of [['sha256', 'bytes32'], ['ripemd160', 'bytes20']]) {
+        const outputPath = join(dir, 'Hash.json');
+        await assert.rejects(compileSolidity({
+          sources: [{ path: 'Hash.sol', content: `pragma solidity ^0.8.26;
+            contract Hash { function digest(bytes memory input) external pure returns(${result}) {
+              return ${builtin}(input);
+            } }` }], contractName: 'Hash', target, outputPath,
+        }), new RegExp(`Solidity ${builtin} builtin \\(Hash\\.sol, byte \\d+\\)`));
+        await assert.rejects(access(outputPath), { code: 'ENOENT' });
+      }
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('comments, strings, shadowed functions and PQ precompile calls remain compilable', async () => {
   for (const target of [undefined, 'pqvm']) {
     const artifact = await compileSolidity({
@@ -49,8 +69,10 @@ test('comments, strings, shadowed functions and PQ precompile calls remain compi
         contract Allowed {
           // ecrecover is disabled; this user function just returns an integer.
           function ecrecover(uint256 n) internal pure returns(uint256) { return n + 1; }
-          function label() external pure returns(string memory) { return "ecrecover"; }
-          function value(uint256 n) external pure returns(uint256) { return ecrecover(n); }
+          function sha256(uint256 n) internal pure returns(uint256) { return n + 2; }
+          function ripemd160(uint256 n) internal pure returns(uint256) { return n + 3; }
+          function label() external pure returns(string memory) { return "ecrecover sha256 ripemd160"; }
+          function value(uint256 n) external pure returns(uint256) { return ecrecover(n) + sha256(n) + ripemd160(n); }
           function verify(bytes memory input) external view returns(bool,bytes memory) {
             address target = address(1); return target.staticcall(input);
           }
@@ -76,6 +98,30 @@ test('the contract compile CLI reports unsupported recovery and exits without an
       assert.equal(result.status, 1, result.stderr);
       assert.match(result.stderr, /Shell Chain does not support the Solidity ecrecover builtin/);
       await assert.rejects(access(output), { code: 'ENOENT' });
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('the contract compile CLI rejects classical hash dependencies in EVM and PQVM mode', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'shell-cli-hash-'));
+  try {
+    for (const [builtin, result] of [['sha256', 'bytes32'], ['ripemd160', 'bytes20']]) {
+      const source = join(dir, 'Hash.sol'), output = join(dir, 'Hash.json');
+      await writeFile(source, `pragma solidity ^0.8.26;
+        contract Hash { function digest(bytes memory input) external pure returns(${result}) {
+          return ${builtin}(input);
+        } }`);
+      for (const flags of [[], ['--pqvm']]) {
+        const compiled = spawnSync(process.execPath, ['dist/cli.js', 'contract', 'compile',
+          '--source', source, '--contract', 'Hash', '--out', output, ...flags], {
+          encoding: 'utf8', timeout: 30000,
+        });
+        assert.equal(compiled.status, 1, compiled.stderr);
+        assert.match(compiled.stderr, new RegExp(`Solidity ${builtin} builtin`));
+        await assert.rejects(access(output), { code: 'ENOENT' });
+      }
     }
   } finally {
     await rm(dir, { recursive: true, force: true });

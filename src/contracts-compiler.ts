@@ -15,7 +15,7 @@ import type { Abi } from "viem";
 
 import type { HexString } from "./types.js";
 import type { ShellContractArtifact } from "./contracts.js";
-import { rejectEcrecover } from "./compiler-restrictions.js";
+import { rejectUnsupportedBuiltins } from "./compiler-restrictions.js";
 
 export interface CompileSoliditySource {
   path: string;
@@ -114,7 +114,7 @@ export async function compileSolidity(
       .join("\n");
     throw new Error(`Solidity compile failed:\n${message}`);
   }
-  rejectEcrecover(output.sources ?? {});
+  rejectUnsupportedBuiltins(output.sources ?? {});
 
   let selectedSourcePath: string | null = null;
   let selectedContract: SolcCompiledContract | null = null;
