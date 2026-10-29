@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Match native session signing hashes when the value cap is zero. Previously
+  zero-value-only sessions were rejected as invalid signatures, including
+  sponsored transactions. Nonzero caps and protocol wire rules are unchanged.
+
 - Correct session-key examples to include the authorization before hashing and
   select the actual session signature algorithm. Document finalized-envelope
   assembly, separate root public-key context and exclusive candidate-height expiry.

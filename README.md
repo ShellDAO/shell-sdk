@@ -1015,6 +1015,14 @@ charged separately. Every inner call must match a restricted target. Expiry is
 exclusive at the candidate height: an authorization expiring at block 5 is
 already rejected when head 4 would admit it for candidate 5.
 
+A zero value cap permits only calls that transfer no native value. It requires
+the unreleased zero-cap signing-hash fix: `0.14.0-rc.3` computes a different
+hash from the node and rejects these sessions, with or without a gas sponsor.
+The corrected SDK source was checked against public node v0.27.13 with a
+zero-balance HD root and an EOA gas sponsor, including a reverted atomic batch,
+exact sponsor fees, independent import and database reopens. This does not
+establish zero-cap support in the published npm package.
+
 The corrected recipe was exercised with public `shell-sdk@0.14.0-rc.3` and the
 v0.27.13 native node, using fresh HD keys on an isolated development chain.
 Transfer/state changes, cap/target/signature refusals, the expiry boundary,

@@ -407,3 +407,80 @@ test('buildSignedTransaction: aaBundle takes precedence over aaBbundle', () => {
   });
   assert.deepEqual(signed.aa_bundle, DUMMY_BUNDLE, 'aaBundle must take precedence over aaBbundle');
 });
+
+
+// SessionAuth encodes its U256 cap as minimal bytes with a single zero byte for zero.
+// Golden vectors use native fixed-width transaction fields and independent RLP encoding.
+test('zero-value session caps match native batch and paymaster signing domains', () => {
+  const vectors = [
+  {
+    "cap": 0,
+    "target": null,
+    "sponsored": false,
+    "batch": "0x200ebfe5c35ccff4d2a6621bbd63aec64c12acb5956e5bb786ce1f284a91eff8"
+  },
+  {
+    "cap": 0,
+    "target": null,
+    "sponsored": true,
+    "batch": "0x10d0a3b484845ecf78baf6aff43feeccd43322b2d3ec0dbb53788d784090a0d8",
+    "paymaster": "0xf1b39f3d18ac50d721f548aec6bed57928c42fad4891b71f52e5adcad1cacf6a"
+  },
+  {
+    "cap": 0,
+    "target": "0x1111111111111111111111111111111111111111111111111111111111111111",
+    "sponsored": false,
+    "batch": "0xfd8e6f114212260b12cb08b49f4d24cc84107d189eac9c2df16f5cf76e8d4be7"
+  },
+  {
+    "cap": 0,
+    "target": "0x1111111111111111111111111111111111111111111111111111111111111111",
+    "sponsored": true,
+    "batch": "0x39232493764d928af8a1608a7ef3f0ae0df5e9c347df2b50a04a40b5d3482e71",
+    "paymaster": "0x4f4dfa29350fce11a47b5f6f0e79172143f86b34f3c162ce455897f360b28891"
+  },
+  {
+    "cap": 1,
+    "target": null,
+    "sponsored": false,
+    "batch": "0xa0e74343e286833de6a633e1c4694f4a274cf5acee1b7fa327da0393a7fe30a9"
+  },
+  {
+    "cap": 1,
+    "target": null,
+    "sponsored": true,
+    "batch": "0x5f6d91d11c14d847d359a4cd302297b66892a09fbfeee384aac376554c1e03a7",
+    "paymaster": "0x491dcd045935633ece80ff6792ab15bce38a21c71865d531e2e9f134ea7fe34b"
+  },
+  {
+    "cap": 1,
+    "target": "0x1111111111111111111111111111111111111111111111111111111111111111",
+    "sponsored": false,
+    "batch": "0x4e24c82a4fecbb443cf61595660f892a3a83b6fb929aaf53f66dbd215665e370"
+  },
+  {
+    "cap": 1,
+    "target": "0x1111111111111111111111111111111111111111111111111111111111111111",
+    "sponsored": true,
+    "batch": "0x4437e53df1ac632ae6dfd6588318c4ec5ed661a96f0edf799b1de5bfc2919e88",
+    "paymaster": "0x777d967ec1d1fa032317ecd9ded0d89678a44b277cebce7efe890d52bae6a53b"
+  }
+];
+  for (const vector of vectors) {
+    const { tx, aa_bundle } = buildSessionKeyTransaction({
+      chainId: 1, nonce: 0, gasLimit: 100000,
+      maxFeePerGas: 1000000000, maxPriorityFeePerGas: 0,
+      innerCalls: [{ to: `0x${'42'.repeat(32)}`, value: '0x0', data: '0x', gas_limit: '0x5208' }],
+      sessionAuth: {
+        session_pubkey: Array(32).fill(0xa5), session_algo: 1, target: vector.target,
+        value_cap: `0x${vector.cap}`, expiry_block: 42,
+        root_signature: [1], session_signature: [2],
+      },
+    });
+    if (vector.sponsored) aa_bundle.paymaster = `0x${'99'.repeat(32)}`;
+    assert.equal(hexBytes(hashBatchTransaction(tx, aa_bundle, 'MlDsa65')), vector.batch, JSON.stringify(vector));
+    if (vector.sponsored) {
+      assert.equal(hexBytes(hashPaymasterTransaction(`0x${'42'.repeat(32)}`, tx, aa_bundle, 'MlDsa65')), vector.paymaster);
+    }
+  }
+});

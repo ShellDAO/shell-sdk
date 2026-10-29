@@ -769,7 +769,8 @@ export function hashBatchTransaction(
         bundle.session_auth.target
           ? bytesToHex(shellAddressToBytes(bundle.session_auth.target))
           : "0x",
-        toRlpUint(bundle.session_auth.value_cap),
+        // Native SessionAuth uses one zero byte for a zero U256 cap.
+        BigInt(bundle.session_auth.value_cap) === 0n ? "0x00" : toRlpUint(bundle.session_auth.value_cap),
         toRlpUint(bundle.session_auth.expiry_block),
       ] as const
     : undefined;
