@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Expose optional batch-estimation `simulation_status` from the unreleased node
+  correction. Preserve legacy responses and omitted gas caps; distinguish ordered
+  private simulation from budget-only results without changing wire signing.
+  Verified with [unreleased node source](https://github.com/ShellDAO/shell-chain/commit/3019a338fde55cb49e51fd602b7ba876f4fc5892); public v0.27.13 retains independent simulations.
+
+
 ## [0.14.0-rc.3] — 2026-10-23
 
 ### Fixed

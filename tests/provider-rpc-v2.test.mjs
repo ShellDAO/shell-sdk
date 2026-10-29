@@ -412,3 +412,20 @@ test('paymaster simulation preserves complete cost inputs and measured response'
     globalThis.fetch = originalFetch;
   }
 });
+
+
+test('estimateBatch preserves optional capability and omitted caps without inventing execution', async () => {
+  const request = { from: '0x' + '42'.repeat(32), inner_calls: [{ to: '0x' + '35'.repeat(32), value: '0x0', data: '0x' }] };
+  for (const status of [undefined, 'budget_only', 'simulated']) {
+    const response = { total_gas: '0xa410', outer_intrinsic: '0x5208', inner_sum: '0x5208', intrinsic_surcharge: '0x0', per_inner: [{ gas_limit: '0x5208', simulated: status === 'simulated' }], ...(status ? { simulation_status: status } : {}) };
+    globalThis.fetch = async (_url, init) => {
+      const body = JSON.parse(init.body);
+      assert.equal(body.method, 'shell_estimateBatch');assert.deepEqual(body.params, [request]);
+      assert.equal(body.params[0].inner_calls[0].gas_limit, undefined);
+      return rpc({ jsonrpc: '2.0', id: body.id, result: response });
+    };
+    const provider = createShellProvider({ rpcHttpUrl: 'https://rpc.devnet.shell.local' });
+    const actual = await provider.estimateBatch(request);
+    assert.deepEqual(actual, response);assert.equal(actual.simulation_status, status);
+  }
+});

@@ -1392,3 +1392,29 @@ panic `0x32`. The live head and root stay unchanged. This is readonly source
 acceptance; signed stateful execution, persistence and public package delivery
 for these forms remain separate. Successful temporary runtimes are removed
 after the child exits; failures retain their runtime for diagnosis.
+
+
+### Ordered batch estimation capability
+
+The unreleased node correction adds optional `simulation_status` to
+`provider.estimateBatch`. Older server responses omit it; the SDK preserves that
+absence. When you require ordered execution, omit the inner caps and inspect the
+capability before using the result:
+
+```typescript
+const estimate = await provider.estimateBatch({
+  from,
+  inner_calls: innerCallsWithoutCaps,
+});
+if (estimate.simulation_status !== "simulated") {
+  throw new Error("This response does not establish ordered batch simulation");
+}
+```
+
+`budget_only` retains supplied-cap arithmetic without executing calls. With the
+node correction, `simulated` executes the entire ordered batch privately, including
+explicit-cap dependencies, and derives missing caps from gross gas plus a buffer.
+Neither result proves signatures, sponsorship, admission or future inclusion.
+The total is structural rather than an exact fee quote. Published node v0.27.13
+can reject a valid dependent batch because it simulates missing caps separately;
+these typings do not change old node behavior or establish a published correction.

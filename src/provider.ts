@@ -709,6 +709,9 @@ export class ShellProvider {
    * Estimate gas for a native AA batch transaction.
    *
    * Calls `shell_estimateBatch`.
+   * New node source reports optional `simulation_status`: missing caps execute
+   * the ordered batch privately; all supplied caps remain budget-only. Older
+   * responses omit the field. Authentication and sponsorship are not established.
    *
    * @param request - Batch estimate request with inner calls and optional paymaster.
    * @returns Gas estimates including `total_gas`, `per_inner`, and breakdown fields.

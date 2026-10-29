@@ -458,7 +458,7 @@ export interface ShellEstimateBatchRequest {
 export interface ShellBatchInnerGas {
   /** Gas limit as hex string. */
   gas_limit: string;
-  /** `true` if the node simulated this call (no `gas_limit` was provided). */
+  /** `true` when this cap was derived from simulation rather than supplied. */
   simulated: boolean;
 }
 
@@ -466,6 +466,8 @@ export interface ShellBatchInnerGas {
  * Response from `shell_estimateBatch`.
  */
 export interface ShellEstimateBatchResult {
+  /** Optional node capability. Absent on older servers; do not infer ordered execution. */
+  simulation_status?: 'simulated' | 'budget_only';
   /** Total gas (outer intrinsic + inner sum + surcharge) as hex string. */
   total_gas: string;
   /** Outer transaction intrinsic gas (always `"0x5208"` = 21 000). */
