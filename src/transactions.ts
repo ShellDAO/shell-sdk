@@ -987,21 +987,13 @@ export interface BuildSessionKeyTransactionOptions extends BuildBatchTransaction
  *
  * @example
  * ```typescript
- * const { tx, aa_bundle } = buildSessionKeyTransaction({
- *   chainId: 424242,
- *   nonce: 0,
- *   innerCalls: [...],
- *   sessionAuth: {
- *     session_pubkey: Array.from(sessionPubkeyBytes),
- *     session_algo: 0,
- *     target: null,
- *     value_cap: "0xde0b6b3a7640000",
- *     expiry_block: 500,
- *     root_signature: Array.from(rootSigBytes),
- *     session_signature: Array.from(sessionSigBytes),
- *   },
- * });
- * const signingHash = hashBatchTransaction(tx, aa_bundle);
+ * // options contains chainId, nonce, innerCalls and the full session gas budget.
+ * // draftAuth comes from createSessionAuth; its session_signature is still empty.
+ * const draft = buildBatchTransaction(options);
+ * draft.aa_bundle.session_auth = draftAuth;
+ * const signingHash = hashBatchTransaction(draft.tx, draft.aa_bundle, "MlDsa65");
+ * const sessionAuth = await finalizeSessionAuth(draftAuth, sessionAdapter, signingHash);
+ * const { tx, aa_bundle } = buildSessionKeyTransaction({ ...options, sessionAuth });
  * ```
  */
 export function buildSessionKeyTransaction(options: BuildSessionKeyTransactionOptions): {

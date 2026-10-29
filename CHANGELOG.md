@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Correct session-key examples to include the authorization before hashing and
+  select the actual session signature algorithm. Document finalized-envelope
+  assembly, separate root public-key context and exclusive candidate-height expiry.
+  Public SDK 0.14.0-rc.3 APIs and native node v0.27.13 pass the corrected flow;
+  transaction wire format and runtime APIs are unchanged.
+
 ## [0.14.0-rc.3] — 2026-10-23
 
 ### Fixed

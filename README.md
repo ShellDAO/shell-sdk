@@ -36,6 +36,7 @@
 - [End-to-end examples](#end-to-end-examples)
   - [Wallet extension background flow](#wallet-extension-background-flow)
   - [Minimal dApp flow](#minimal-dapp-flow)
+- [Session-key transactions](#session-key-transactions)
 - [Key rotation](#key-rotation)
 - [Error handling](#error-handling)
 - [TypeScript types reference](#typescript-types-reference)
@@ -944,6 +945,82 @@ const history = await provider.getTransactionsByAddress(account, { page: 1, limi
 console.log("recent txs:", history.transactions);
 console.log("total:", history.total);
 ```
+
+---
+
+## Session-key transactions
+
+Attach the root-issued authorization to the batch **before** hashing it and
+pass the session signing algorithm explicitly. The default hash algorithm is
+legacy Dilithium3; it does not match an ML-DSA session. The outer signature must
+be the same bytes and algorithm as `session_auth.session_signature`, while
+`sender_pubkey` identifies the root account.
+
+This example uses an unrotated, funded ML-DSA root. Supply `mnemonic`, `passphrase` (empty when unused), `chainId`,
+`nonce`, `expiryBlock`, `target` and `calldata` from the wallet/network context.
+Keep seed access in the privileged wallet signer. The root signs the delegation
+once; it is disposed before the session signs the transaction. Do not persist
+session secret keys.
+
+```typescript
+import {
+  mnemonicToSeed, deriveAccount, deriveSessionKey, MlDsa65Adapter,
+  createSessionAuth, finalizeSessionAuth, buildBatchTransaction,
+  buildSessionKeyTransaction, buildInnerCall, hashBatchTransaction,
+  buildSignedTransaction,
+} from "shell-sdk";
+
+// Run inside the wallet's privileged signer with an unlocked mnemonic.
+const seed = mnemonicToSeed(mnemonic, passphrase);
+const rootAccount = deriveAccount(seed, "ml-dsa-65");
+const sessionAccount = deriveSessionKey(seed, "ml-dsa-65", 0);
+const rootAdapter = MlDsa65Adapter.fromKeyPair(rootAccount.publicKey, rootAccount.secretKey);
+const sessionAdapter = MlDsa65Adapter.fromKeyPair(sessionAccount.publicKey, sessionAccount.secretKey);
+let signed;
+try {
+  const draftAuth = await createSessionAuth(rootAdapter, sessionAccount.publicKey, sessionAccount.algoId, {
+    chainId: BigInt(chainId), expiryBlock, valueCap: 2n, target,
+  });
+  rootAdapter.dispose();
+  rootAccount.secretKey.fill(0);
+
+  const options = {
+    chainId, nonce, innerCalls: [buildInnerCall(target, calldata, 100000, 2n)],
+    gasLimit: 500000, maxFeePerGas: 1000000000000, maxPriorityFeePerGas: 0,
+  };
+  const draft = buildBatchTransaction(options);
+  draft.aa_bundle.session_auth = draftAuth;
+  const signingHash = hashBatchTransaction(draft.tx, draft.aa_bundle, "MlDsa65");
+  const finalAuth = await finalizeSessionAuth(draftAuth, sessionAdapter, signingHash);
+  const { tx, aa_bundle } = buildSessionKeyTransaction({ ...options, sessionAuth: finalAuth });
+  signed = buildSignedTransaction({
+    from: rootAccount.address, tx, aaBundle: aa_bundle,
+    signature: finalAuth.session_signature, signatureType: "MlDsa65",
+    senderPubkey: rootAccount.publicKey,
+  });
+} finally {
+  rootAdapter.dispose(); sessionAdapter.dispose();
+  rootAccount.secretKey.fill(0); sessionAccount.secretKey.fill(0); seed.fill(0);
+}
+// Submit signed with provider.sendTransaction(signed).
+```
+
+`buildSessionKeyTransaction` expects a finalized authorization. Use
+`buildBatchTransaction` for the draft whose signing hash is not yet known;
+`createSessionAuth` alone returns an unsigned session draft. Empty session
+signatures remain invalid for submission.
+
+The value cap limits the sum of inner-call values **per transaction**; fees are
+charged separately. Every inner call must match a restricted target. Expiry is
+exclusive at the candidate height: an authorization expiring at block 5 is
+already rejected when head 4 would admit it for candidate 5.
+
+The corrected recipe was exercised with public `shell-sdk@0.14.0-rc.3` and the
+v0.27.13 native node, using fresh HD keys on an isolated development chain.
+Transfer/state changes, cap/target/signature refusals, the expiry boundary,
+continued root authority, independent import, historical tracing and database
+reopens were checked. This is separate from publishing these corrected examples
+in a new package artifact or activating a live network.
 
 ---
 

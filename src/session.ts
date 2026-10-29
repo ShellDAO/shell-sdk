@@ -9,26 +9,46 @@
  * ## Usage flow
  *
  * ```typescript
- * // 1. Derive session key from HD wallet seed
- * const seed = mnemonicToSeed(mnemonic);
+ * import {
+ *   mnemonicToSeed, deriveAccount, deriveSessionKey, MlDsa65Adapter,
+ *   createSessionAuth, finalizeSessionAuth, buildBatchTransaction,
+ *   buildSessionKeyTransaction, buildInnerCall, hashBatchTransaction,
+ *   buildSignedTransaction,
+ * } from "shell-sdk";
+ *
+ * // Run inside the wallet's privileged signer with an unlocked mnemonic.
+ * const seed = mnemonicToSeed(mnemonic, passphrase);
+ * const rootAccount = deriveAccount(seed, "ml-dsa-65");
  * const sessionAccount = deriveSessionKey(seed, "ml-dsa-65", 0);
- *
- * // 2. Create session auth (root key signs session pubkey + algorithm)
- * const sessionAuth = await createSessionAuth(rootAdapter, sessionAccount.publicKey, sessionAccount.algoId, {
- *   chainId: 12345n,
- *   expiryBlock: currentBlock + 1000,
- *   valueCap: BigInt("1000000000000000000"), // 1 ETH
- *   target: null, // any target allowed
- * });
- *
- * // 3. Build and sign AA bundle with session key
- * const signingHash = hashBatchTransaction(tx, aaBundle);
+ * const rootAdapter = MlDsa65Adapter.fromKeyPair(rootAccount.publicKey, rootAccount.secretKey);
  * const sessionAdapter = MlDsa65Adapter.fromKeyPair(sessionAccount.publicKey, sessionAccount.secretKey);
- * const sessionSig = await sessionAdapter.sign(signingHash);
- * sessionAuth.session_signature = Array.from(sessionSig);
+ * let signed;
+ * try {
+ *   const draftAuth = await createSessionAuth(rootAdapter, sessionAccount.publicKey, sessionAccount.algoId, {
+ *     chainId: BigInt(chainId), expiryBlock, valueCap: 2n, target,
+ *   });
+ *   rootAdapter.dispose();
+ *   rootAccount.secretKey.fill(0);
  *
- * // 4. Attach session auth to bundle
- * aaBundle.session_auth = sessionAuth;
+ *   const options = {
+ *     chainId, nonce, innerCalls: [buildInnerCall(target, calldata, 100000, 2n)],
+ *     gasLimit: 500000, maxFeePerGas: 1000000000000, maxPriorityFeePerGas: 0,
+ *   };
+ *   const draft = buildBatchTransaction(options);
+ *   draft.aa_bundle.session_auth = draftAuth;
+ *   const signingHash = hashBatchTransaction(draft.tx, draft.aa_bundle, "MlDsa65");
+ *   const finalAuth = await finalizeSessionAuth(draftAuth, sessionAdapter, signingHash);
+ *   const { tx, aa_bundle } = buildSessionKeyTransaction({ ...options, sessionAuth: finalAuth });
+ *   signed = buildSignedTransaction({
+ *     from: rootAccount.address, tx, aaBundle: aa_bundle,
+ *     signature: finalAuth.session_signature, signatureType: "MlDsa65",
+ *     senderPubkey: rootAccount.publicKey,
+ *   });
+ * } finally {
+ *   rootAdapter.dispose(); sessionAdapter.dispose();
+ *   rootAccount.secretKey.fill(0); sessionAccount.secretKey.fill(0); seed.fill(0);
+ * }
+ * // Submit signed with provider.sendTransaction(signed).
  * ```
  *
  * @see AA-PHASE-2-SPEC.md §4 for the protocol specification
@@ -69,9 +89,9 @@ export const MAX_SESSION_SIGNATURE_BYTES = 51_200;
 export interface SessionKeyConfig {
   /** Chain ID of the target chain (prevents cross-chain replay). */
   chainId: bigint;
-  /** Block number after which the session key is invalid (exclusive). */
+  /** First candidate block height at which the session key is invalid (exclusive upper bound). */
   expiryBlock: number;
-  /** Maximum total ETH value (wei) allowed per transaction. */
+  /** Maximum total native value (wei) across all inner calls per transaction. */
   valueCap: bigint;
   /**
    * If set, all inner calls in the bundle must target this address.
@@ -188,8 +208,9 @@ export function computeSessionAuthHash(
  *   target: null,
  * });
  * // Later, after building the tx:
- * const signingHash = hashBatchTransaction(tx, bundle);
- * sessionAuth.session_signature = Array.from(await sessionAdapter.sign(signingHash));
+ * bundle.session_auth = sessionAuth;
+ * const signingHash = hashBatchTransaction(tx, bundle, "MlDsa65");
+ * bundle.session_auth = await finalizeSessionAuth(sessionAuth, sessionAdapter, signingHash);
  * ```
  */
 export async function createSessionAuth(
@@ -229,7 +250,8 @@ export async function createSessionAuth(
  *
  * @example
  * ```typescript
- * const signingHash = hashBatchTransaction(tx, bundle);
+ * bundle.session_auth = sessionAuth;
+ * const signingHash = hashBatchTransaction(tx, bundle, "MlDsa65");
  * const finalAuth = await finalizeSessionAuth(sessionAuth, sessionAdapter, signingHash);
  * bundle.session_auth = finalAuth;
  * ```
