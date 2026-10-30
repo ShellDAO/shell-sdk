@@ -1326,6 +1326,14 @@ returned directly or assigned to four local variables. Fixed byte values retain
 their declared length and left alignment, so `supportsInterface(bytes4)` keeps
 its original selector and a 32-byte argument word with trailing zero padding.
 Dirty padding in a fixed-byte argument or result rejects instead of truncating.
+Static function selectors such as `IPay.pay.selector`, `instance.pay.selector`
+and `this.invoke.selector` keep the original Solidity signature, including
+`address` parameters. They can be combined with XOR in pure functions or passed
+directly to a typed call, for example
+`IRegistry(target).supportsInterface{gas:30000}(IPay.pay.selector)`.
+Receivers in these expressions must be simple identifiers; dynamic function
+pointers, receiver expressions with side effects and `type(I).interfaceId`
+remain outside this compiler target’s supported subset.
 Narrow result lists such
 as `getReserves() returns (uint112, uint112, uint32)` retain their original ABI;
 noncanonical high bits in narrow arguments or results reject rather than truncate.

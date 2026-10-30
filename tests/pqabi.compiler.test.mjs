@@ -925,3 +925,36 @@ test('PQABI derived overload real VM: inherited internal free and array dispatch
   {skip:!process.env.SHELL_NODE_BIN,timeout:120000},()=>runDerivedOverloadVm(derivedOverloads));
 test('PQABI crowded overload real VM: longer names preserve dispatch and rejection',
   {skip:!process.env.SHELL_NODE_BIN,timeout:120000},()=>runDerivedOverloadVm(crowdedOverloads,true));
+
+
+test('native static function selectors retain original address signatures and pure XOR', async () => {
+ const sources=[{path:'I.sol',content:'pragma solidity ^0.8.30; interface I {function pay(address owner) external payable returns(address);function peek(address owner) external view returns(address);}'} ,{path:'Reader.sol',content:`pragma solidity ^0.8.30; import {I as Imported} from "I.sol";
+ contract Reader {
+  function _j0() internal pure returns(uint256){return 1;}
+  function who(address owner) external pure returns(address){return owner;}
+  function selectors() external pure returns(bytes4,bytes4,bytes4,bytes4){Imported i;return(Imported.pay.selector,i.peek.selector,this.who.selector,Imported.pay.selector ^ Imported.peek.selector);}
+  function register(address target) external view returns(address){return Imported(target).peek(address(0));}
+ }`}];
+ // Keep the supported typed-call argument a variable; selectors themselves need
+ // no activation, while the external call uses the ordinary native call guard.
+ sources[1].content=sources[1].content.replace('register(address target)','register(address target,address owner)').replace('peek(address(0))','peek(owner)');
+ const args={sources,contractName:'Reader',evmVersion:'shanghai'};
+ const original=await compileSolidity(args);
+ const native=await compileSolidity({...args,target:'pqvm',nativeAddressContextHeight:2});
+ assert.deepEqual(native.abi,original.abi);
+ assert.equal(native.abi.find(entry=>entry.name==='selectors').stateMutability,'pure');
+ const only=sources[1].content.slice(0,sources[1].content.indexOf('  function register'))+'}';
+ await compileSolidity({...args,sources:[sources[0],{path:'Reader.sol',content:only}],target:'pqvm'});
+});
+
+test('native selector fields are data and effectful function receivers still reject', async () => {
+ const content=`pragma solidity ^0.8.30; interface I {function pay(address owner) external returns(address);}
+ contract Reader {struct Item {bytes4 selector;} Item private item;
+ function data(address owner) external view returns(address,bytes4){return(owner,item.selector);}
+ function choose() internal returns(I){item.selector=0x11223344;return I(address(0));}
+ function unsafe() external returns(bytes4){return choose().pay.selector;}}`;
+ const args={sources:[{path:'Reader.sol',content}],contractName:'Reader',evmVersion:'shanghai'};
+ await compileSolidity(args);
+ await assert.rejects(compileSolidity({...args,target:'pqvm'}),/MemberAccess \.selector/);
+ await compileSolidity({...args,sources:[{path:'Reader.sol',content:content.slice(0,content.indexOf(' function choose'))+'}'}],target:'pqvm'});
+});

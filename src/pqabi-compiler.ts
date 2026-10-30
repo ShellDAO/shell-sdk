@@ -346,11 +346,26 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
     && (node.expression as AstNode)?.typeDescriptions?.typeIdentifier?.startsWith("t_struct$_") === true;
 
   const externalFunctions = new Map<number, AstNode>();
+  const sourceNames = new Set<string>();
+  let selectorHelperIndex = 0;
   for (const source of Object.values(original.sources) as AstSource[]) {
     visit(source.ast, (node) => {
+      if (node.name) sourceNames.add(node.name);
       if (node.nodeType === "FunctionDefinition") externalFunctions.set(node.id!, node);
     });
   }
+  // Resolve the original declaration before address lowering changes signatures.
+  // Only identifier receivers are constant here; evaluating a receiver expression
+  // may have side effects and must never be erased by this transformation.
+  const staticSelector = (node: AstNode): string | undefined => {
+    const member = node.expression as AstNode;
+    if (node.nodeType !== "MemberAccess" || node.memberName !== "selector"
+      || member?.nodeType !== "MemberAccess"
+      || (member.expression as AstNode)?.nodeType !== "Identifier") return undefined;
+    const definition = externalFunctions.get(member.referencedDeclaration as number);
+    const selector = definition?.functionSelector;
+    return typeof selector === "string" && /^[0-9a-f]{8}$/.test(selector) ? selector : undefined;
+  };
   const sources: CompilerInput["sources"] = {};
   let hasPureTypedCall = false;
   const longerNames = new Map<string, { start: number; length: number; alias: string }[]>();
@@ -367,7 +382,7 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
       const [start, length] = node.src!.split(":").map(Number);
       const contexts: { start: number; length: number; text: string }[] = [];
       visit(node, (child) => {
-        if (!builtin(child)) return;
+        if (!builtin(child) && !staticSelector(child)) return;
         const [offset, size] = child.src!.split(":").map(Number);
         if (contexts.some((edit) => offset >= edit.start && offset + size <= edit.start + edit.length)) return;
         contexts.push({start: offset, length: size, text: renderContext(child)});
@@ -386,6 +401,18 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
       return content.toString("utf8");
     };
     function renderContext(node: AstNode): string {
+      const selector = staticSelector(node);
+      if (selector) {
+        const key = `selector:${selector}`;
+        let name = helpers.get(key);
+        if (!name) {
+          do { name = `_j${(selectorHelperIndex++).toString(36)}`; } while (sourceNames.has(name));
+          sourceNames.add(name);
+          helpers.set(key, name);
+          typedDeclarations.set(name, `function ${name}() pure returns(bytes4) { return 0x${selector}; }`);
+        }
+        return `${name}()`;
+      }
       if (nativeHeight === undefined) {
         throw new Error("PQABI target does not yet support native context without nativeAddressContextHeight matching an activated node profile");
       }
@@ -426,7 +453,7 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
               && !(argument.nodeType === "UnaryOperation" && argument.operator === "-"
                 && (argument.subExpression as AstNode)?.nodeType === "Literal"
                 && (argument.subExpression as AstNode).kind === "number")
-              && !integerLimit(argument) && !blockTimestamp(argument) && !structMember(argument) && !builtin(argument))
+              && !integerLimit(argument) && !blockTimestamp(argument) && !structMember(argument) && !builtin(argument) && !staticSelector(argument))
             || (node.names as unknown[])?.length || node.tryCall) {
             throw new Error("PQABI typed calls currently require an interface cast of an address variable or typed struct field, static address, integer, fixed bytes or bool arguments and results");
           }
@@ -511,7 +538,7 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
         }
       }
       const opcode = builtin(node);
-      if (!opcode) return;
+      if (!opcode && !staticSelector(node)) return;
       visit(node, (child) => { if (child.id !== undefined) handled.add(child.id); });
       const [start, length] = node.src!.split(":").map(Number);
       const text = renderContext(node);
