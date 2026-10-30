@@ -415,7 +415,8 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
             return (type?.name === "address" && type.stateMutability !== "payable")
               // Solidity has already checked elementary integer widths in this AST.
               || /^u?int(?:[0-9]+)?$/.test(String(type?.name))
-              || ["bytes32", "bool"].includes(String(type?.name));
+              || /^bytes[0-9]+$/.test(String(type?.name))
+              || type?.name === "bool";
           };
           if (!definition || !parameters || !returns
             || !parameters.every(staticParameter) || !returns.every(staticParameter)
@@ -427,7 +428,7 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
                 && (argument.subExpression as AstNode).kind === "number")
               && !integerLimit(argument) && !blockTimestamp(argument) && !structMember(argument) && !builtin(argument))
             || (node.names as unknown[])?.length || node.tryCall) {
-            throw new Error("PQABI typed calls currently require an interface cast of an address variable or typed struct field, static address, integer, bytes32 or bool arguments and results");
+            throw new Error("PQABI typed calls currently require an interface cast of an address variable or typed struct field, static address, integer, fixed bytes or bool arguments and results");
           }
           if (nativeHeight === undefined) throw new Error("PQABI typed call requires nativeAddressContextHeight matching an activated node profile");
           const selector = definition.functionSelector;

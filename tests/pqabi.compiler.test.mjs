@@ -289,8 +289,8 @@ test('native typed calls preserve zero/multiple static inputs and bool results',
  const native=await compileSolidity({...args,target:'pqvm',nativeAddressContextHeight:2});
  assert.deepEqual(native.abi,original.abi);
  await assert.rejects(compileSolidity({...args,target:'pqvm'}),/nativeAddressContextHeight/);
- for(const result of ['string memory','bytes16','bytes memory']) {
-  await assert.rejects(compileSolidity({...args,sources:[{path:'Reader.sol',content:source.replace('returns(bool);',`returns(${result});`).replace('function send(address token,uint256 amount) external returns(bool)','function send(address token,uint256 amount) external returns('+result+')')}],target:'pqvm',nativeAddressContextHeight:2}),/static address, integer, bytes32 or bool/);
+ for(const result of ['string memory','uint256[] memory','bytes memory']) {
+  await assert.rejects(compileSolidity({...args,sources:[{path:'Reader.sol',content:source.replace('returns(bool);',`returns(${result});`).replace('function send(address token,uint256 amount) external returns(bool)','function send(address token,uint256 amount) external returns('+result+')')}],target:'pqvm',nativeAddressContextHeight:2}),/static address, integer, fixed bytes or bool/);
  }
 });
 
@@ -410,6 +410,20 @@ test('native signed interfaces retain negative literals, widths and feed result 
  await assert.rejects(compileSolidity({...args,target:'pqvm'}),/nativeAddressContextHeight/);
 });
 
+test('native fixed bytes preserve original ABI widths for inputs and results', async () => {
+ for(const width of [1,4,16,31,32]) {
+  const type=`bytes${width}`;
+  const source=`pragma solidity ^0.8.30; interface I {function echo(${type} value) external pure returns(${type});} contract Reader {function read(address target,${type} value) external pure returns(${type}){return I(target).echo(value);}}`;
+  const args={sources:[{path:'Reader.sol',content:source}],contractName:'Reader',evmVersion:'shanghai'};
+  const original=await compileSolidity(args);
+  const native=await compileSolidity({...args,target:'pqvm',nativeAddressContextHeight:2});
+  assert.deepEqual(native.abi,original.abi);
+  assert.equal(native.abi.find(entry=>entry.name==='read').inputs[1].type,type);
+  assert.equal(native.abi.find(entry=>entry.name==='read').outputs[0].type,type);
+  await assert.rejects(compileSolidity({...args,target:'pqvm'}),/nativeAddressContextHeight/);
+ }
+});
+
 test('typed bytes32 owner result retains its ABI and uint256 argument', async () => {
  const source='pragma solidity ^0.8.20; interface I {function ownerOf(uint256 tokenId) external view returns(bytes32);} contract Reader {function lookup(address target,uint256 tokenId) external view returns(bytes32){return I(target).ownerOf(tokenId);} function last(address target) external view returns(bytes32){return I(target).ownerOf(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);}}';
  const args={sources:[{path:'Reader.sol',content:source}],contractName:'Reader',evmVersion:'shanghai'};
@@ -418,8 +432,8 @@ test('typed bytes32 owner result retains its ABI and uint256 argument', async ()
  assert.deepEqual(native.abi,original.abi);
  assert.equal(native.abi.find(entry=>entry.name==='lookup').outputs[0].type,'bytes32');
  await assert.rejects(compileSolidity({...args,target:'pqvm'}),/typed call requires nativeAddressContextHeight/);
- for (const result of ['bytes16','bytes memory']) {
-  await assert.rejects(compileSolidity({...args,sources:[{path:'Reader.sol',content:source.replaceAll('bytes32',result)}],target:'pqvm',nativeAddressContextHeight:2}),/static address, integer, bytes32 or bool/);
+ for (const result of ['uint256[] memory','bytes memory']) {
+  await assert.rejects(compileSolidity({...args,sources:[{path:'Reader.sol',content:source.replaceAll('bytes32',result)}],target:'pqvm',nativeAddressContextHeight:2}),/static address, integer, fixed bytes or bool/);
  }
 });
 
@@ -437,8 +451,8 @@ test('typed balance calls retain integer results and the original address ABI', 
    await assert.rejects(compileSolidity({...args,target:'pqvm'}),/typed call requires nativeAddressContextHeight/);
   }
  }
- for (const result of ['string memory','bytes16','uint256[] memory']) {
-  await assert.rejects(compileSolidity({sources:[{path:'Reader.sol',content:source.replaceAll('uint256',result)}],contractName:'Reader',target:'pqvm',nativeAddressContextHeight:2}),/static address, integer, bytes32 or bool/);
+ for (const result of ['string memory','bytes memory','uint256[] memory']) {
+  await assert.rejects(compileSolidity({sources:[{path:'Reader.sol',content:source.replaceAll('uint256',result)}],contractName:'Reader',target:'pqvm',nativeAddressContextHeight:2}),/static address, integer, fixed bytes or bool/);
  }
 });
 

@@ -1306,7 +1306,8 @@ including the EIP-150 cap. Other receiver expressions remain unsupported.
 
 Typed `I(target).echo(value)` calls also preserve the original selector and
 complete address with zero or multiple static `address`, integer,
-`bytes32` or `bool` arguments and results. Integers retain their declared
+fixed bytes (`bytes1` through `bytes32`) or `bool` arguments and results.
+Integers retain their declared
 width, including `uint8`, `uint112`, `int112` and `int256`. Signed values retain
 two’s complement and sign extension. Negative numeric literals such as
 `I(target).echo(-1)` and signed metatype limits such as `type(int112).min` can
@@ -1321,7 +1322,11 @@ reverts the caller rather than accepting a noncanonical value. Multiple results
 retain their declared order, including complete native addresses; short return
 data or a noncanonical boolean rejects the entire call and its state changes.
 For example, an interface returning `(address, uint256, bool, bytes32)` can be
-returned directly or assigned to four local variables. Narrow result lists such
+returned directly or assigned to four local variables. Fixed byte values retain
+their declared length and left alignment, so `supportsInterface(bytes4)` keeps
+its original selector and a 32-byte argument word with trailing zero padding.
+Dirty padding in a fixed-byte argument or result rejects instead of truncating.
+Narrow result lists such
 as `getReserves() returns (uint112, uint112, uint32)` retain their original ABI;
 noncanonical high bits in narrow arguments or results reject rather than truncate.
 Decoded `uint32` fields use JavaScript numbers; `uint112`, `uint256`, `int112`
@@ -1370,7 +1375,7 @@ SHELL_NODE_BIN=/path/to/shell-node node --test tests/pqabi.payable.test.mjs
 The test creates temporary keys, ports and isolated genesis allocations; it
 retains its report and chain data for inspection. It does not deploy through
 native CREATE or change any existing network’s activation schedule.
-For the void-call, static return-list, narrow unsigned and signed integer tests,
+For the void-call, static return-list, integer and fixed byte tests,
 `SHELL_PQABI_RESUME_DIR` can point to the retained test directory after an
 assertion failure. Resume requires matching source, compiled
 artifacts, node binary, isolated genesis and clean node exits. It rechecks the
