@@ -402,16 +402,20 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
           const parameters = (definition?.parameters as AstNode)?.parameters as AstNode[] | undefined;
           const returns = (definition?.returnParameters as AstNode)?.parameters as AstNode[] | undefined;
           const receiver = (target.arguments as AstNode[])?.[0];
-          const argument = (node.arguments as AstNode[])?.[0];
-          const addressParameter = (parameter: AstNode) => (parameter.typeName as AstNode)?.name === "address"
-            && (parameter.typeName as AstNode)?.stateMutability !== "payable";
-          if (!definition || parameters?.length !== 1 || returns?.length !== 1
-            || !(addressParameter(parameters[0]) || ["uint", "uint256"].includes(String((parameters[0].typeName as AstNode)?.name))) || !(addressParameter(returns[0]) || ["bytes32", "uint", "uint256"].includes(String((returns[0].typeName as AstNode)?.name)))
+          const arguments_ = node.arguments as AstNode[] | undefined;
+          const staticParameter = (parameter: AstNode) => {
+            const type = parameter.typeName as AstNode;
+            return (type?.name === "address" && type.stateMutability !== "payable")
+              || ["uint", "uint256", "bytes32", "bool"].includes(String(type?.name));
+          };
+          if (!definition || !parameters || returns?.length !== 1
+            || !parameters.every(staticParameter) || !staticParameter(returns[0])
             || (target.arguments as AstNode[])?.length !== 1 || !(receiver?.nodeType === "Identifier" || (receiver && structMember(receiver)))
-            || receiver.typeDescriptions?.typeString !== "address" || (node.arguments as AstNode[])?.length !== 1
-            || (!["Identifier", "Literal"].includes(argument?.nodeType ?? "") && !integerLimit(argument) && !structMember(argument))
+            || receiver.typeDescriptions?.typeString !== "address" || !arguments_ || arguments_.length !== parameters.length
+            || arguments_.some((argument) => !["Identifier", "Literal"].includes(argument.nodeType ?? "")
+              && !integerLimit(argument) && !structMember(argument) && !builtin(argument))
             || (node.names as unknown[])?.length || node.tryCall) {
-            throw new Error("PQABI typed calls currently require an interface cast of an address variable or typed struct field, one address or uint256 argument and one address, bytes32 or uint256 result");
+            throw new Error("PQABI typed calls currently require an interface cast of an address variable or typed struct field, static address, uint256, bytes32 or bool arguments and one address, bytes32, uint256 or bool result");
           }
           if (nativeHeight === undefined) throw new Error("PQABI typed call requires nativeAddressContextHeight matching an activated node profile");
           const selector = definition.functionSelector;
@@ -429,15 +433,19 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
           if (definition.stateMutability === "pure") hasPureTypedCall = true;
           const lowName = `_${callGas ? "g" : ""}${value ? "v" : operation === "call" ? "k" : "s"}${node.src!.split(":")[2]}`;
           helpers.set(operation + (callGas ? "gas" : ""), lowName);
-          const resultType = (returns[0].typeName as AstNode)?.name === "bytes32" ? "bytes32" : "uint256";
+          const nativeType = (parameter: AstNode) => (parameter.typeName as AstNode).name === "address"
+            ? "uint256" : (parameter.typeName as AstNode).name!;
+          const resultType = nativeType(returns[0]);
+          const argumentNames = parameters.map((_, index) => parameters.length === 1 ? "argument" : `argument${index}`);
+          const declarations = parameters.map((parameter, index) => `${nativeType(parameter)} ${argumentNames[index]}`);
           const key = `typed:${definition.id}:${operation}:${!!callGas}`;
           let name = helpers.get(key);
           if (!name) {
             name = `_t${node.id!.toString(36)}`;
             helpers.set(key, name);
-            typedDeclarations.set(name, `function ${name}(uint256 target, uint256 argument${value ? ", uint256 value" : ""}${callGas ? ", uint256 callGas" : ""}) ${operation === "staticcall" ? "view " : ""}returns (${resultType}) { (bool success, bytes memory output) = ${lowName}(target, ${value ? "value, " : ""}${callGas ? "callGas, " : ""}abi.encodeWithSelector(bytes4(0x${selector}), argument)); if (!success) { assembly { revert(add(output, 32), mload(output)) } } return abi.decode(output, (${resultType})); }`);
+            typedDeclarations.set(name, `function ${name}(uint256 target${declarations.length ? ", " + declarations.join(", ") : ""}${value ? ", uint256 value" : ""}${callGas ? ", uint256 callGas" : ""}) ${operation === "staticcall" ? "view " : ""}returns (${resultType}) { (bool success, bytes memory output) = ${lowName}(target, ${value ? "value, " : ""}${callGas ? "callGas, " : ""}abi.encodeWithSelector(bytes4(0x${selector})${argumentNames.length ? ", " + argumentNames.join(", ") : ""})); if (!success) { assembly { revert(add(output, 32), mload(output)) } } return abi.decode(output, (${resultType})); }`);
           }
-          const text = `${name}(${read(receiver)},${read(argument)}${value ? "," + read(value) : ""}${callGas ? "," + read(callGas) : ""})`;
+          const text = `${name}(${read(receiver)}${arguments_.length ? "," + arguments_.map(read).join(",") : ""}${value ? "," + read(value) : ""}${callGas ? "," + read(callGas) : ""})`;
           const [start, length] = node.src!.split(":").map(Number);
           if (Buffer.byteLength(text) > length) throw new Error("unsupported PQABI typed call source range");
           replacements.push({start, length, text: text + " ".repeat(length - Buffer.byteLength(text))});

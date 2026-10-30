@@ -16,10 +16,31 @@ import { ShellSigner, MlDsa65Adapter, decryptKeystore, buildTransaction, createS
 const source = `pragma solidity ^0.8.30;
 interface IPay { function pay(address owner) external payable returns(address); }
 interface IRead { function peek(address owner) external view returns(address); }
+interface IAsset {
+ function transfer(address recipient,uint256 amount) external returns(bool);
+ function totalSupply() external view returns(uint256);
+ function balanceOf(address owner) external view returns(uint256);
+ function allowance(address owner,address spender) external view returns(uint256);
+ function check(bytes32 tag,bool enabled) external pure returns(bool);
+}
 contract Payee {
  error Denied(address owner);
  uint256 public count;
  address public seen;
+ mapping(address=>uint256) balances;
+ uint256 supply;
+ mapping(address=>mapping(address=>uint256)) allowances;
+ event Transfer(address indexed from,address indexed to,uint256 value);
+ function transfer(address recipient,uint256 amount) external returns(bool) {
+  if(recipient==address(0)) return false;
+  require(balances[msg.sender]>=amount,"insufficient");
+  balances[msg.sender]-=amount;balances[recipient]+=amount;count++;
+  emit Transfer(msg.sender,recipient,amount);return true;
+ }
+ function totalSupply() external view returns(uint256){return supply;}
+ function balanceOf(address owner) external view returns(uint256){return balances[owner];}
+ function allowance(address owner,address spender) external view returns(uint256){return allowances[owner][spender];}
+ function check(bytes32 tag,bool enabled) external pure returns(bool){return enabled && tag==bytes32(uint256(7));}
  function peek(address owner) external view returns(address) { require(owner==seen); return seen; }
  function pay(address owner) external payable returns(address) {
   count++; seen=owner; if (owner==address(0)) revert Denied(owner); return owner;
@@ -51,6 +72,12 @@ contract Reader {
  function lowContext(address target,bytes memory data) external returns(bool,bytes memory) {
   (bool success,bytes memory output)=target.call{value:entries[msg.sender].amount,gas:entries[msg.sender].budget}(data); count++; return(success,output);
  }
+ function assetSend(address token,address recipient,uint256 amount) external returns(bool){count++;last=recipient;return IAsset(token).transfer(recipient,amount);}
+ function assetToSender(address token,uint256 amount) external returns(bool){count++;last=msg.sender;return IAsset(token).transfer(msg.sender,amount);}
+ function assetSupply(address token) external view returns(uint256){return IAsset(token).totalSupply();}
+ function assetBalance(address token,address owner) external view returns(uint256){return IAsset(token).balanceOf(owner);}
+ function assetAllowance(address token,address owner,address spender) external view returns(uint256){return IAsset(token).allowance(owner,spender);}
+ function assetCheck(address token,bytes32 tag,bool enabled) external view returns(bool){return IAsset(token).check(tag,enabled);}
  function invoke(address target,address owner,uint256 amount) external payable returns(address) {
   count++; last=IPay(target).pay{value:amount}(owner); return last;
  }
@@ -82,7 +109,7 @@ contract Reader {
 
 // Run after npm run build with SHELL_NODE_BIN pointing to a compatible node.
 // Isolated genesis allocation avoids making a native CREATE derivation claim.
-async function runPayableAcceptance(gasOptions = false, contextOptions = false) {
+async function runPayableAcceptance(gasOptions = false, contextOptions = false, staticCalls = false) {
   const binary = process.env.SHELL_NODE_BIN;
   const directory = await mkdtemp(join(tmpdir(), 'shell-sdk-payable-'));
   const password = randomBytes(24).toString('hex');
@@ -100,11 +127,14 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false) 
   const address = byte => '0x' + byte.repeat(32);
   const reader = address('11'), payee = address('22');
   const alias = '0x' + '33'.repeat(12) + '22'.repeat(20);
-  const short = address('44'), missing = address('55');
+  const short = address('44'), missing = address('55'), badBool = address('66');
   const owner = address('aa'), other = '0x' + 'bb'.repeat(12) + 'aa'.repeat(20);
   const zero = '0x' + word(0);
   const lowAlias = account => '0x' + '00'.repeat(12) + account.slice(-40);
   const callerAlias = lowAlias(payer.getAddress());
+  const balanceSlot = key => BigInt(keccak256('0x'+key.slice(2)+word(2)));
+  const allowanceSlot = (owner,spender) => BigInt(keccak256('0x'+spender.slice(2)+keccak256('0x'+owner.slice(2)+word(4)).slice(2)));
+  const quantity = value => '0x'+BigInt(value).toString(16);
   const entrySlots = key => Array.from({length:4},(_,index)=>'0x'+((BigInt(keccak256('0x'+key.slice(2)+word(2)))+BigInt(index))&((1n<<256n)-1n)).toString(16));
   const artifacts = {};
   for (const contractName of ['Reader', 'Payee']) {
@@ -189,10 +219,14 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false) 
   };
   const state = async (i, tag = 'latest') => {
     const accounts = {};
-    for (const target of [reader, payee, alias, short, missing, payer.getAddress(), miner.getAddress()]) {
+    for (const target of [reader, payee, alias, short, missing, badBool, payer.getAddress(), miner.getAddress()]) {
       accounts[target] = { balance: await rpc(i, 'eth_getBalance', [target, tag]),
         nonce: await rpc(i, 'eth_getTransactionCount', [target, tag]), slots: [] };
       for (const slot of ['0x0', '0x1']) accounts[target].slots.push(await rpc(i, 'eth_getStorageAt', [target, slot, tag]));
+      if(staticCalls && [payee,alias].includes(target)) {
+        accounts[target].tokens={};
+        for(const key of [reader,owner,other,payer.getAddress(),callerAlias,zero]) accounts[target].tokens[key]=await rpc(i,'eth_getStorageAt',[target,quantity(balanceSlot(key)),tag]);
+      }
       if (contextOptions && target===reader) {
         accounts[target].entryWords={};
         for(const key of [payer.getAddress(),callerAlias]) {
@@ -224,7 +258,7 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false) 
     assert.equal(BigInt(before[payer.getAddress()].balance) - BigInt(entry.after[payer.getAddress()].balance), fee + (success ? value : 0n));
     assert.equal(BigInt(entry.after[miner.getAddress()].balance) - BigInt(before[miner.getAddress()].balance), fee);
     assert.equal(BigInt(entry.after[payer.getAddress()].nonce), BigInt(nonce));
-    if (!success) for (const target of [reader, payee, alias, short, missing]) assert.deepEqual(entry.after[target], before[target]);
+    if (!success) for (const target of [reader, payee, alias, short, missing, badBool]) assert.deepEqual(entry.after[target], before[target]);
     for (let attempt = 0; attempt < 160; attempt++) {
       const block = await rpc(1, 'eth_getBlockByNumber', [entry.receipt.blockNumber, false]);
       if (block?.hash === entry.receipt.blockHash) break; await pause(100);
@@ -242,8 +276,14 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false) 
         stakes: [], block_time_secs: 2, max_future_secs: 300, epoch_length: 0 }, alloc: {} };
     for (const account of [miner.getAddress(), payer.getAddress()]) genesis.alloc[account] = { balance: '0x3635c9adc5dea00000', nonce: 0 };
     for (const [account, code] of [[reader, artifacts.Reader.deployedBytecode], [payee, artifacts.Payee.deployedBytecode],
-      [alias, artifacts.Payee.deployedBytecode], [short, '0x60635f55601f5ff3']]) {
+      [alias, artifacts.Payee.deployedBytecode], [short, '0x60635f55601f5ff3'], [badBool, '0x60635f5560025f5260205ff3']]) {
       genesis.alloc[account] = { balance: '0x0', nonce: 1, code, storage: {} };
+    }
+    if(staticCalls) for(const[token,total]of [[payee,100n],[alias,200n]]) {
+      genesis.alloc[token].storage={
+        ['0x'+word(balanceSlot(reader))]:'0x'+word(total),['0x'+word(3)]:'0x'+word(total),
+        ['0x'+word(allowanceSlot(owner,other))]:'0x'+word(83),['0x'+word(allowanceSlot(other,owner))]:'0x'+word(17),
+      };
     }
     for (const dir of dirs) { await mkdir(dir); await writeFile(join(dir, 'genesis.json'), JSON.stringify(genesis)); }
     await start(1, await peer(await start(0)));
@@ -265,7 +305,40 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false) 
       assert.equal(data,toFunctionSelector('configure(address,address,address,uint256,uint256)')+args.map(word).join(''));
       return {from:payer.getAddress(),to:reader,gas:'0x927c0',data};
     };
-    if (contextOptions) {
+    const assetRequest = (fn,args) => ({from:payer.getAddress(),to:reader,gas:'0x927c0',
+      data:encodeFunctionData({abi:artifacts.Reader.abi,functionName:fn,args})});
+    const boolean = (entry,value) => assert.equal(entry.trace.output,'0x'+word(value?1:0));
+    if(staticCalls) {
+      first=await send('two static arguments return true and transfer',[assetRequest('assetSend',[payee,owner,10n])],0n,true);
+      boolean(first,true);assert.equal(first.trace.calls[0].input,toFunctionSelector('transfer(address,uint256)')+owner.slice(2)+word(10));
+      assert.equal(first.after[payee].tokens[owner],'0x'+word(10));assert.equal(first.after[alias].tokens[reader],'0x'+word(200));
+      const contextual=await send('direct native caller static argument',[assetRequest('assetToSender',[payee,5n])],0n,true);
+      boolean(contextual,true);assert.equal(contextual.after[payee].tokens[payer.getAddress()],'0x'+word(5));assert.equal(contextual.after[payee].tokens[callerAlias],'0x'+word(0));
+      const refused=await send('false bool is returned without automatic revert',[assetRequest('assetSend',[payee,zero,1n])],0n,true);
+      boolean(refused,false);assert.deepEqual(refused.after[payee],refused.before[payee]);assert.equal(refused.receipt.logs.length,0);
+      const alternate=await send('same-low20 token identity remains distinct',[assetRequest('assetSend',[alias,other,7n])],0n,true);
+      boolean(alternate,true);assert.deepEqual(alternate.after[payee],alternate.before[payee]);
+      const malformed=await send('noncanonical bool restores callee writes',[assetRequest('assetSend',[badBool,owner,1n])],0n,false);
+      assert.equal(malformed.trace.calls[0].output,'0x'+word(2));
+      await send('insufficient token transfer restores parent and token',[assetRequest('assetSend',[payee,owner,1000n])],0n,false);
+      const rolled=await send('AA second transfer failure restores earlier token state',[
+        assetRequest('assetSend',[payee,owner,4n]),assetRequest('assetSend',[payee,other,1000n])],0n,false,true);
+      assert.equal(rolled.receipt.logs.length,0);
+      const batch=await send('AA two multiargument token transfers succeed',[
+        assetRequest('assetSend',[payee,owner,3n]),assetRequest('assetSend',[payee,other,2n])],0n,true,true);
+      assert.equal(batch.receipt.logs.length,2);
+      const supplied=await send('zero argument typed supply query',[assetRequest('assetSupply',[payee])],0n,true);
+      assert.equal(supplied.trace.output,'0x'+word(100));assert.equal(supplied.trace.calls[0].input,toFunctionSelector('totalSupply()'));assert.equal(supplied.trace.calls[0].type,'STATICCALL');
+      const allowed=await send('two full32 view arguments retain their order',[assetRequest('assetAllowance',[payee,owner,other])],0n,true);
+      assert.equal(allowed.trace.output,'0x'+word(83));assert.equal(allowed.trace.calls[0].input,toFunctionSelector('allowance(address,address)')+owner.slice(2)+other.slice(2));
+      const empty=await send('zero token amount preserves true boolean',[assetRequest('assetSend',[payee,owner,0n])],0n,true);
+      boolean(empty,true);assert.equal(empty.receipt.logs[0].data,'0x'+word(0));
+      for(const[tag,enabled,expected]of [[7n,true,true],[7n,false,false],[8n,true,false]]) {
+        const data=await rpc(0,'eth_call',[assetRequest('assetCheck',[payee,'0x'+word(tag),enabled]),'latest']);
+        assert.equal(data,'0x'+word(expected?1:0));
+      }
+      report.staticCalls={passed:true,boolFalsePreserved:true,malformedBoolRejected:true,zeroAndMultipleArguments:true};
+    } else if (contextOptions) {
       const keys=[payer.getAddress(),miner.getAddress(),reader];
       const allKeys=keys.flatMap(key=>[key,lowAlias(key)]);
       assert.equal(new Set(allKeys).size,6);
@@ -359,12 +432,30 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false) 
     const verify = async () => {
       for (const i of [0, 1]) {
         const before = await state(i), head = await rpc(i, 'eth_getBlockByNumber', ['latest', false]);
+        if(staticCalls) {
+          const expected=[[payee,100n,80n,13n,2n,5n,5n],[alias,200n,193n,0n,7n,0n,1n]];
+          for(const[token,total,held,firstOwner,secondOwner,payerAmount,count]of expected) {
+            assert.equal(before[token].tokens[reader],'0x'+word(held));assert.equal(before[token].tokens[owner],'0x'+word(firstOwner));
+            assert.equal(before[token].tokens[other],'0x'+word(secondOwner));assert.equal(before[token].tokens[payer.getAddress()],'0x'+word(payerAmount));
+            assert.equal(before[token].tokens[callerAlias],'0x'+word(0));assert.equal(before[token].tokens[zero],'0x'+word(0));
+            assert.equal(Object.values(before[token].tokens).reduce((sum,value)=>sum+BigInt(value),0n),total);
+            assert.equal(before[token].slots[0],'0x'+word(count));
+          }
+          assert.equal(before[reader].slots[0],'0x'+word(7));
+          for(const[from,to,amount]of [[owner,other,83n],[other,owner,17n]]) {
+            const data=await rpc(i,'eth_call',[assetRequest('assetAllowance',[payee,from,to]),'latest']);assert.equal(data,'0x'+word(amount));
+          }
+        } else {
         assert.equal(before[payee].balance, contextOptions ? '0x8' : gasOptions ? '0x9' : '0x8'); assert.equal(before[alias].balance, contextOptions ? '0x0' : '0x4');
         assert.equal(before[reader].balance, contextOptions || gasOptions ? '0x1' : '0x2'); assert.equal(before[reader].slots[0], '0x' + word(contextOptions || gasOptions ? 8 : 4));
         assert.equal(before[payee].slots[0], '0x' + word(contextOptions ? 8 : gasOptions ? 5 : 3)); assert.equal(before[alias].slots[0], '0x' + word(contextOptions ? 0 : 1));
+        }
         for (const entry of report.transactions) assert.deepEqual(await rpc(i, 'eth_getTransactionReceipt', [entry.hash]), entry.receipt);
         assert.deepEqual(await state(i, first.receipt.blockNumber), first.after);
-        if(contextOptions) {
+        if(staticCalls) {
+          assert.equal(await rpc(i,'eth_call',[assetRequest('assetBalance',[payee,owner]),first.receipt.blockNumber]),'0x'+word(10));
+          assert.equal(await rpc(i,'eth_call',[assetRequest('assetBalance',[payee,owner]),'latest']),'0x'+word(13));
+        } else if(contextOptions) {
           assert.equal(await rpc(i,'eth_call',[contextRequest('contextual'),first.receipt.blockNumber]),owner);
           assert.equal(await rpc(i,'eth_call',[contextRequest('contextOptions'),first.receipt.blockNumber]),owner);
           assert.equal(await rpc(i,'eth_call',[contextRequest('contextual'),'latest']),other);
@@ -391,3 +482,5 @@ test('native gas options: exact operands, limits, rollback, import, history and 
   {skip:!process.env.SHELL_NODE_BIN,timeout:360000},()=>runPayableAcceptance(true));
 test('nested native context: full32 mapping entries, AA rollback, history and disk reopen',
   {skip:!process.env.SHELL_NODE_BIN,timeout:600000},()=>runPayableAcceptance(false,true));
+test('native static interface calls: token balances, bool, views, rollback, history and disk reopen',
+  {skip:!process.env.SHELL_NODE_BIN,timeout:600000},()=>runPayableAcceptance(false,false,true));

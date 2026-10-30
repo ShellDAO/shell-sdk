@@ -1305,13 +1305,16 @@ evaluated once. The node applies its existing call-gas forwarding rules,
 including the EIP-150 cap. Other receiver expressions remain unsupported.
 
 Typed `I(target).echo(value)` calls also preserve the original selector and
-complete address when the external function takes one nonpayable `address` or
-`uint256` and
-returns one nonpayable `address`, `bytes32` or `uint256`. The target can be an address variable or a typed address field of a storage
-or memory struct, including nested fields such as `I(entries[id].owner)`.
-The receiver expression is evaluated once, including any mapping index function. The
-argument can be an identifier, literal, typed struct field, or integer `type(T).min` / `type(T).max`
-expression, such as `IOwner(target).ownerOf(type(uint256).max)` or
+complete address with zero or multiple static `address`, `uint256`, `bytes32`
+or `bool` arguments and one result of those types. Address fields remain
+nonpayable. For example, `IERC20(token).transfer(msg.sender, amount)` retains
+both input words and its boolean result; `IERC20(token).totalSupply()` takes no
+arguments. A returned `false` remains false, while malformed boolean return data
+reverts the caller rather than accepting a noncanonical value. The target can be
+an address variable or a typed address field of a storage or memory struct, including nested fields such as `I(entries[id].owner)`.
+The receiver expression is evaluated once, including any mapping index function.
+Each argument can be an identifier, literal, native context read, typed struct
+field, or integer `type(T).min` / `type(T).max` expression, such as `IOwner(target).ownerOf(type(uint256).max)` or
 `IBalance(entries[id].token).balanceOf(entries[id].beneficiary)`. Struct field
 arguments are evaluated once and retain the complete native address or integer word.
 Native context reads also retain their complete address inside these expressions,
@@ -1333,7 +1336,8 @@ and both orders of `{gas: budget, value: amount}` for payable functions. View
 and pure interfaces retain STATICCALL; other interfaces use CALL, with the
 specified gas operand and the node’s existing forwarding rules. This support is
 in unreleased source builds. After building the SDK, verify real signed ordinary and AA calls,
-independent block import, nested caller-indexed mappings, historical reads and
+independent block import, static interface token transfers, nested caller-indexed
+mappings, historical reads and
 RocksDB reopen with a compatible
 node (verified with v0.27.13):
 
