@@ -406,7 +406,9 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
           const staticParameter = (parameter: AstNode) => {
             const type = parameter.typeName as AstNode;
             return (type?.name === "address" && type.stateMutability !== "payable")
-              || ["uint", "uint256", "bytes32", "bool"].includes(String(type?.name));
+              // Solidity has already checked elementary integer widths in this AST.
+              || /^uint(?:[0-9]+)?$/.test(String(type?.name))
+              || ["bytes32", "bool"].includes(String(type?.name));
           };
           if (!definition || !parameters || !returns
             || !parameters.every(staticParameter) || !returns.every(staticParameter)
@@ -415,7 +417,7 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
             || arguments_.some((argument) => !["Identifier", "Literal"].includes(argument.nodeType ?? "")
               && !integerLimit(argument) && !structMember(argument) && !builtin(argument))
             || (node.names as unknown[])?.length || node.tryCall) {
-            throw new Error("PQABI typed calls currently require an interface cast of an address variable or typed struct field, static address, uint256, bytes32 or bool arguments and address, bytes32, uint256 or bool results");
+            throw new Error("PQABI typed calls currently require an interface cast of an address variable or typed struct field, static address, unsigned integer, bytes32 or bool arguments and results");
           }
           if (nativeHeight === undefined) throw new Error("PQABI typed call requires nativeAddressContextHeight matching an activated node profile");
           const selector = definition.functionSelector;
