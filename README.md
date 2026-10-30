@@ -1305,9 +1305,15 @@ evaluated once. The node applies its existing call-gas forwarding rules,
 including the EIP-150 cap. Other receiver expressions remain unsupported.
 
 Typed `I(target).echo(value)` calls also preserve the original selector and
-complete address with zero or multiple static `address`, unsigned integer,
-`bytes32` or `bool` arguments and results. Unsigned integers retain their declared
-width, including `uint8`, `uint112`, `uint128` and `uint256`. Address fields remain
+complete address with zero or multiple static `address`, integer,
+`bytes32` or `bool` arguments and results. Integers retain their declared
+width, including `uint8`, `uint112`, `int112` and `int256`. Signed values retain
+two’s complement and sign extension. Negative numeric literals such as
+`I(target).echo(-1)` and signed metatype limits such as `type(int112).min` can
+be passed directly. Noncanonical sign extension in narrow signed ABI words
+reverts the call and its state changes. Standard `block.timestamp` reads are
+retained in source and in typed arguments and call options; they read the
+executing block’s timestamp. Address fields remain
 nonpayable. For example, `IERC20(token).transfer(msg.sender, amount)` retains
 both input words and its boolean result; `IERC20(token).totalSupply()` takes no
 arguments. A returned `false` remains false, while malformed boolean return data
@@ -1318,7 +1324,9 @@ For example, an interface returning `(address, uint256, bool, bytes32)` can be
 returned directly or assigned to four local variables. Narrow result lists such
 as `getReserves() returns (uint112, uint112, uint32)` retain their original ABI;
 noncanonical high bits in narrow arguments or results reject rather than truncate.
-Decoded `uint32` fields use JavaScript numbers; `uint112` and `uint256` use bigint.
+Decoded `uint32` fields use JavaScript numbers; `uint112`, `uint256`, `int112`
+and `int256` use bigint. For example, `latestRoundData()` result lists retain
+the signed `int256` answer alongside their unsigned round and time fields.
 Calls with no
 result, such as `INFT(nft).transferFrom(address(this), recipient, id)`, require
 code at the complete target address. An absent or empty-code target reverts.
@@ -1362,7 +1370,7 @@ SHELL_NODE_BIN=/path/to/shell-node node --test tests/pqabi.payable.test.mjs
 The test creates temporary keys, ports and isolated genesis allocations; it
 retains its report and chain data for inspection. It does not deploy through
 native CREATE or change any existing network’s activation schedule.
-For the void-call, static return-list and narrow unsigned tests,
+For the void-call, static return-list, narrow unsigned and signed integer tests,
 `SHELL_PQABI_RESUME_DIR` can point to the retained test directory after an
 assertion failure. Resume requires matching source, compiled
 artifacts, node binary, isolated genesis and clean node exits. It rechecks the

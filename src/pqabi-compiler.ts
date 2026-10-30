@@ -264,6 +264,13 @@ function integerLimit(node: AstNode): boolean {
     && /^t_magic_meta_type_t_u?int[0-9]+$/.test(call.typeDescriptions?.typeIdentifier ?? "");
 }
 
+function blockTimestamp(node: AstNode): boolean {
+  const expression = node.expression as AstNode | undefined;
+  return node.nodeType === "MemberAccess" && node.memberName === "timestamp"
+    && expression?.nodeType === "Identifier" && expression.name === "block"
+    && expression.typeDescriptions?.typeIdentifier === "t_magic_block";
+}
+
 function visit(value: unknown, visitor: (node: AstNode) => void): void {
   if (Array.isArray(value)) {
     for (const child of value) visit(child, visitor);
@@ -407,7 +414,7 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
             const type = parameter.typeName as AstNode;
             return (type?.name === "address" && type.stateMutability !== "payable")
               // Solidity has already checked elementary integer widths in this AST.
-              || /^uint(?:[0-9]+)?$/.test(String(type?.name))
+              || /^u?int(?:[0-9]+)?$/.test(String(type?.name))
               || ["bytes32", "bool"].includes(String(type?.name));
           };
           if (!definition || !parameters || !returns
@@ -415,9 +422,12 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
             || (target.arguments as AstNode[])?.length !== 1 || !(receiver?.nodeType === "Identifier" || (receiver && structMember(receiver)))
             || receiver.typeDescriptions?.typeString !== "address" || !arguments_ || arguments_.length !== parameters.length
             || arguments_.some((argument) => !["Identifier", "Literal"].includes(argument.nodeType ?? "")
-              && !integerLimit(argument) && !structMember(argument) && !builtin(argument))
+              && !(argument.nodeType === "UnaryOperation" && argument.operator === "-"
+                && (argument.subExpression as AstNode)?.nodeType === "Literal"
+                && (argument.subExpression as AstNode).kind === "number")
+              && !integerLimit(argument) && !blockTimestamp(argument) && !structMember(argument) && !builtin(argument))
             || (node.names as unknown[])?.length || node.tryCall) {
-            throw new Error("PQABI typed calls currently require an interface cast of an address variable or typed struct field, static address, unsigned integer, bytes32 or bool arguments and results");
+            throw new Error("PQABI typed calls currently require an interface cast of an address variable or typed struct field, static address, integer, bytes32 or bool arguments and results");
           }
           if (nativeHeight === undefined) throw new Error("PQABI typed call requires nativeAddressContextHeight matching an activated node profile");
           const selector = definition.functionSelector;
@@ -428,7 +438,7 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
           const callGas = options[names.indexOf("gas")];
           if (names.some((name) => !["value", "gas"].includes(name))
             || options.some((option) => !["Identifier", "Literal"].includes(option.nodeType ?? "")
-              && !integerLimit(option) && !structMember(option))) {
+              && !integerLimit(option) && !blockTimestamp(option) && !structMember(option))) {
             throw new Error("PQABI typed call options currently require simple value/gas expressions or typed struct fields");
           }
           const operation = value ? "callvalue" : ["view", "pure"].includes(String(definition.stateMutability)) ? "staticcall" : "call";
@@ -520,7 +530,7 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
         || (node.nodeType === "ElementaryTypeName" && node.name === "address"
           && node.stateMutability === "payable")
         || (node.nodeType === "Identifier" && ["this", "super"].includes(node.name ?? ""))
-        || (node.nodeType === "MemberAccess" && !integerLimit(node) && !structMember(node)
+        || (node.nodeType === "MemberAccess" && !integerLimit(node) && !blockTimestamp(node) && !structMember(node)
           && !["length", "push", "pop"].includes(node.memberName ?? ""))) {
         throw new Error(`PQABI target does not yet support ${node.nodeType}${node.memberName ? ` .${node.memberName}` : ""} in ${path}; native context/calls require further compiler support`);
       }

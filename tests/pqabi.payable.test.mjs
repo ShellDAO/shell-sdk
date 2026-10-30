@@ -22,6 +22,11 @@ interface INFT {
  function checkOwner(address owner,uint256 id) external view;
 }
 interface IVoid {function touch(address owner,uint256 id) external payable;function ping() external;}
+interface IOracle {
+ function latestRoundData() external view returns(uint80,int256,uint256,uint256,uint80);
+ function setRound(int256 price,int112 delta,uint80 round) external payable returns(int256,int112,uint80);
+ function signedEcho(int112 value) external pure returns(int112);
+}
 interface IReserves {
  function getReserves() external view returns(uint112 reserve0,uint112 reserve1,uint32 blockTimestampLast);
  function setReserves(uint112 first,uint112 second,uint32 at) external payable returns(uint112,uint112,uint32);
@@ -47,6 +52,10 @@ contract Payee {
  mapping(address=>mapping(address=>uint256)) allowances;
  mapping(uint256=>address) owners;
  uint112 reserve0;uint112 reserve1;uint32 reserveStamp;
+ int256 oraclePrice;int112 oracleDelta;uint80 oracleRound;uint256 oracleTime;
+ function setRound(int256 price,int112 delta,uint80 round) external payable returns(int256,int112,uint80){require(round>0);oraclePrice=price;oracleDelta=delta;oracleRound=round;oracleTime=block.timestamp;count++;seen=msg.sender;return(price,delta,round);}
+ function latestRoundData() external view returns(uint80,int256,uint256,uint256,uint80){return(oracleRound,oraclePrice,oracleTime,oracleTime,oracleRound);}
+ function signedEcho(int112 value) external pure returns(int112){return value;}
  function getReserves() external view returns(uint112,uint112,uint32){return(reserve0,reserve1,reserveStamp);}
  function setReserves(uint112 first,uint112 second,uint32 at) external payable returns(uint112,uint112,uint32){reserve0=first;reserve1=second;reserveStamp=at;count++;seen=msg.sender;return(first,second,at);}
  error WrongOwner(address expected,uint256 id);
@@ -109,6 +118,11 @@ contract Reader {
  function probe(address target) external {count++;IVoid(target).ping();}
  function verifyOwner(address nft,address owner,uint256 id) external view {INFT(nft).checkOwner(owner,id);}
  function nftOwner(address nft,uint256 id) external view returns(address){return INFT(nft).ownerOf(id);}
+ function latestPrice(address target) external view returns(uint80,int256,uint256,uint256,uint80){return IOracle(target).latestRoundData();}
+ function recordPrice(address target,int256 price,int112 delta,uint80 round,uint256 amount,uint256 budget) external payable returns(int256,int112,uint80){count++;return IOracle(target).setRound{value:amount,gas:budget}(price,delta,round);}
+ function signedLiteral(address target) external pure returns(int112){return IOracle(target).signedEcho(-1);}
+ function signedValue(address target,int112 value) external pure returns(int112){return IOracle(target).signedEcho(value);}
+ function signedMinimum(address target) external pure returns(int112){return IOracle(target).signedEcho(type(int112).min);}
  function readReserves(address target) external view returns(uint112,uint112,uint32){return IReserves(target).getReserves();}
  function putReserves(address target,uint112 first,uint112 second,uint32 at,uint256 amount,uint256 budget) external payable returns(uint112,uint112,uint32){count++;return IReserves(target).setReserves{value:amount,gas:budget}(first,second,at);}
  function limitReserves(address target) external returns(uint112,uint112,uint32){count++;return IReserves(target).setReserves(type(uint112).max,0,type(uint32).max);}
@@ -154,9 +168,9 @@ contract Reader {
 
 // Run after npm run build with SHELL_NODE_BIN pointing to a compatible node.
 // Isolated genesis allocation avoids making a native CREATE derivation claim.
-async function runPayableAcceptance(gasOptions = false, contextOptions = false, staticCalls = false, voidCalls = false, tupleCalls = false, narrowCalls = false) {
+async function runPayableAcceptance(gasOptions = false, contextOptions = false, staticCalls = false, voidCalls = false, tupleCalls = false, narrowCalls = false, signedCalls = false) {
   const binary = process.env.SHELL_NODE_BIN;
-  const resumeDirectory = voidCalls || tupleCalls || narrowCalls ? process.env.SHELL_PQABI_RESUME_DIR : undefined;
+  const resumeDirectory = voidCalls || tupleCalls || narrowCalls || signedCalls ? process.env.SHELL_PQABI_RESUME_DIR : undefined;
   const directory = resumeDirectory ? resolve(resumeDirectory) : await mkdtemp(join(tmpdir(), 'shell-sdk-payable-'));
   const previousReport = resumeDirectory ? JSON.parse(await readFile(join(directory,'report.json'),'utf8')) : undefined;
   const password = resumeDirectory ? await readFile(join(directory,'password.txt'),'utf8') : randomBytes(24).toString('hex');
@@ -181,6 +195,9 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
   const callerAlias = lowAlias(payer.getAddress());
   const maxId=(1n<<256n)-1n;
   const max112=(1n<<112n)-1n,max32=(1n<<32n)-1n;
+  const minInt256=-(1n<<255n),maxInt256=(1n<<255n)-1n,minInt112=-(1n<<111n),maxInt112=(1n<<111n)-1n,max80=(1n<<80n)-1n;
+  const signedWord=value=>word(BigInt.asUintN(256,value));
+  const badSigned='0x60635f557f'+word(1)+'5f527f'+word(max112)+'602052600160405260605ff3';
   const rawReserves=(first,second,at)=>'0x60635f557f'+word(first)+'5f527f'+word(second)+'6020527f'+word(at)+'60405260605ff3';
   const nftIds=[7n,maxId,99n,100n];
   const nftSlot = id => BigInt(keccak256('0x'+word(id)+word(5)));
@@ -192,7 +209,7 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
   for (const contractName of ['Reader', 'Payee']) {
     const options = { sources: [{ path: 'Payable.sol', content: source }], contractName, evmVersion: 'shanghai' };
     const original = await compileSolidity(options);
-    artifacts[contractName] = await compileSolidity({ ...options, target: 'pqvm', nativeAddressContextHeight: voidCalls || tupleCalls || narrowCalls ? 2 : 0 });
+    artifacts[contractName] = await compileSolidity({ ...options, target: 'pqvm', nativeAddressContextHeight: voidCalls || tupleCalls || narrowCalls || signedCalls ? 2 : 0 });
     assert.deepEqual(artifacts[contractName].abi, original.abi);
   }
   const ports = [];
@@ -205,7 +222,7 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
   assert.notEqual(...ports);
   const freshReport = { directory, binarySha256: createHash('sha256').update(await readFile(binary)).digest('hex'),
     artifacts, source, opens: [], transactions: [], adaptations: [
-      `Source compiler; isolated Dev chain 1337, native context at height ${voidCalls || tupleCalls || narrowCalls ? 2 : 0}, fee accounting at genesis.`,
+      `Source compiler; isolated Dev chain 1337, native context at height ${voidCalls || tupleCalls || narrowCalls || signedCalls ? 2 : 0}, fee accounting at genesis.`,
       'Fresh ML-DSA keys; full RocksDB producer and independent non-authority observer.',
       'Runtime allocation is not native CREATE or public tutorial deployment acceptance.' ] };
   if(previousReport) {
@@ -284,6 +301,10 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
       accounts[target] = { balance: await rpc(i, 'eth_getBalance', [target, tag]),
         nonce: await rpc(i, 'eth_getTransactionCount', [target, tag]), slots: [] };
       for (const slot of ['0x0', '0x1']) accounts[target].slots.push(await rpc(i, 'eth_getStorageAt', [target, slot, tag]));
+      if(signedCalls && [payee,alias].includes(target)) {
+        accounts[target].oracle={};
+        for(const[slot,name]of [['0x7','price'],['0x8','deltaRound'],['0x9','time']]) accounts[target].oracle[name]=await rpc(i,'eth_getStorageAt',[target,slot,tag]);
+      }
       if(narrowCalls && [payee,alias].includes(target)) accounts[target].reservesWord=await rpc(i,'eth_getStorageAt',[target,'0x6',tag]);
       if(voidCalls && [payee,alias].includes(target)) {
         accounts[target].owners={};
@@ -308,6 +329,8 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
     if(prefixCursor<acceptedPrefix) {
       const entry=report.transactions[prefixCursor++];assert.equal(entry.label,label);assert.equal(entry.aa,aa);
       assert.equal(entry.receipt.status,success?'0x1':'0x0');
+      entry.trace??=await rpc(0,'debug_traceTransaction',[entry.hash,{tracer:'callTracer'}]);
+      entry.after??=await state(0,entry.receipt.blockNumber);
       if(!aa) assert.equal(entry.trace.input,calls[0].data);
       assert.deepEqual(await rpc(0,'eth_getTransactionReceipt',[entry.hash]),entry.receipt);
       return entry;
@@ -342,14 +365,14 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
   }
   try {
     const genesis = { chain_id: 1337, network_type: 'Dev', timestamp: Math.floor(Date.now() / 1000) - 120,
-      gas_limit: 30000000, registered_key_algorithm_height: 0, native_address_context_height: voidCalls || tupleCalls || narrowCalls ? 2 : 0,
+      gas_limit: 30000000, registered_key_algorithm_height: 0, native_address_context_height: voidCalls || tupleCalls || narrowCalls || signedCalls ? 2 : 0,
       fee_accounting_activation_height: 0, aa_account_manager_height: 0,
       consensus: { engine: 'wpoa', authorities: [miner.getAddress()],
         authority_pubkeys: ['0x' + Buffer.from(miner.getPublicKey()).toString('hex')], weights: [1],
         stakes: [], block_time_secs: 2, max_future_secs: 300, epoch_length: 0 }, alloc: {} };
     for (const account of [miner.getAddress(), payer.getAddress()]) genesis.alloc[account] = { balance: '0x3635c9adc5dea00000', nonce: 0 };
     for (const [account, code] of [[reader, artifacts.Reader.deployedBytecode], [payee, artifacts.Payee.deployedBytecode],
-      [alias, artifacts.Payee.deployedBytecode], [short, narrowCalls ? rawReserves(1n,2n,max32+1n) : tupleCalls ? '0x60635f5560605ff3' : '0x60635f55601f5ff3'], [badBool, narrowCalls ? rawReserves(max112+1n,2n,3n) : tupleCalls ? '0x60635f557f'+owner.slice(2)+'5f527f'+word(maxId)+'6020526002604052600760605260805ff3' : '0x60635f5560025f5260205ff3'], [large, '0x60635f556110005ff3']]) {
+      [alias, artifacts.Payee.deployedBytecode], [short, signedCalls ? badSigned : narrowCalls ? rawReserves(1n,2n,max32+1n) : tupleCalls ? '0x60635f5560605ff3' : '0x60635f55601f5ff3'], [badBool, narrowCalls ? rawReserves(max112+1n,2n,3n) : tupleCalls ? '0x60635f557f'+owner.slice(2)+'5f527f'+word(maxId)+'6020526002604052600760605260805ff3' : '0x60635f5560025f5260205ff3'], [large, '0x60635f556110005ff3']]) {
       genesis.alloc[account] = { balance: '0x0', nonce: 1, code, storage: {} };
     }
     if(voidCalls) {
@@ -369,7 +392,8 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
     await start(1, await peer(await start(0)));
     if(resumeDirectory) {
       nonce=Number(BigInt(await rpc(0,'eth_getTransactionCount',[payer.getAddress(),'latest'])));assert.equal(nonce,acceptedPrefix);
-      assert.deepEqual(await state(0),report.transactions.at(-1).after);
+      const last=report.transactions.at(-1);last.after??=await state(0,last.receipt.blockNumber);
+      assert.deepEqual(await state(0),last.after);
     }
     let first;
     const lowRequest = (target, beneficiary, amount, budget, fn = 'low') => {
@@ -395,7 +419,44 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
     const tupleOutput=(who,size,ok,tag='0x'+word(7))=>who+word(size)+word(ok?1:0)+tag.slice(2);
     const reservesOutput=(a,b,at)=>'0x'+word(a)+word(b)+word(at);
     const reservesWord=(a,b,at)=>'0x'+word(a+(b<<112n)+(at<<224n));
-    if(narrowCalls) {
+    const signedOutput=(price,delta,round)=>'0x'+signedWord(price)+signedWord(delta)+word(round);
+    const oracleOutput=(round,price,time)=>'0x'+word(round)+signedWord(price)+word(time)+word(time)+word(round);
+    const oracleWords=(price,delta,round,time)=>({price:'0x'+signedWord(price),deltaRound:'0x'+word(BigInt.asUintN(112,delta)+(round<<112n)),time:'0x'+word(time)});
+    if(signedCalls) {
+      const pre=await send('signed guard before native activation',[assetRequest('latestPrice',[payee])],0n,false);assert.equal(BigInt(pre.receipt.blockNumber),1n);
+      const underfunded=await send('signed MIN values at activation boundary',[assetRequest('recordPrice',[payee,minInt256,minInt112,1n,3n,100000n])],9n,false);
+      assert.equal(BigInt(underfunded.receipt.blockNumber),2n);assert.match(underfunded.trace.calls[0].error,/OutOfGas/);gasWord(underfunded,'CALL',100000n);
+      for(const target of [reader,payee,alias]) assert.deepEqual(underfunded.after[target],underfunded.before[target]);
+      first=await send('signed MIN values with sufficient callee gas',[assetRequest('recordPrice',[payee,minInt256,minInt112,1n,3n,200000n])],9n,true);
+      assert.equal(BigInt(first.receipt.blockNumber),3n);assert.equal(first.trace.output,signedOutput(minInt256,minInt112,1n));gasWord(first,'CALL',200000n);
+      assert.equal(first.trace.calls[0].input,toFunctionSelector('setRound(int256,int112,uint80)')+signedWord(minInt256)+signedWord(minInt112)+word(1));
+      const firstTime=BigInt((await rpc(0,'eth_getBlockByNumber',[first.receipt.blockNumber,false])).timestamp);assert.deepEqual(first.after[payee].oracle,oracleWords(minInt256,minInt112,1n,firstTime));report.firstOracleTime=firstTime.toString();
+      const maximum=await send('signed MAX and separate same-low20 feed',[assetRequest('recordPrice',[alias,maxInt256,maxInt112,max80,2n,200000n])],0n,true);
+      assert.equal(maximum.trace.output,signedOutput(maxInt256,maxInt112,max80));assert.deepEqual(maximum.before[payee],maximum.after[payee]);
+      const malformed=await send('signed result bad sign extension restores writes',[assetRequest('recordPrice',[short,-7n,-1n,2n,1n,100000n])],3n,false);
+      assert.equal(malformed.trace.calls[0].output,'0x'+word(1)+word(max112)+word(1));
+      const invalid=assetRequest('recordPrice',[payee,5n,1n,2n,0n,100000n]);invalid.data=invalid.data.slice(0,138)+word(max112)+invalid.data.slice(202);
+      const rejected=await send('signed outer bad sign extension rejects before CALL',[invalid],0n,false);assert.equal((rejected.trace.calls??[]).length,0);
+      await send('signed zero-gas stipend rolls back',[assetRequest('recordPrice',[payee,-7n,-1n,2n,1n,0n])],3n,false);
+      await send('signed AA later rejection restores price delta round time',[
+        assetRequest('recordPrice',[payee,-7n,-1n,2n,1n,100000n]),assetRequest('recordPrice',[alias,42n,0n,0n,1n,100000n])],0n,false,true);
+      const batch=await send('signed AA both feed updates persist',[
+        assetRequest('recordPrice',[payee,-7n,-1n,2n,1n,100000n]),assetRequest('recordPrice',[alias,42n,0n,3n,1n,100000n])],0n,true,true);
+      const batchTime=BigInt((await rpc(0,'eth_getBlockByNumber',[batch.receipt.blockNumber,false])).timestamp);report.lastOracleTime=batchTime.toString();
+      assert.deepEqual(batch.after[payee].oracle,oracleWords(-7n,-1n,2n,batchTime));assert.deepEqual(batch.after[alias].oracle,oracleWords(42n,0n,3n,batchTime));
+      for(const[target,round,price]of [[payee,2n,-7n],[alias,3n,42n]]) {
+        const view=await send('signed latestRoundData '+target.slice(2,4),[assetRequest('latestPrice',[target])],0n,true);
+        assert.equal(view.trace.output,oracleOutput(round,price,batchTime));assert.equal(view.trace.calls[0].type,'STATICCALL');assert.equal(view.trace.calls[0].input,toFunctionSelector('latestRoundData()'));
+        assert.deepEqual(decodeFunctionResult({abi:artifacts.Reader.abi,functionName:'latestPrice',data:view.trace.output}),[round,price,batchTime,batchTime,round]);
+      }
+      const literal=await send('signed negative literal executes unchanged',[assetRequest('signedLiteral',[payee])],0n,true);assert.equal(literal.trace.output,'0x'+signedWord(-1n));assert.equal(literal.trace.calls[0].type,'STATICCALL');
+      for(const value of [minInt112,maxInt112,0n]) {
+        const echo=await send('signed narrow boundary '+value,[assetRequest('signedValue',[payee,value])],0n,true);assert.equal(echo.trace.output,'0x'+signedWord(value));
+        assert.equal(decodeFunctionResult({abi:artifacts.Reader.abi,functionName:'signedValue',data:echo.trace.output}),value);
+      }
+      assert.equal(await rpc(0,'eth_call',[assetRequest('signedMinimum',[payee]),'latest']),'0x'+signedWord(minInt112));
+      report.signedCalls={passed:true,activationHeight:2,widths:[112,256],negativeLiteral:true};
+    } else if(narrowCalls) {
       const pre=await send('narrow reserves guard before activation',[assetRequest('readReserves',[payee])],0n,false);assert.equal(BigInt(pre.receipt.blockNumber),1n);
       first=await send('narrow MAX values at activation boundary',[assetRequest('putReserves',[payee,max112,1n,max32,3n,100000n])],9n,true);
       assert.equal(BigInt(first.receipt.blockNumber),2n);assert.equal(first.trace.output,reservesOutput(max112,1n,max32));gasWord(first,'CALL',100000n);
@@ -609,7 +670,11 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
     const verify = async () => {
       for (const i of [0, 1]) {
         const before = await state(i), head = await rpc(i, 'eth_getBlockByNumber', ['latest', false]);
-        if(narrowCalls) {
+        if(signedCalls) {
+          assert.equal(before[reader].balance,'0x2');assert.equal(before[payee].balance,'0x4');assert.equal(before[alias].balance,'0x3');
+          assert.equal(before[reader].slots[0],'0x'+word(4));assert.equal(before[payee].slots[0],'0x'+word(2));assert.equal(before[alias].slots[0],'0x'+word(2));
+          assert.deepEqual(before[payee].oracle,oracleWords(-7n,-1n,2n,BigInt(report.lastOracleTime)));assert.deepEqual(before[alias].oracle,oracleWords(42n,0n,3n,BigInt(report.lastOracleTime)));
+        } else if(narrowCalls) {
           assert.equal(before[reader].balance,'0x2');assert.equal(before[payee].balance,'0x4');assert.equal(before[alias].balance,'0x3');
           assert.equal(before[reader].slots[0],'0x'+word(5));assert.equal(before[payee].slots[0],'0x'+word(3));assert.equal(before[alias].slots[0],'0x'+word(2));
           assert.equal(before[payee].reservesWord,reservesWord(max112,0n,max32));assert.equal(before[alias].reservesWord,reservesWord(21n,22n,23n));
@@ -644,7 +709,11 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
         }
         for (const entry of report.transactions) assert.deepEqual(await rpc(i, 'eth_getTransactionReceipt', [entry.hash]), entry.receipt);
         assert.deepEqual(await state(i, first.receipt.blockNumber), first.after);
-        if(narrowCalls) {
+        if(signedCalls) {
+          const query=assetRequest('latestPrice',[payee]);
+          assert.equal(await rpc(i,'eth_call',[query,first.receipt.blockNumber]),oracleOutput(1n,minInt256,BigInt(report.firstOracleTime)));
+          assert.equal(await rpc(i,'eth_call',[query,'latest']),oracleOutput(2n,-7n,BigInt(report.lastOracleTime)));
+        } else if(narrowCalls) {
           const query=assetRequest('readReserves',[payee]);
           assert.equal(await rpc(i,'eth_call',[query,first.receipt.blockNumber]),reservesOutput(max112,1n,max32));
           assert.equal(await rpc(i,'eth_call',[query,'latest']),reservesOutput(max112,0n,max32));
@@ -695,3 +764,6 @@ test('native return tuples: full32 field order, decode rejection, rollback, hist
 
 test('native narrow unsigned calls: reserves, bounds, rollback, history and disk reopen',
   {skip:!process.env.SHELL_NODE_BIN,timeout:600000},()=>runPayableAcceptance(false,false,false,false,false,true));
+
+test('native signed calls: feed state, sign extension, rollback, history and disk reopen',
+  {skip:!process.env.SHELL_NODE_BIN,timeout:600000},()=>runPayableAcceptance(false,false,false,false,false,false,true));
