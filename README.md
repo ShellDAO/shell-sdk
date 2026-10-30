@@ -1375,7 +1375,7 @@ and `new bytes(length)` is supported; this does not enable contract CREATE.
 For example, `IERC1155(token).balanceOfBatch(owners, ids)` retains its original
 selector, array offsets/lengths and `uint256[]` result. Batch transfer calls can
 pass IDs, amounts and bytes data through to an actual receiver callback.
-Nested arrays, arrays of dynamic values, strings and struct/tuple ABI fields
+Nested arrays, arrays of dynamic values and struct/tuple ABI fields
 remain outside this typed-call subset.
 The scoped batch fixture has one manual entry after building:
 
@@ -1388,6 +1388,20 @@ and persisted balances; it checks malformed dynamic ABI, receiver refusal and
 atomic rollback through historical reads and physical database reopen. This
 validates the batch call path rather than a complete ERC-1155 token or CREATE.
 
+
+Typed `string` arguments and results use the same native target and memory
+reference rules. `uri(uint256) returns (string)` preserves the original selector,
+UTF-8 bytes and dynamic ABI result. Strings can also be passed to typed calls;
+`new string(length)` allocates memory without enabling contract CREATE.
+The metadata fixture checks actual short/long string storage, URI events,
+empty and UTF-8 values, failure/AA rollback, historical reads and database reopen:
+
+```bash
+SHELL_NODE_BIN=/path/to/shell-node node --test --test-name-pattern 'native string metadata' tests/pqabi.payable.test.mjs
+```
+
+It validates the call and storage path. Metadata JSON retrieval, client-side
+`{id}` substitution and a complete ERC-1155 token are separate concerns.
 
 Narrow result lists such
 as `getReserves() returns (uint112, uint112, uint32)` retain their original ABI;

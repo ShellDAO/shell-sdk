@@ -288,12 +288,12 @@ function staticAbiScalar(type: AstNode): boolean {
 }
 
 function supportedAbiValue(type: AstNode): boolean {
-  return staticAbiScalar(type) || type?.name === "bytes"
+  return staticAbiScalar(type) || type?.name === "bytes" || type?.name === "string"
     || (type?.nodeType === "ArrayTypeName" && staticAbiScalar(type.baseType as AstNode));
 }
 
 function abiReference(type: AstNode): boolean {
-  return type.nodeType === "ArrayTypeName" || type.name === "bytes";
+  return type.nodeType === "ArrayTypeName" || type.name === "bytes" || type.name === "string";
 }
 
 /**
@@ -507,7 +507,7 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
                 && (argument.subExpression as AstNode).kind === "number")
               && !integerLimit(argument) && !blockTimestamp(argument) && !structMember(argument) && !builtin(argument) && !staticBytes4(argument))
             || (node.names as unknown[])?.length || node.tryCall) {
-            throw new Error("PQABI typed calls currently require an interface cast of an address variable or typed struct field, static address, integer, fixed bytes or bool, one-dimensional scalar arrays or bytes arguments and results");
+            throw new Error("PQABI typed calls currently require an interface cast of an address variable or typed struct field, static address, integer, fixed bytes or bool, one-dimensional scalar arrays, bytes or string arguments and results");
           }
           if (nativeHeight === undefined) throw new Error("PQABI typed call requires nativeAddressContextHeight matching an activated node profile");
           const selector = definition.functionSelector;
