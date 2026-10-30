@@ -189,6 +189,40 @@ test('typed external address calls preserve the original selector and ABI', asyn
 });
 
 
+const payableSource = `pragma solidity ^0.8.30;
+interface IPay { function pay(address owner) external payable returns(address); }
+contract PayableReader {
+ struct Entry { address target; address owner; uint256 amount; }
+ mapping(uint256 => Entry) entries;
+ function invoke(address target, address owner, uint256 amount) external payable returns(address) {
+  return IPay(target).pay{value:amount}(owner);
+ }
+ function plain(address target, address owner) external returns(address) { return IPay(target).pay(owner); }
+ function stored(uint256 id) external returns(address) {
+  return IPay(entries[id].target).pay{value:entries[id].amount}(entries[id].owner);
+ }
+}`;
+
+test('typed payable calls preserve original ABI with value and plain calls to the same declaration', async () => {
+ for (const input of ['address','uint256']) for (const result of ['address','bytes32','uint256']) {
+  const content=payableSource.replaceAll('returns(address)',`returns(${result})`).replaceAll('address owner',`${input} owner`);
+  const args={sources:[{path:'Payable.sol',content}],contractName:'PayableReader',evmVersion:'shanghai'};
+  const original=await compileSolidity(args);
+  const native=await compileSolidity({...args,target:'pqvm',nativeAddressContextHeight:2});
+  assert.deepEqual(native.abi,original.abi);
+  await assert.rejects(compileSolidity({...args,target:'pqvm'}),/typed call requires nativeAddressContextHeight/);
+ }
+ const args={sources:[{path:'Payable.sol',content:payableSource}],contractName:'PayableReader',target:'pqvm',nativeAddressContextHeight:2};
+ for(const value of ['0','type(uint256).max']) {
+  await compileSolidity({...args,sources:[{path:'Payable.sol',content:payableSource.replace('value:amount',`value:${value}`)}]});
+ }
+ for(const option of ['gas:amount','value:amount,gas:100000','gas:100000,value:amount']) {
+  await assert.rejects(compileSolidity({...args,sources:[{path:'Payable.sol',content:payableSource.replace('value:amount',option)}]}),/typed call options/);
+ }
+ await assert.rejects(compileSolidity({...args,sources:[{path:'Payable.sol',content:payableSource.replace('external payable returns(address);','external returns(address);')}]}),/non-payable|payable/);
+});
+
+
 test('typed uint256 input and address result retain the original interface ABI', async () => {
  const source='pragma solidity ^0.8.20; interface I {function ownerOf(uint256 tokenId) external view returns(address);} contract Reader {function lookup(address target,uint256 tokenId) external view returns(address){return I(target).ownerOf(tokenId);} function last(address target) external view returns(address){return I(target).ownerOf(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);}}';
  const args={sources:[{path:'Reader.sol',content:source}],contractName:'Reader',evmVersion:'shanghai'};

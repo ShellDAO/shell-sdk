@@ -1316,8 +1316,25 @@ pure callers of pure interfaces retain their original public ABI. The backend
 uses view annotations for these calls after checking the original source's
 purity, since the native STATICCALL helper requires view. Other declarations use
 CALL. Callee revert data propagates, and an absent or
-short return value reverts. Call options, named arguments, try/catch, contract
-variables and other ABI shapes still require further compiler support. This
+short return value reverts. Payable interface calls also accept
+`IPay(target).pay{value: amount}(owner)`, sending the specified Wei through the
+same full-width CALL path. The value can be an identifier, literal, typed struct
+field, or integer type limit; it is evaluated once. Plain and value calls to the
+same interface declaration can coexist. This support is in unreleased source
+builds. After building the SDK, verify real signed ordinary and AA calls,
+independent block import, historical reads and RocksDB reopen with a compatible
+node (verified with v0.27.13):
+
+```bash
+npm run build
+SHELL_NODE_BIN=/path/to/shell-node node --test tests/pqabi.payable.test.mjs
+```
+
+The test creates temporary keys, ports and isolated genesis allocations; it
+retains its report and chain data for inspection. It does not deploy through
+native CREATE or change any existing network’s activation schedule.
+
+Gas options, named arguments, try/catch, contract variables and other ABI shapes still require further compiler support. This
 form requires the same unreleased profile and explicit activation option.
 
 Numeric results use the same form, for example:

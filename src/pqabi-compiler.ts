@@ -368,9 +368,9 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
         const call = node.expression as AstNode;
         const member = (call?.nodeType === "FunctionCallOptions" ? call.expression : call) as AstNode;
         const target = member?.expression as AstNode;
-        if (call?.nodeType === "MemberAccess" && target?.nodeType === "FunctionCall"
+        if (member?.nodeType === "MemberAccess" && target?.nodeType === "FunctionCall"
           && target.kind === "typeConversion" && target.typeDescriptions?.typeString?.startsWith("contract ")) {
-          const definition = externalFunctions.get(call.referencedDeclaration as number);
+          const definition = externalFunctions.get(member.referencedDeclaration as number);
           const parameters = (definition?.parameters as AstNode)?.parameters as AstNode[] | undefined;
           const returns = (definition?.returnParameters as AstNode)?.parameters as AstNode[] | undefined;
           const receiver = (target.arguments as AstNode[])?.[0];
@@ -388,19 +388,27 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
           if (nativeHeight === undefined) throw new Error("PQABI typed call requires nativeAddressContextHeight matching an activated node profile");
           const selector = definition.functionSelector;
           if (typeof selector !== "string" || !/^[0-9a-f]{8}$/.test(selector)) throw new Error("PQABI typed call selector unavailable");
-          const operation = ["view", "pure"].includes(String(definition.stateMutability)) ? "staticcall" : "call";
+          const options = call.nodeType === "FunctionCallOptions" ? call.options as AstNode[] : [];
+          const names = call.nodeType === "FunctionCallOptions" ? call.names as string[] : [];
+          const value = options[0];
+          if (names.length > 1 || (names.length === 1 && names[0] !== "value")
+            || (value && !["Identifier", "Literal"].includes(value.nodeType ?? "")
+              && !integerLimit(value) && !structMember(value))) {
+            throw new Error("PQABI typed call options currently require a simple value or typed struct field");
+          }
+          const operation = value ? "callvalue" : ["view", "pure"].includes(String(definition.stateMutability)) ? "staticcall" : "call";
           if (definition.stateMutability === "pure") hasPureTypedCall = true;
-          const lowName = `_${operation === "call" ? "k" : "s"}${node.src!.split(":")[2]}`;
+          const lowName = `_${value ? "v" : operation === "call" ? "k" : "s"}${node.src!.split(":")[2]}`;
           helpers.set(operation, lowName);
           const resultType = (returns[0].typeName as AstNode)?.name === "bytes32" ? "bytes32" : "uint256";
-          const key = `typed:${definition.id}`;
+          const key = `typed:${definition.id}:${operation}`;
           let name = helpers.get(key);
           if (!name) {
             name = `_t${node.id!.toString(36)}`;
             helpers.set(key, name);
-            typedDeclarations.set(name, `function ${name}(uint256 target, uint256 value) ${operation === "staticcall" ? "view " : ""}returns (${resultType}) { (bool success, bytes memory output) = ${lowName}(target, abi.encodeWithSelector(bytes4(0x${selector}), value)); if (!success) { assembly { revert(add(output, 32), mload(output)) } } return abi.decode(output, (${resultType})); }`);
+            typedDeclarations.set(name, `function ${name}(uint256 target, uint256 argument${value ? ", uint256 value" : ""}) ${operation === "staticcall" ? "view " : ""}returns (${resultType}) { (bool success, bytes memory output) = ${lowName}(target, ${value ? "value, " : ""}abi.encodeWithSelector(bytes4(0x${selector}), argument)); if (!success) { assembly { revert(add(output, 32), mload(output)) } } return abi.decode(output, (${resultType})); }`);
           }
-          const text = `${name}(${read(receiver)},${read(argument)})`;
+          const text = `${name}(${read(receiver)},${read(argument)}${value ? "," + read(value) : ""})`;
           const [start, length] = node.src!.split(":").map(Number);
           if (Buffer.byteLength(text) > length) throw new Error("unsupported PQABI typed call source range");
           replacements.push({start, length, text: text + " ".repeat(length - Buffer.byteLength(text))});
