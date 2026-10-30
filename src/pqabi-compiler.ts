@@ -346,19 +346,40 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
     && (node.expression as AstNode)?.typeDescriptions?.typeIdentifier?.startsWith("t_struct$_") === true;
 
   const externalFunctions = new Map<number, AstNode>();
+  const interfaceIds = new Map<number, string>();
   const sourceNames = new Set<string>();
   let selectorHelperIndex = 0;
   for (const source of Object.values(original.sources) as AstSource[]) {
     visit(source.ast, (node) => {
       if (node.name) sourceNames.add(node.name);
+      if (node.nodeType === "ContractDefinition" && node.contractKind === "interface") {
+        // Solidity excludes inherited functions; only direct named declarations
+        // contribute. Events, errors, fallback and receive have no selectors.
+        let id = 0n;
+        for (const child of node.nodes as AstNode[]) {
+          if (child.nodeType !== "FunctionDefinition" || child.kind !== "function") continue;
+          const selector = child.functionSelector;
+          if (typeof selector !== "string" || !/^[0-9a-f]{8}$/.test(selector)) {
+            throw new Error("PQABI original interface function selector unavailable");
+          }
+          id ^= BigInt(`0x${selector}`);
+        }
+        interfaceIds.set(node.id!, id.toString(16).padStart(8, "0"));
+      }
       if (node.nodeType === "FunctionDefinition") externalFunctions.set(node.id!, node);
     });
   }
   // Resolve the original declaration before address lowering changes signatures.
   // Only identifier receivers are constant here; evaluating a receiver expression
   // may have side effects and must never be erased by this transformation.
-  const staticSelector = (node: AstNode): string | undefined => {
+  const staticBytes4 = (node: AstNode): string | undefined => {
     const member = node.expression as AstNode;
+    if (node.nodeType === "MemberAccess" && node.memberName === "interfaceId"
+      && member?.nodeType === "FunctionCall"
+      && (member.expression as AstNode)?.typeDescriptions?.typeIdentifier?.startsWith("t_function_metatype")
+      && (member.arguments as AstNode[])?.length === 1) {
+      return interfaceIds.get((member.arguments as AstNode[])[0].referencedDeclaration as number);
+    }
     if (node.nodeType !== "MemberAccess" || node.memberName !== "selector"
       || member?.nodeType !== "MemberAccess"
       || (member.expression as AstNode)?.nodeType !== "Identifier") return undefined;
@@ -382,7 +403,7 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
       const [start, length] = node.src!.split(":").map(Number);
       const contexts: { start: number; length: number; text: string }[] = [];
       visit(node, (child) => {
-        if (!builtin(child) && !staticSelector(child)) return;
+        if (!builtin(child) && !staticBytes4(child)) return;
         const [offset, size] = child.src!.split(":").map(Number);
         if (contexts.some((edit) => offset >= edit.start && offset + size <= edit.start + edit.length)) return;
         contexts.push({start: offset, length: size, text: renderContext(child)});
@@ -401,8 +422,10 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
       return content.toString("utf8");
     };
     function renderContext(node: AstNode): string {
-      const selector = staticSelector(node);
+      const selector = staticBytes4(node);
       if (selector) {
+        // This typed literal also remains valid in Solidity constant initializers.
+        if (node.memberName === "interfaceId") return `bytes4(0x${selector})`;
         const key = `selector:${selector}`;
         let name = helpers.get(key);
         if (!name) {
@@ -453,7 +476,7 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
               && !(argument.nodeType === "UnaryOperation" && argument.operator === "-"
                 && (argument.subExpression as AstNode)?.nodeType === "Literal"
                 && (argument.subExpression as AstNode).kind === "number")
-              && !integerLimit(argument) && !blockTimestamp(argument) && !structMember(argument) && !builtin(argument) && !staticSelector(argument))
+              && !integerLimit(argument) && !blockTimestamp(argument) && !structMember(argument) && !builtin(argument) && !staticBytes4(argument))
             || (node.names as unknown[])?.length || node.tryCall) {
             throw new Error("PQABI typed calls currently require an interface cast of an address variable or typed struct field, static address, integer, fixed bytes or bool arguments and results");
           }
@@ -538,7 +561,7 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
         }
       }
       const opcode = builtin(node);
-      if (!opcode && !staticSelector(node)) return;
+      if (!opcode && !staticBytes4(node)) return;
       visit(node, (child) => { if (child.id !== undefined) handled.add(child.id); });
       const [start, length] = node.src!.split(":").map(Number);
       const text = renderContext(node);

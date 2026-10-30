@@ -23,6 +23,11 @@ interface INFT {
 }
 interface IVoid {function touch(address owner,uint256 id) external payable;function ping() external;}
 interface Solidity101 {function hello() external pure;function world(int) external pure;}
+interface ICombo {function pay(address owner) external payable returns(address);function peek(address owner) external view returns(address);}
+interface IInherited is IPay {function peek(address owner) external view returns(address);event Seen(address owner);error Denied(address owner);}
+interface IEmpty is IInherited {}
+interface IRedefined is IPay {function pay(address owner) external payable override returns(address);}
+interface IOverloads {function pay(address owner) external returns(address);function pay(uint256 owner) external returns(uint256);}
 interface IDetect {
  function supportsInterface(bytes4 id) external view returns(bool);
  function setInterface(bytes4 id,bool enabled,bytes16 tag,bytes1 flag) external payable returns(bytes16,bytes1);
@@ -131,6 +136,11 @@ contract Reader {
  function probe(address target) external {count++;IVoid(target).ping();}
  function verifyOwner(address nft,address owner,uint256 id) external view {INFT(nft).checkOwner(owner,id);}
  function nftOwner(address nft,uint256 id) external view returns(address){return INFT(nft).ownerOf(id);}
+ bytes4 constant COMPOSITE_ID=type(ICombo).interfaceId;
+ function interfaceIds() external pure returns(bytes4,bytes4,bytes4,bytes4,bytes4,bytes4){return(COMPOSITE_ID,type(IPay).interfaceId,type(IInherited).interfaceId,type(IEmpty).interfaceId,type(IRedefined).interfaceId,type(IOverloads).interfaceId);}
+ function registerType(address target,bool enabled,bytes16 tag,bytes1 flag,uint256 amount,uint256 budget) external payable returns(bytes16,bytes1){count++;return IDetect(target).setInterface{value:amount,gas:budget}(type(ICombo).interfaceId,enabled,tag,flag);}
+ function registerEmptyType(address target,bool enabled,bytes16 tag,bytes1 flag,uint256 amount,uint256 budget) external payable returns(bytes16,bytes1){count++;return IDetect(target).setInterface{value:amount,gas:budget}(type(IEmpty).interfaceId,enabled,tag,flag);}
+ function typeMetadata(address target) external view returns(bytes16,bytes1){return IDetect(target).getInterface(type(ICombo).interfaceId);}
  function calculateSelector() public pure returns(bytes4){Solidity101 i;return i.hello.selector ^ i.world.selector;}
  function originalSelectors() external pure returns(bytes4,bytes4,bytes4,bytes4){IRead i;return(IPay.pay.selector,i.peek.selector,this.invoke.selector,IPay.pay.selector ^ IRead.peek.selector);}
  function loweredLiteral() external pure returns(bytes4){return ${toFunctionSelector('pay(uint256)')};}
@@ -191,7 +201,7 @@ contract Reader {
 
 // Run after npm run build with SHELL_NODE_BIN pointing to a compatible node.
 // Isolated genesis allocation avoids making a native CREATE derivation claim.
-async function runPayableAcceptance(gasOptions = false, contextOptions = false, staticCalls = false, voidCalls = false, tupleCalls = false, narrowCalls = false, signedCalls = false, bytesCalls = false, selectorCalls = false) {
+async function runPayableAcceptance(gasOptions = false, contextOptions = false, staticCalls = false, voidCalls = false, tupleCalls = false, narrowCalls = false, signedCalls = false, bytesCalls = false, selectorCalls = false, interfaceIdCalls = false) {
   const binary = process.env.SHELL_NODE_BIN;
   const resumeDirectory = voidCalls || tupleCalls || narrowCalls || signedCalls || bytesCalls ? process.env.SHELL_PQABI_RESUME_DIR : undefined;
   const directory = resumeDirectory ? resolve(resumeDirectory) : await mkdtemp(join(tmpdir(), 'shell-sdk-payable-'));
@@ -218,7 +228,8 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
   const callerAlias = lowAlias(payer.getAddress());
   const maxId=(1n<<256n)-1n;
   const byteWord=value=>value.slice(2).padEnd(64,'0');
-  const erc165='0x01ffc9a7',invalidID='0xffffffff',markID=toFunctionSelector(selectorCalls?'pay(address)':'getInterface(bytes4)'),echoID=toFunctionSelector(selectorCalls?'peek(address)':'echoBytes(bytes4,bytes16,bytes1)');
+  const xorID=(a,b)=>'0x'+(BigInt(a)^BigInt(b)).toString(16).padStart(8,'0');
+  const erc165='0x01ffc9a7',invalidID='0xffffffff',markID=interfaceIdCalls?xorID(toFunctionSelector('pay(address)'),toFunctionSelector('peek(address)')):toFunctionSelector(selectorCalls?'pay(address)':'getInterface(bytes4)'),echoID=interfaceIdCalls?'0x00000000':toFunctionSelector(selectorCalls?'peek(address)':'echoBytes(bytes4,bytes16,bytes1)');
   const tagA='0x'+'11'.repeat(16),tagB='0x'+'ee'.repeat(16),tagC='0x'+'cc'.repeat(16),flagA='0xab';
   const dirtyTag=word(BigInt('0x'+byteWord(tagA))+1n);
   const badBytes='0x60635f557f'+dirtyTag+'5f527f'+byteWord(flagA)+'60205260405ff3';
@@ -457,7 +468,19 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
     const oracleOutput=(round,price,time)=>'0x'+word(round)+signedWord(price)+word(time)+word(time)+word(round);
     const oracleWords=(price,delta,round,time)=>({price:'0x'+signedWord(price),deltaRound:'0x'+word(BigInt.asUintN(112,delta)+(round<<112n)),time:'0x'+word(time)});
     const bytesOutput=(tag,flag)=>'0x'+byteWord(tag)+byteWord(flag);
-    if(bytesCalls) {
+    if(interfaceIdCalls) {
+      const pre=await send('interfaceId native guard before activation',[assetRequest('registerType',[payee,true,tagA,flagA,0n,150000n])],0n,false);assert.equal(BigInt(pre.receipt.blockNumber),1n);
+      first=await send('original composite ID persists at activation boundary',[assetRequest('registerType',[payee,true,tagA,flagA,3n,150000n])],9n,true);assert.equal(BigInt(first.receipt.blockNumber),2n);
+      assert.equal(first.trace.output,bytesOutput(tagA,flagA));assert.equal(first.trace.calls[0].input,toFunctionSelector('setInterface(bytes4,bool,bytes16,bytes1)')+byteWord(markID)+word(1)+byteWord(tagA)+byteWord(flagA));gasWord(first,'CALL',150000n);
+      const alternate=await send('inherited-only empty ID persists on independent full32 target',[assetRequest('registerEmptyType',[alias,true,tagB,'0xff',2n,150000n])],0n,true);assert.deepEqual(alternate.before[payee],alternate.after[payee]);assert.equal(alternate.trace.calls[0].input,toFunctionSelector('setInterface(bytes4,bool,bytes16,bytes1)')+byteWord(echoID)+word(1)+byteWord(tagB)+byteWord('0xff'));
+      await send('interfaceId AA later invalid ID rolls back earlier metadata',[
+        assetRequest('registerType',[payee,false,tagC,'0x01',1n,150000n]),assetRequest('registerInterface',[alias,invalidID,true,tagA,'0x01',1n,150000n])],0n,false,true);
+      await send('interfaceId AA metadata writes both persist',[
+        assetRequest('registerType',[payee,true,tagC,'0x01',1n,150000n]),assetRequest('registerEmptyType',[alias,false,tagA,'0x00',1n,150000n])],0n,true,true);
+      const metadata=await send('interfaceId reads changed metadata',[assetRequest('typeMetadata',[payee])],0n,true);assert.equal(metadata.trace.output,bytesOutput(tagC,'0x01'));
+      const found=await send('interfaceId registered composite is supported',[assetRequest('detectInterface',[payee,markID])],0n,true);boolean(found,true);gasWord(found,'STATICCALL',30000n);
+      const removed=await send('interfaceId disabled empty ID is false',[assetRequest('detectInterface',[alias,echoID])],0n,true);boolean(removed,false);
+    } else if(bytesCalls) {
       const pre=await send('fixed bytes guard before activation',[assetRequest('detectInterface',[payee,erc165])],0n,false);assert.equal(BigInt(pre.receipt.blockNumber),1n);
       const self=await send('ERC165 ID true at activation boundary',[assetRequest('detectInterface',[payee,erc165])],0n,true);
       assert.equal(BigInt(self.receipt.blockNumber),2n);boolean(self,true);gasWord(self,'STATICCALL',30000n);assert.ok(BigInt(self.trace.calls[0].gasUsed)<=30000n);
@@ -734,6 +757,20 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
     const verify = async () => {
       for (const i of [0, 1]) {
         const before = await state(i), head = await rpc(i, 'eth_getBlockByNumber', ['latest', false]);
+        if(interfaceIdCalls) {
+          const pay=toFunctionSelector('pay(address)'),peek=toFunctionSelector('peek(address)'),lowerPay=toFunctionSelector('pay(uint256)');
+          const expected=[xorID(pay,peek),pay,peek,'0x00000000',pay,xorID(pay,lowerPay)];
+          const request=assetRequest('interfaceIds',[]),output='0x'+expected.map(byteWord).join('');
+          assert.equal(await rpc(i,'eth_call',[request,'latest']),output);assert.equal(await rpc(i,'eth_call',[request,first.receipt.blockNumber]),output);
+          assert.deepEqual(decodeFunctionResult({abi:artifacts.Reader.abi,functionName:'interfaceIds',data:output}),expected);
+          assert.equal(interfaceSlot(echoID),interfaceSlot(echoID,true));
+          const wrong=xorID(lowerPay,toFunctionSelector('peek(uint256)'));
+          for(const target of [payee,alias]) assert.equal(await rpc(i,'eth_getStorageAt',[target,interfaceSlot(wrong),'latest']),'0x'+word(0));
+          assert.equal(before[alias].interfaces[markID][0],'0x'+word(0));
+          assert.equal(await rpc(i,'eth_call',[assetRequest('typeMetadata',[payee]),first.receipt.blockNumber]),bytesOutput(tagA,flagA));
+          assert.equal(await rpc(i,'eth_call',[assetRequest('typeMetadata',[payee]),'latest']),bytesOutput(tagC,'0x01'));
+          report.interfaceIdCalls={passed:true,ids:expected,wrongLoweredId:wrong,inheritedFunctionsExcluded:true,eventsAndErrorsExcluded:true};
+        }
         if(selectorCalls) {
           const xor=(a,b)=>'0x'+(BigInt(a)^BigInt(b)).toString(16).padStart(8,'0');
           const expected=[markID,echoID,toFunctionSelector('invoke(address,address,uint256)'),xor(markID,echoID)];
@@ -749,7 +786,9 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
         if(bytesCalls) {
           assert.equal(before[reader].balance,'0x2');assert.equal(before[payee].balance,'0x4');assert.equal(before[alias].balance,'0x3');
           assert.equal(before[reader].slots[0],'0x'+word(4));assert.equal(before[payee].slots[0],'0x'+word(2));assert.equal(before[alias].slots[0],'0x'+word(2));
-          assert.deepEqual(before[payee].interfaces[markID],[interfaceWord(true,tagC,'0x01'),'0x'+word(0)]);assert.deepEqual(before[alias].interfaces[echoID],[interfaceWord(false,tagA,'0x00'),'0x'+word(0)]);
+          assert.deepEqual(before[payee].interfaces[markID],[interfaceWord(true,tagC,'0x01'),'0x'+word(0)]);const aliasMetadata=interfaceWord(false,tagA,'0x00');
+          // Zero has identical left/right padding and therefore the same slot.
+          assert.deepEqual(before[alias].interfaces[echoID],[aliasMetadata,BigInt(echoID)===0n?aliasMetadata:'0x'+word(0)]);
         } else if(signedCalls) {
           assert.equal(before[reader].balance,'0x2');assert.equal(before[payee].balance,'0x4');assert.equal(before[alias].balance,'0x3');
           assert.equal(before[reader].slots[0],'0x'+word(4));assert.equal(before[payee].slots[0],'0x'+word(2));assert.equal(before[alias].slots[0],'0x'+word(2));
@@ -857,3 +896,7 @@ test('native fixed bytes calls: ERC165 queries, metadata, padding, rollback, his
 
 test('native static selector expressions: original IDs persist through calls, history and reopen',
   {skip:!process.env.SHELL_NODE_BIN,timeout:600000},()=>runPayableAcceptance(false,false,false,false,false,false,false,true,true));
+
+
+test('native interface IDs: original direct declarations persist through calls, rollback and reopen',
+  {skip:!process.env.SHELL_NODE_BIN,timeout:600000},()=>runPayableAcceptance(false,false,false,false,false,false,false,true,false,true));

@@ -1332,8 +1332,14 @@ and `this.invoke.selector` keep the original Solidity signature, including
 directly to a typed call, for example
 `IRegistry(target).supportsInterface{gas:30000}(IPay.pay.selector)`.
 Receivers in these expressions must be simple identifiers; dynamic function
-pointers, receiver expressions with side effects and `type(I).interfaceId`
-remain outside this compiler target’s supported subset.
+pointers and receiver expressions with side effects remain outside this compiler
+target’s supported subset. `type(I).interfaceId` retains the original EIP-165
+identifier for an interface, including in constants and typed call arguments,
+for example `IRegistry(target).supportsInterface(type(IAsset).interfaceId)`.
+Only functions declared directly in the interface contribute to its XOR;
+inherited functions, events and errors do not. An interface declaring no new
+functions has ID `0x00000000`. Direct overrides and overloads contribute their
+original ABI selectors, including `address` parameters.
 Narrow result lists such
 as `getReserves() returns (uint112, uint112, uint32)` retain their original ABI;
 noncanonical high bits in narrow arguments or results reject rather than truncate.

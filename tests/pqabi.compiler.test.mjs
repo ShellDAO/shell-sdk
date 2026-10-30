@@ -958,3 +958,32 @@ test('native selector fields are data and effectful function receivers still rej
  await assert.rejects(compileSolidity({...args,target:'pqvm'}),/MemberAccess \.selector/);
  await compileSolidity({...args,sources:[{path:'Reader.sol',content:content.slice(0,content.indexOf(' function choose'))+'}'}],target:'pqvm'});
 });
+
+
+test('native interfaceId uses original direct selectors across inheritance and imports', async () => {
+ const interfaces=`pragma solidity ^0.8.30;
+ interface Base {function pay(address owner) external returns(address);}
+ interface Child is Base {function peek(address owner) external view returns(address);event Seen(address owner);error Denied(address owner);}
+ interface Empty is Child {}
+ interface Over is Base {function pay(address owner) external override returns(address);function pay(uint256 owner) external returns(uint256);}
+ interface Sink {function put(bytes4 value) external returns(bytes4);}`;
+ const content=`pragma solidity ^0.8.30;import * as Spec from "Spec.sol";
+ contract Reader {
+  bytes4 constant ID=type(Spec.Child).interfaceId;
+  function ids(address owner) external pure returns(address,bytes4,bytes4,bytes4,bytes4){return(owner,ID,type(Spec.Base).interfaceId,type(Spec.Empty).interfaceId,type(Spec.Over).interfaceId);}
+  function store(address target) external returns(bytes4){return Spec.Sink(target).put(type(Spec.Child).interfaceId);}
+ }`;
+ const args={sources:[{path:'Spec.sol',content:interfaces},{path:'Reader.sol',content}],contractName:'Reader',evmVersion:'shanghai'};
+ const original=await compileSolidity(args);const native=await compileSolidity({...args,target:'pqvm',nativeAddressContextHeight:2});assert.deepEqual(native.abi,original.abi);
+ assert.equal(native.abi.find(entry=>entry.name==='ids').stateMutability,'pure');
+ // The constant expression itself does not depend on native activation.
+ await compileSolidity({...args,sources:[args.sources[0],{path:'Reader.sol',content:content.slice(0,content.indexOf('  function store'))+'}'}],target:'pqvm'});
+});
+
+test('native interfaceId excludes events/errors and leaves same-named struct fields alone', async () => {
+ const content=`pragma solidity ^0.8.30;interface Empty {event Ping(address owner);error Denied(address owner);}
+ contract Reader {struct Entry {bytes4 interfaceId;} Entry private entry;
+ function ids(address owner) external view returns(address,bytes4,bytes4){return(owner,entry.interfaceId,type(Empty).interfaceId);}}`;
+ const args={sources:[{path:'Reader.sol',content}],contractName:'Reader',evmVersion:'shanghai'};
+ assert.deepEqual((await compileSolidity({...args,target:'pqvm'})).abi,(await compileSolidity(args)).abi);
+});
