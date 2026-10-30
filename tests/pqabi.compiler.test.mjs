@@ -295,6 +295,27 @@ test('native typed calls preserve zero/multiple static inputs and bool results',
 });
 
 
+test('native void interface calls preserve empty results, mutability and call options', async () => {
+ const source=`pragma solidity ^0.8.30;
+ interface INFT {function transferFrom(address from,address to,uint256 id) external;}
+ interface IVoid {function touch(address owner,uint256 id) external payable;function ping() external;function checkOwner(address owner,uint256 id) external view;function pureCheck(uint256 value) external pure;}
+ contract Reader {
+  function deliver(address nft,address recipient,uint256 id) external {INFT(nft).transferFrom(address(this),recipient,id);}
+  function valued(address target,address owner,uint256 id,uint256 amount,uint256 budget) external payable {IVoid(target).touch{value:amount,gas:budget}(owner,id);}
+  function ping(address target) external {IVoid(target).ping();}
+  function read(address target,address owner,uint256 id) external view {IVoid(target).checkOwner{gas:100000}(owner,id);}
+  function check(address target,uint256 value) external pure {IVoid(target).pureCheck(value);}
+ }`;
+ const args={sources:[{path:'Reader.sol',content:source}],contractName:'Reader',evmVersion:'shanghai'};
+ const original=await compileSolidity(args);
+ const native=await compileSolidity({...args,target:'pqvm',nativeAddressContextHeight:2});
+ assert.deepEqual(native.abi,original.abi);
+ assert.equal(native.abi.find(entry=>entry.name==='deliver').outputs.length,0);
+ assert.equal(native.abi.find(entry=>entry.name==='check').stateMutability,'pure');
+ await assert.rejects(compileSolidity({...args,target:'pqvm'}),/nativeAddressContextHeight/);
+});
+
+
 test('typed uint256 input and address result retain the original interface ABI', async () => {
  const source='pragma solidity ^0.8.20; interface I {function ownerOf(uint256 tokenId) external view returns(address);} contract Reader {function lookup(address target,uint256 tokenId) external view returns(address){return I(target).ownerOf(tokenId);} function last(address target) external view returns(address){return I(target).ownerOf(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);}}';
  const args={sources:[{path:'Reader.sol',content:source}],contractName:'Reader',evmVersion:'shanghai'};

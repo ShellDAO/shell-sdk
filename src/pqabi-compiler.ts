@@ -408,14 +408,14 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
             return (type?.name === "address" && type.stateMutability !== "payable")
               || ["uint", "uint256", "bytes32", "bool"].includes(String(type?.name));
           };
-          if (!definition || !parameters || returns?.length !== 1
-            || !parameters.every(staticParameter) || !staticParameter(returns[0])
+          if (!definition || !parameters || !returns || returns.length > 1
+            || !parameters.every(staticParameter) || !returns.every(staticParameter)
             || (target.arguments as AstNode[])?.length !== 1 || !(receiver?.nodeType === "Identifier" || (receiver && structMember(receiver)))
             || receiver.typeDescriptions?.typeString !== "address" || !arguments_ || arguments_.length !== parameters.length
             || arguments_.some((argument) => !["Identifier", "Literal"].includes(argument.nodeType ?? "")
               && !integerLimit(argument) && !structMember(argument) && !builtin(argument))
             || (node.names as unknown[])?.length || node.tryCall) {
-            throw new Error("PQABI typed calls currently require an interface cast of an address variable or typed struct field, static address, uint256, bytes32 or bool arguments and one address, bytes32, uint256 or bool result");
+            throw new Error("PQABI typed calls currently require an interface cast of an address variable or typed struct field, static address, uint256, bytes32 or bool arguments and at most one address, bytes32, uint256 or bool result");
           }
           if (nativeHeight === undefined) throw new Error("PQABI typed call requires nativeAddressContextHeight matching an activated node profile");
           const selector = definition.functionSelector;
@@ -432,10 +432,10 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
           const operation = value ? "callvalue" : ["view", "pure"].includes(String(definition.stateMutability)) ? "staticcall" : "call";
           if (definition.stateMutability === "pure") hasPureTypedCall = true;
           const lowName = `_${callGas ? "g" : ""}${value ? "v" : operation === "call" ? "k" : "s"}${node.src!.split(":")[2]}`;
-          helpers.set(operation + (callGas ? "gas" : ""), lowName);
+          if (returns.length) helpers.set(operation + (callGas ? "gas" : ""), lowName);
           const nativeType = (parameter: AstNode) => (parameter.typeName as AstNode).name === "address"
             ? "uint256" : (parameter.typeName as AstNode).name!;
-          const resultType = nativeType(returns[0]);
+          const resultType = returns.length ? nativeType(returns[0]) : "";
           const argumentNames = parameters.map((_, index) => parameters.length === 1 ? "argument" : `argument${index}`);
           const declarations = parameters.map((parameter, index) => `${nativeType(parameter)} ${argumentNames[index]}`);
           const key = `typed:${definition.id}:${operation}:${!!callGas}`;
@@ -443,7 +443,13 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
           if (!name) {
             name = `_t${node.id!.toString(36)}`;
             helpers.set(key, name);
+            if (!returns.length) {
+              const opcode = operation === "callvalue" ? "call" : operation;
+              const amount = opcode === "call" ? `${value ? "value" : "0"}, ` : "";
+              typedDeclarations.set(name, `function ${name}(uint256 target${declarations.length ? ", " + declarations.join(", ") : ""}${value ? ", uint256 value" : ""}${callGas ? ", uint256 callGas" : ""}) ${operation === "staticcall" ? "view " : ""}{ bytes memory data = abi.encodeWithSelector(bytes4(0x${selector})${argumentNames.length ? ", " + argumentNames.join(", ") : ""}); assembly { if lt(number(), ${nativeHeight}) { revert(0, 0) } if iszero(extcodesize(target)) { revert(0, 0) } if iszero(${opcode}(${callGas ? "callGas" : "gas()"}, target, ${amount}add(data, 32), mload(data), 0, 0)) { returndatacopy(0, 0, returndatasize()) revert(0, returndatasize()) } } }`);
+            } else {
             typedDeclarations.set(name, `function ${name}(uint256 target${declarations.length ? ", " + declarations.join(", ") : ""}${value ? ", uint256 value" : ""}${callGas ? ", uint256 callGas" : ""}) ${operation === "staticcall" ? "view " : ""}returns (${resultType}) { (bool success, bytes memory output) = ${lowName}(target, ${value ? "value, " : ""}${callGas ? "callGas, " : ""}abi.encodeWithSelector(bytes4(0x${selector})${argumentNames.length ? ", " + argumentNames.join(", ") : ""})); if (!success) { assembly { revert(add(output, 32), mload(output)) } } return abi.decode(output, (${resultType})); }`);
+            }
           }
           const text = `${name}(${read(receiver)}${arguments_.length ? "," + arguments_.map(read).join(",") : ""}${value ? "," + read(value) : ""}${callGas ? "," + read(callGas) : ""})`;
           const [start, length] = node.src!.split(":").map(Number);

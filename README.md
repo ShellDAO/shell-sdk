@@ -1306,11 +1306,16 @@ including the EIP-150 cap. Other receiver expressions remain unsupported.
 
 Typed `I(target).echo(value)` calls also preserve the original selector and
 complete address with zero or multiple static `address`, `uint256`, `bytes32`
-or `bool` arguments and one result of those types. Address fields remain
+or `bool` arguments and zero or one result of those types. Address fields remain
 nonpayable. For example, `IERC20(token).transfer(msg.sender, amount)` retains
 both input words and its boolean result; `IERC20(token).totalSupply()` takes no
 arguments. A returned `false` remains false, while malformed boolean return data
-reverts the caller rather than accepting a noncanonical value. The target can be
+reverts the caller rather than accepting a noncanonical value. Calls with no
+result, such as `INFT(nft).transferFrom(address(this), recipient, id)`, require
+code at the complete target address. An absent or empty-code target reverts.
+Successful void calls ignore return data without copying it; failed calls
+propagate the callee’s revert bytes. Void calls retain the same activation
+guard, value/gas options and CALL/STATICCALL mutability rules. The target can be
 an address variable or a typed address field of a storage or memory struct, including nested fields such as `I(entries[id].owner)`.
 The receiver expression is evaluated once, including any mapping index function.
 Each argument can be an identifier, literal, native context read, typed struct
@@ -1335,11 +1340,10 @@ same interface declaration can coexist. Typed calls also accept `{gas: budget}`
 and both orders of `{gas: budget, value: amount}` for payable functions. View
 and pure interfaces retain STATICCALL; other interfaces use CALL, with the
 specified gas operand and the node’s existing forwarding rules. This support is
-in unreleased source builds. After building the SDK, verify real signed ordinary and AA calls,
-independent block import, static interface token transfers, nested caller-indexed
-mappings, historical reads and
-RocksDB reopen with a compatible
-node (verified with v0.27.13):
+in unreleased source builds. After building the SDK, verify real signed ordinary
+and AA calls, independent block import, token/NFT transfers through static ABI
+parameters, nested caller-indexed mappings, historical reads and RocksDB reopen
+with a compatible node (verified with v0.27.13):
 
 ```bash
 npm run build
@@ -1349,6 +1353,12 @@ SHELL_NODE_BIN=/path/to/shell-node node --test tests/pqabi.payable.test.mjs
 The test creates temporary keys, ports and isolated genesis allocations; it
 retains its report and chain data for inspection. It does not deploy through
 native CREATE or change any existing network’s activation schedule.
+For the void-call test, `SHELL_PQABI_RESUME_DIR` can point to its retained test
+directory after an assertion failure. Resume requires matching source, compiled
+artifacts, node binary, isolated genesis and clean node exits. It rechecks the
+accepted prefix and continues with the retained payer nonce; it does not replay
+transactions. The original `report.json` is preserved and continuation results
+are written to `report-resumed.json`.
 
 Complex option expressions, named arguments, try/catch, contract variables and
 other ABI shapes still require further compiler support. This form requires the same unreleased profile and explicit activation option.

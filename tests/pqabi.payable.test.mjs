@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { openSync, closeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { createServer } from 'node:net';
 import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes, createHash } from 'node:crypto';
@@ -16,6 +16,12 @@ import { ShellSigner, MlDsa65Adapter, decryptKeystore, buildTransaction, createS
 const source = `pragma solidity ^0.8.30;
 interface IPay { function pay(address owner) external payable returns(address); }
 interface IRead { function peek(address owner) external view returns(address); }
+interface INFT {
+ function transferFrom(address from,address to,uint256 id) external;
+ function ownerOf(uint256 id) external view returns(address);
+ function checkOwner(address owner,uint256 id) external view;
+}
+interface IVoid {function touch(address owner,uint256 id) external payable;function ping() external;}
 interface IAsset {
  function transfer(address recipient,uint256 amount) external returns(bool);
  function totalSupply() external view returns(uint256);
@@ -30,6 +36,16 @@ contract Payee {
  mapping(address=>uint256) balances;
  uint256 supply;
  mapping(address=>mapping(address=>uint256)) allowances;
+ mapping(uint256=>address) owners;
+ error WrongOwner(address expected,uint256 id);
+ event OwnerMoved(address indexed from,address indexed to,uint256 indexed id);
+ function transferFrom(address from,address to,uint256 id) external {
+  require(owners[id]==from && msg.sender==from,"owner");owners[id]=to;count++;emit OwnerMoved(from,to,id);
+ }
+ function ownerOf(uint256 id) external view returns(address){return owners[id];}
+ function checkOwner(address owner,uint256 id) external view {if(owners[id]!=owner) revert WrongOwner(owner,id);}
+ function touch(address owner,uint256 id) external payable {require(owner!=address(0));owners[id]=owner;seen=owner;count++;}
+ function ping() external {count++;}
  event Transfer(address indexed from,address indexed to,uint256 value);
  function transfer(address recipient,uint256 amount) external returns(bool) {
   if(recipient==address(0)) return false;
@@ -72,6 +88,12 @@ contract Reader {
  function lowContext(address target,bytes memory data) external returns(bool,bytes memory) {
   (bool success,bytes memory output)=target.call{value:entries[msg.sender].amount,gas:entries[msg.sender].budget}(data); count++; return(success,output);
  }
+ function deliver(address nft,address recipient,uint256 id) external {count++;last=recipient;INFT(nft).transferFrom(address(this),recipient,id);}
+ function deliverBudget(address nft,address recipient,uint256 id,uint256 budget) external {count++;last=recipient;INFT(nft).transferFrom{gas:budget}(address(this),recipient,id);}
+ function deliverValue(address target,address owner,uint256 id,uint256 amount,uint256 budget) external payable {count++;last=owner;IVoid(target).touch{value:amount,gas:budget}(owner,id);}
+ function probe(address target) external {count++;IVoid(target).ping();}
+ function verifyOwner(address nft,address owner,uint256 id) external view {INFT(nft).checkOwner(owner,id);}
+ function nftOwner(address nft,uint256 id) external view returns(address){return INFT(nft).ownerOf(id);}
  function assetSend(address token,address recipient,uint256 amount) external returns(bool){count++;last=recipient;return IAsset(token).transfer(recipient,amount);}
  function assetToSender(address token,uint256 amount) external returns(bool){count++;last=msg.sender;return IAsset(token).transfer(msg.sender,amount);}
  function assetSupply(address token) external view returns(uint256){return IAsset(token).totalSupply();}
@@ -109,14 +131,16 @@ contract Reader {
 
 // Run after npm run build with SHELL_NODE_BIN pointing to a compatible node.
 // Isolated genesis allocation avoids making a native CREATE derivation claim.
-async function runPayableAcceptance(gasOptions = false, contextOptions = false, staticCalls = false) {
+async function runPayableAcceptance(gasOptions = false, contextOptions = false, staticCalls = false, voidCalls = false) {
   const binary = process.env.SHELL_NODE_BIN;
-  const directory = await mkdtemp(join(tmpdir(), 'shell-sdk-payable-'));
-  const password = randomBytes(24).toString('hex');
+  const resumeDirectory = voidCalls ? process.env.SHELL_PQABI_RESUME_DIR : undefined;
+  const directory = resumeDirectory ? resolve(resumeDirectory) : await mkdtemp(join(tmpdir(), 'shell-sdk-payable-'));
+  const previousReport = resumeDirectory ? JSON.parse(await readFile(join(directory,'report.json'),'utf8')) : undefined;
+  const password = resumeDirectory ? await readFile(join(directory,'password.txt'),'utf8') : randomBytes(24).toString('hex');
   const passwordFile = join(directory, 'password.txt');
   const keyFile = join(directory, 'validator.json');
-  await writeFile(passwordFile, password, { mode: 0o600 });
-  for (const file of [keyFile, join(directory, 'observer.json'), join(directory, 'payer.json')]) {
+  if(!resumeDirectory) await writeFile(passwordFile, password, { mode: 0o600 });
+  if(!resumeDirectory) for (const file of [keyFile, join(directory, 'observer.json'), join(directory, 'payer.json')]) {
     const key = spawnSync(binary, ['--password-file', passwordFile, 'key', 'generate',
       '--algorithm', 'mldsa65', '--output', file], { encoding: 'utf8' });
     assert.equal(key.status, 0, key.stderr);
@@ -127,11 +151,14 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
   const address = byte => '0x' + byte.repeat(32);
   const reader = address('11'), payee = address('22');
   const alias = '0x' + '33'.repeat(12) + '22'.repeat(20);
-  const short = address('44'), missing = address('55'), badBool = address('66');
+  const short = address('44'), missing = address('55'), badBool = address('66'), plain = address('77'), large = address('88');
   const owner = address('aa'), other = '0x' + 'bb'.repeat(12) + 'aa'.repeat(20);
   const zero = '0x' + word(0);
   const lowAlias = account => '0x' + '00'.repeat(12) + account.slice(-40);
   const callerAlias = lowAlias(payer.getAddress());
+  const maxId=(1n<<256n)-1n;
+  const nftIds=[7n,maxId,99n,100n];
+  const nftSlot = id => BigInt(keccak256('0x'+word(id)+word(5)));
   const balanceSlot = key => BigInt(keccak256('0x'+key.slice(2)+word(2)));
   const allowanceSlot = (owner,spender) => BigInt(keccak256('0x'+spender.slice(2)+keccak256('0x'+owner.slice(2)+word(4)).slice(2)));
   const quantity = value => '0x'+BigInt(value).toString(16);
@@ -140,7 +167,7 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
   for (const contractName of ['Reader', 'Payee']) {
     const options = { sources: [{ path: 'Payable.sol', content: source }], contractName, evmVersion: 'shanghai' };
     const original = await compileSolidity(options);
-    artifacts[contractName] = await compileSolidity({ ...options, target: 'pqvm', nativeAddressContextHeight: 0 });
+    artifacts[contractName] = await compileSolidity({ ...options, target: 'pqvm', nativeAddressContextHeight: voidCalls ? 2 : 0 });
     assert.deepEqual(artifacts[contractName].abi, original.abi);
   }
   const ports = [];
@@ -151,12 +178,21 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
     await new Promise(resolve => server.close(resolve));
   }
   assert.notEqual(...ports);
-  const report = { directory, binarySha256: createHash('sha256').update(await readFile(binary)).digest('hex'),
+  const freshReport = { directory, binarySha256: createHash('sha256').update(await readFile(binary)).digest('hex'),
     artifacts, source, opens: [], transactions: [], adaptations: [
-      'Source compiler; isolated Dev chain 1337, native context and fee accounting at genesis.',
+      `Source compiler; isolated Dev chain 1337, native context at height ${voidCalls ? 2 : 0}, fee accounting at genesis.`,
       'Fresh ML-DSA keys; full RocksDB producer and independent non-authority observer.',
       'Runtime allocation is not native CREATE or public tutorial deployment acceptance.' ] };
-  const save = () => writeFile(join(directory, 'report.json'), JSON.stringify(report, null, 2));
+  if(previousReport) {
+    assert.equal(previousReport.directory,directory);assert.equal(previousReport.binarySha256,freshReport.binarySha256);
+    assert.equal(previousReport.source,source);assert.deepEqual(previousReport.artifacts,JSON.parse(JSON.stringify(artifacts)));
+    assert.ok(previousReport.opens.every(entry=>entry.exitCode===0));
+  }
+  const report=previousReport??freshReport;
+  const acceptedPrefix=previousReport?.transactions.length??0;let prefixCursor=0;
+  if(previousReport) {report.resumedFrom='report.json';report.acceptedPrefix=acceptedPrefix;delete report.error;}
+  const reportName=resumeDirectory?'report-resumed.json':'report.json';
+  const save = () => writeFile(join(directory, reportName), JSON.stringify(report, null, 2));
   const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
   const provider = createShellProvider({ rpcHttpUrl: `http://127.0.0.1:${ports[0]}` });
   const nodes = [], dirs = [join(directory, 'leader'), join(directory, 'observer')];
@@ -219,10 +255,14 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
   };
   const state = async (i, tag = 'latest') => {
     const accounts = {};
-    for (const target of [reader, payee, alias, short, missing, badBool, payer.getAddress(), miner.getAddress()]) {
+    for (const target of [reader, payee, alias, short, missing, badBool, plain, large, payer.getAddress(), miner.getAddress()]) {
       accounts[target] = { balance: await rpc(i, 'eth_getBalance', [target, tag]),
         nonce: await rpc(i, 'eth_getTransactionCount', [target, tag]), slots: [] };
       for (const slot of ['0x0', '0x1']) accounts[target].slots.push(await rpc(i, 'eth_getStorageAt', [target, slot, tag]));
+      if(voidCalls && [payee,alias].includes(target)) {
+        accounts[target].owners={};
+        for(const id of nftIds) accounts[target].owners[id.toString()]=await rpc(i,'eth_getStorageAt',[target,quantity(nftSlot(id)),tag]);
+      }
       if(staticCalls && [payee,alias].includes(target)) {
         accounts[target].tokens={};
         for(const key of [reader,owner,other,payer.getAddress(),callerAlias,zero]) accounts[target].tokens[key]=await rpc(i,'eth_getStorageAt',[target,quantity(balanceSlot(key)),tag]);
@@ -239,6 +279,13 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
   };
   let nonce = 0;
   async function send(label, calls, value, success, aa = false) {
+    if(prefixCursor<acceptedPrefix) {
+      const entry=report.transactions[prefixCursor++];assert.equal(entry.label,label);assert.equal(entry.aa,aa);
+      assert.equal(entry.receipt.status,success?'0x1':'0x0');
+      if(!aa) assert.equal(entry.trace.input,calls[0].data);
+      assert.deepEqual(await rpc(0,'eth_getTransactionReceipt',[entry.hash]),entry.receipt);
+      return entry;
+    }
     const before = await state(0);
     const built = aa ? buildBatchTransaction({ chainId: 1337, nonce, gasLimit: Math.max(1200000, calls.length * 500000 + 100000),
       innerCalls: calls.map(call => buildInnerCall(reader, call.data, 500000, 0n)) }) : null;
@@ -258,7 +305,7 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
     assert.equal(BigInt(before[payer.getAddress()].balance) - BigInt(entry.after[payer.getAddress()].balance), fee + (success ? value : 0n));
     assert.equal(BigInt(entry.after[miner.getAddress()].balance) - BigInt(before[miner.getAddress()].balance), fee);
     assert.equal(BigInt(entry.after[payer.getAddress()].nonce), BigInt(nonce));
-    if (!success) for (const target of [reader, payee, alias, short, missing, badBool]) assert.deepEqual(entry.after[target], before[target]);
+    if (!success) for (const target of [reader, payee, alias, short, missing, badBool, plain, large]) assert.deepEqual(entry.after[target], before[target]);
     for (let attempt = 0; attempt < 160; attempt++) {
       const block = await rpc(1, 'eth_getBlockByNumber', [entry.receipt.blockNumber, false]);
       if (block?.hash === entry.receipt.blockHash) break; await pause(100);
@@ -269,15 +316,19 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
   }
   try {
     const genesis = { chain_id: 1337, network_type: 'Dev', timestamp: Math.floor(Date.now() / 1000) - 120,
-      gas_limit: 30000000, registered_key_algorithm_height: 0, native_address_context_height: 0,
+      gas_limit: 30000000, registered_key_algorithm_height: 0, native_address_context_height: voidCalls ? 2 : 0,
       fee_accounting_activation_height: 0, aa_account_manager_height: 0,
       consensus: { engine: 'wpoa', authorities: [miner.getAddress()],
         authority_pubkeys: ['0x' + Buffer.from(miner.getPublicKey()).toString('hex')], weights: [1],
         stakes: [], block_time_secs: 2, max_future_secs: 300, epoch_length: 0 }, alloc: {} };
     for (const account of [miner.getAddress(), payer.getAddress()]) genesis.alloc[account] = { balance: '0x3635c9adc5dea00000', nonce: 0 };
     for (const [account, code] of [[reader, artifacts.Reader.deployedBytecode], [payee, artifacts.Payee.deployedBytecode],
-      [alias, artifacts.Payee.deployedBytecode], [short, '0x60635f55601f5ff3'], [badBool, '0x60635f5560025f5260205ff3']]) {
+      [alias, artifacts.Payee.deployedBytecode], [short, '0x60635f55601f5ff3'], [badBool, '0x60635f5560025f5260205ff3'], [large, '0x60635f556110005ff3']]) {
       genesis.alloc[account] = { balance: '0x0', nonce: 1, code, storage: {} };
+    }
+    if(voidCalls) {
+      genesis.alloc[plain]={balance:'0x9',nonce:1,code:null,storage:null};
+      for(const token of [payee,alias]) genesis.alloc[token].storage={['0x'+word(nftSlot(7n))]:reader,['0x'+word(nftSlot(maxId))]:reader};
     }
     if(staticCalls) for(const[token,total]of [[payee,100n],[alias,200n]]) {
       genesis.alloc[token].storage={
@@ -285,8 +336,15 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
         ['0x'+word(allowanceSlot(owner,other))]:'0x'+word(83),['0x'+word(allowanceSlot(other,owner))]:'0x'+word(17),
       };
     }
-    for (const dir of dirs) { await mkdir(dir); await writeFile(join(dir, 'genesis.json'), JSON.stringify(genesis)); }
+    if(!resumeDirectory) for (const dir of dirs) { await mkdir(dir); await writeFile(join(dir, 'genesis.json'), JSON.stringify(genesis)); }
+    else for(const dir of dirs) {
+      const retained=JSON.parse(await readFile(join(dir,'genesis.json'),'utf8'));assert.equal(retained.chain_id,1337);assert.equal(retained.native_address_context_height,2);
+    }
     await start(1, await peer(await start(0)));
+    if(resumeDirectory) {
+      nonce=Number(BigInt(await rpc(0,'eth_getTransactionCount',[payer.getAddress(),'latest'])));assert.equal(nonce,acceptedPrefix);
+      assert.deepEqual(await state(0),report.transactions.at(-1).after);
+    }
     let first;
     const lowRequest = (target, beneficiary, amount, budget, fn = 'low') => {
       const payload = toFunctionSelector(fn === 'lowRead' ? 'peek(address)' : 'pay(address)') + beneficiary.slice(2);
@@ -308,7 +366,42 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
     const assetRequest = (fn,args) => ({from:payer.getAddress(),to:reader,gas:'0x927c0',
       data:encodeFunctionData({abi:artifacts.Reader.abi,functionName:fn,args})});
     const boolean = (entry,value) => assert.equal(entry.trace.output,'0x'+word(value?1:0));
-    if(staticCalls) {
+    if(voidCalls) {
+      const pre=await send('void guard before native activation',[assetRequest('probe',[payee])],0n,false);
+      assert.equal(BigInt(pre.receipt.blockNumber),1n);assert.ok(!pre.trace.structLogs.some(step=>step.depth===1 && step.op==='EXTCODESIZE'));
+      first=await send('void NFT transfer at activation boundary',[assetRequest('deliver',[payee,owner,7n])],0n,true);
+      assert.equal(BigInt(first.receipt.blockNumber),2n);assert.equal(first.trace.output,'0x');
+      assert.equal(first.trace.calls[0].input,toFunctionSelector('transferFrom(address,address,uint256)')+reader.slice(2)+owner.slice(2)+word(7));
+      assert.equal(first.after[payee].owners['7'],owner);
+      const alternate=await send('void same-low20 NFT target',[assetRequest('deliver',[alias,other,7n])],0n,true);
+      assert.deepEqual(alternate.after[payee],alternate.before[payee]);
+      await send('void explicit zero gas rejects',[assetRequest('deliverBudget',[payee,other,maxId,0n])],0n,false);
+      for(const target of [missing,plain]) {
+        const entry=await send('void rejects no-code target '+target.slice(2,4),[assetRequest('deliver',[target,other,maxId])],0n,false);
+        assert.equal((entry.trace.calls??[]).length,0);
+        const step=entry.trace.structLogs.find(step=>step.depth===1 && step.op==='EXTCODESIZE');assert.ok(step);assert.equal(BigInt(step.stack.at(-1)),BigInt(target));
+      }
+      for(const target of [badBool,large]) {
+        const entry=await send('void ignores success returndata '+target.slice(2,4),[assetRequest('probe',[target])],0n,true);
+        assert.equal(entry.trace.output,'0x');assert.equal(entry.after[target].slots[0],'0x'+word(99));
+        assert.ok(!entry.trace.structLogs.some(step=>step.depth===1 && step.op==='RETURNDATACOPY'));
+        assert.equal(entry.trace.calls[0].output.length,target===large?8194:66);
+      }
+      const value=await send('void value and gas write persists',[assetRequest('deliverValue',[payee,other,99n,5n,100000n])],9n,true);
+      assert.equal(value.after[reader].balance,'0x4');assert.equal(value.after[payee].balance,'0x5');assert.equal(value.after[payee].owners['99'],other);
+      gasWord(value,'CALL',100000n);
+      await send('void value stipend failure rolls back',[assetRequest('deliverValue',[payee,owner,100n,1n,0n])],3n,false);
+      const viewed=await send('void view uses STATICCALL',[assetRequest('verifyOwner',[payee,owner,7n])],0n,true);
+      assert.equal(viewed.trace.output,'0x');assert.equal(viewed.trace.calls[0].type,'STATICCALL');
+      const denied=await send('void propagates exact custom revert',[assetRequest('verifyOwner',[payee,other,7n])],0n,false);
+      assert.equal(denied.trace.output,toFunctionSelector('WrongOwner(address,uint256)')+other.slice(2)+word(7));
+      const rolled=await send('void AA second failure restores earlier ownership',[
+        assetRequest('deliver',[payee,other,maxId]),assetRequest('deliver',[payee,other,7n])],0n,false,true);assert.equal(rolled.receipt.logs.length,0);
+      await send('void AA transfers persist for both full32 NFT identities',[
+        assetRequest('deliver',[payee,other,maxId]),assetRequest('deliver',[alias,owner,maxId])],0n,true,true);
+      await send('void zero-argument call persists',[assetRequest('probe',[payee])],0n,true);
+      report.voidCalls={passed:true,activationHeight:2,codeCheck:true,noSuccessReturndataCopy:true};
+    } else if(staticCalls) {
       first=await send('two static arguments return true and transfer',[assetRequest('assetSend',[payee,owner,10n])],0n,true);
       boolean(first,true);assert.equal(first.trace.calls[0].input,toFunctionSelector('transfer(address,uint256)')+owner.slice(2)+word(10));
       assert.equal(first.after[payee].tokens[owner],'0x'+word(10));assert.equal(first.after[alias].tokens[reader],'0x'+word(200));
@@ -432,7 +525,13 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
     const verify = async () => {
       for (const i of [0, 1]) {
         const before = await state(i), head = await rpc(i, 'eth_getBlockByNumber', ['latest', false]);
-        if(staticCalls) {
+        if(voidCalls) {
+          assert.equal(before[reader].balance,'0x4');assert.equal(before[payee].balance,'0x5');assert.equal(before[plain].balance,'0x9');
+          assert.equal(before[reader].slots[0],'0x'+word(8));assert.equal(before[payee].slots[0],'0x'+word(4));assert.equal(before[alias].slots[0],'0x'+word(2));
+          assert.deepEqual(before[payee].owners,{'7':owner,[maxId.toString()]:other,'99':other,'100':zero});
+          assert.deepEqual(before[alias].owners,{'7':other,[maxId.toString()]:owner,'99':zero,'100':zero});
+          assert.equal(before[badBool].slots[0],'0x'+word(99));assert.equal(before[large].slots[0],'0x'+word(99));
+        } else if(staticCalls) {
           const expected=[[payee,100n,80n,13n,2n,5n,5n],[alias,200n,193n,0n,7n,0n,1n]];
           for(const[token,total,held,firstOwner,secondOwner,payerAmount,count]of expected) {
             assert.equal(before[token].tokens[reader],'0x'+word(held));assert.equal(before[token].tokens[owner],'0x'+word(firstOwner));
@@ -452,7 +551,10 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
         }
         for (const entry of report.transactions) assert.deepEqual(await rpc(i, 'eth_getTransactionReceipt', [entry.hash]), entry.receipt);
         assert.deepEqual(await state(i, first.receipt.blockNumber), first.after);
-        if(staticCalls) {
+        if(voidCalls) {
+          assert.equal(await rpc(i,'eth_call',[assetRequest('nftOwner',[payee,maxId]),first.receipt.blockNumber]),reader);
+          assert.equal(await rpc(i,'eth_call',[assetRequest('nftOwner',[payee,maxId]),'latest']),other);
+        } else if(staticCalls) {
           assert.equal(await rpc(i,'eth_call',[assetRequest('assetBalance',[payee,owner]),first.receipt.blockNumber]),'0x'+word(10));
           assert.equal(await rpc(i,'eth_call',[assetRequest('assetBalance',[payee,owner]),'latest']),'0x'+word(13));
         } else if(contextOptions) {
@@ -472,7 +574,7 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
   } catch (error) { report.error = String(error); throw error; }
   finally {
     try { await stop(1); await stop(0); }
-    finally { miner.dispose(); payer.dispose(); await save(); console.log(`Payable acceptance report: ${join(directory, 'report.json')}`); }
+    finally { miner.dispose(); payer.dispose(); await save(); console.log(`Payable acceptance report: ${join(directory, reportName)}`); }
   }
  }
 
@@ -484,3 +586,5 @@ test('nested native context: full32 mapping entries, AA rollback, history and di
   {skip:!process.env.SHELL_NODE_BIN,timeout:600000},()=>runPayableAcceptance(false,true));
 test('native static interface calls: token balances, bool, views, rollback, history and disk reopen',
   {skip:!process.env.SHELL_NODE_BIN,timeout:600000},()=>runPayableAcceptance(false,false,true));
+test('native void interface calls: code guards, NFT state, no copy, rollback, history and disk reopen',
+  {skip:!process.env.SHELL_NODE_BIN,timeout:600000},()=>runPayableAcceptance(false,false,false,true));
