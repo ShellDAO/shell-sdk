@@ -322,10 +322,12 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
     "*": { "": ["ast"], "*": ["abi", "evm.methodIdentifiers", "ir"] },
   };
   const original = compile({ ...input, settings: { ...input.settings, outputSelection: selection } });
+  const nativeYulOperations = new Set(["address", "caller", "origin", "coinbase", "balance", "extcodesize", "extcodehash", "extcodecopy", "call", "staticcall", "delegatecall"]);
   let hasAddress = false;
   for (const source of Object.values(original.sources) as { ast: unknown }[]) {
     visit(source.ast, (node) => {
-      if ((node.nodeType === "ElementaryTypeName" && node.name === "address") || builtin(node)) hasAddress = true;
+      if ((node.nodeType === "ElementaryTypeName" && node.name === "address") || builtin(node)
+        || (node.nodeType === "YulFunctionCall" && nativeYulOperations.has(String((node.functionName as AstNode)?.name)))) hasAddress = true;
     });
   }
   if (!hasAddress) return compile(input);
@@ -388,10 +390,13 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
     return typeof selector === "string" && /^[0-9a-f]{8}$/.test(selector) ? selector : undefined;
   };
   const sources: CompilerInput["sources"] = {};
-  let hasPureTypedCall = false;
+  let needsViewBackend = false;
   const longerNames = new Map<string, { start: number; length: number; alias: string }[]>();
+  const assemblyGuards = new Map<string, { start: number; length: number; alias: string }[]>();
   for (const [path, source] of Object.entries(overloads.sources)) {
     const helpers = new Map<string, string>();
+    const guards: { start: number; length: number; alias: string }[] = [];
+    assemblyGuards.set(path, guards);
     const helperName = (operation: string, node: AstNode) => {
       const fileId = node.src!.split(":")[2];
       const letter = ({caller: "c", origin: "o", coinbase: "b", address: "a", balance: "l", codehash: "h", code: "x"} as Record<string, string>)[operation];
@@ -449,6 +454,22 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
     const typedDeclarations = new Map<string, string>();
     visit(original.sources[path].ast, (node) => {
       if (node.id !== undefined && handled.has(node.id)) return;
+      if (node.nodeType === "InlineAssembly") {
+        if (nativeHeight === undefined) throw new Error("PQABI target does not yet support InlineAssembly without nativeAddressContextHeight matching an activated node profile");
+        visit(node, (child) => {
+          if (child.nodeType === "YulFunctionCall" && ["create", "create2", "callcode", "selfdestruct"].includes(String((child.functionName as AstNode)?.name))) {
+            throw new Error(`PQABI native InlineAssembly does not yet support ${(child.functionName as AstNode).name}`);
+          }
+          if (child.id !== undefined) handled.add(child.id);
+        });
+        const body = node.AST as AstNode;
+        const start = Number(body.src!.split(":")[0]) + 1;
+        if (Buffer.from(source.content)[start - 1] !== 123) throw new Error("unsupported PQABI assembly block source range");
+        guards.push({start, length: 0, alias: ` if lt(number(), ${nativeHeight}) { revert(0, 0) } `});
+        // Original Solidity purity was checked before adding the height guard.
+        needsViewBackend = true;
+        return;
+      }
       if (node.nodeType === "FunctionCall") {
         const call = node.expression as AstNode;
         const member = (call?.nodeType === "FunctionCallOptions" ? call.expression : call) as AstNode;
@@ -493,7 +514,7 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
             throw new Error("PQABI typed call options currently require simple value/gas expressions or typed struct fields");
           }
           const operation = value ? "callvalue" : ["view", "pure"].includes(String(definition.stateMutability)) ? "staticcall" : "call";
-          if (definition.stateMutability === "pure") hasPureTypedCall = true;
+          if (definition.stateMutability === "pure") needsViewBackend = true;
           const lowName = `_${callGas ? "g" : ""}${value ? "v" : operation === "call" ? "k" : "s"}${node.src!.split(":")[2]}`;
           if (returns.length) helpers.set(operation + (callGas ? "gas" : ""), lowName);
           const nativeType = (parameter: AstNode) => (parameter.typeName as AstNode).name === "address"
@@ -616,9 +637,9 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
     }).join("\n");
     sources[path] = { content: content.toString("utf8") + "\n" + declarations };
   }
-  if (hasPureTypedCall) {
-    // Solidity allows typed pure external calls, but our STATICCALL helper is
-    // view. Original source has already passed Solidity's purity checks. Lower
+  if (needsViewBackend) {
+    // Typed pure calls use a view STATICCALL helper, and assembly guards read
+    // block height. Original source has passed Solidity's purity checks. Lower
     // pure annotations only in backend source, across imports and overrides so
     // transitive callers remain consistent; the public ABI stays original.
     for (const [path, source] of Object.entries(input.sources)) {
@@ -638,7 +659,8 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
     }
   }
   const locationEdits = new Map<string, { start: number; length: number; alias: string }[]>();
-  for (const [path, edits] of longerNames) {
+  for (const [path, longer] of longerNames) {
+    const edits = [...longer, ...assemblyGuards.get(path)!];
     let content = Buffer.from(sources[path].content);
     for (const { start, length, alias } of [...edits].sort((a, b) => b.start - a.start)) {
       content = Buffer.concat([content.subarray(0, start), Buffer.from(alias), content.subarray(start + length)]);
@@ -667,16 +689,28 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
       if (!loweredSelector) throw new Error(`missing lowered selector for ${signature}`);
       selectors.set(loweredSelector.toLowerCase(), selector);
     }
-    // Replace only dispatcher case literals, in one pass (avoids cascading swaps).
+    // Restrict restoration to the compiler-generated dispatcher, leaving user
+    // assembly switch cases unchanged even when a literal equals a selector.
     const seen = new Map<string, number>();
-    let ir = loweredContract.ir.replace(/\bcase 0x([0-9a-fA-F]{1,8})\b/g, (match: string, hex: string) => {
-      const selector = selectors.get(hex.toLowerCase().padStart(8, "0"));
-      if (selector) {
-        const key = hex.toLowerCase().padStart(8, "0");
-        seen.set(key, (seen.get(key) ?? 0) + 1);
+    let dispatcherIndent: string | undefined;
+    let ir = loweredContract.ir.split("\n").map((line: string) => {
+      const header = line.match(/^([ \t]*)switch selector[ \t]*$/);
+      if (header) dispatcherIndent = header[1];
+      if (dispatcherIndent === undefined) return line;
+      const leading = line.match(/^[ \t]*/)![0];
+      if (line.trim() && (leading.length < dispatcherIndent.length || (leading === dispatcherIndent && line.trimStart().startsWith("default")))) {
+        dispatcherIndent = undefined;
+        return line;
       }
-      return selector ? `case 0x${selector}` : match;
-    });
+      if (leading !== dispatcherIndent) return line;
+      return line.replace(/^(\s*case )0x([0-9a-fA-F]{1,8})\b/, (match: string, prefix: string, hex: string) => {
+        const key = hex.toLowerCase().padStart(8, "0");
+        const selector = selectors.get(key);
+        if (!selector) return match;
+        seen.set(key, (seen.get(key) ?? 0) + 1);
+        return `${prefix}0x${selector}`;
+      });
+    }).join("\n");
     for (const selector of selectors.keys()) {
       if (seen.get(selector) !== 1) throw new Error(`ambiguous or missing PQABI dispatcher selector ${selector}`);
     }

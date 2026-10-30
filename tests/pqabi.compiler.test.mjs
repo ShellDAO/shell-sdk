@@ -987,3 +987,48 @@ test('native interfaceId excludes events/errors and leaves same-named struct fie
  const args={sources:[{path:'Reader.sol',content}],contractName:'Reader',evmVersion:'shanghai'};
  assert.deepEqual((await compileSolidity({...args,target:'pqvm'})).abi,(await compileSolidity(args)).abi);
 });
+
+
+test('native original ERC165 assembly query keeps ABI and requires explicit activation', async () => {
+ const {readFile}=await import('node:fs/promises');
+ const content=await readFile(new URL('./fixtures/ERC165Query.sol',import.meta.url),'utf8');
+ const args={sources:[{path:'ERC165Query.sol',content}],contractName:'ERC165Query',evmVersion:'shanghai'};
+ const original=await compileSolidity(args);
+ await assert.rejects(compileSolidity({...args,target:'pqvm'}),/InlineAssembly without nativeAddressContextHeight/);
+ const native=await compileSolidity({...args,target:'pqvm',nativeAddressContextHeight:2});assert.deepEqual(native.abi,original.abi);
+ assert.notEqual(native.deployedBytecode,(await compileSolidity({...args,target:'pqvm',nativeAddressContextHeight:3})).deployedBytecode);
+});
+
+test('native Yul context without address syntax is guarded; ordinary arithmetic remains unchanged', async () => {
+ const content='pragma solidity ^0.8.30; contract Words {function inspect() external view returns(uint256 value){assembly{value:=caller()}}}';
+ const args={sources:[{path:'Words.sol',content}],contractName:'Words',evmVersion:'shanghai'};
+ await assert.rejects(compileSolidity({...args,target:'pqvm'}),/InlineAssembly without nativeAddressContextHeight/);
+ assert.deepEqual((await compileSolidity({...args,target:'pqvm',nativeAddressContextHeight:2})).abi,(await compileSolidity(args)).abi);
+ const arithmetic={...args,sources:[{path:'Words.sol',content:content.replace('external view','external pure').replace('caller()','add(1,2)')}]};
+ assert.equal((await compileSolidity({...arithmetic,target:'pqvm'})).deployedBytecode,(await compileSolidity(arithmetic)).deployedBytecode);
+ for(const operation of ['value:=create(0,0,0)','value:=create2(0,0,0,0)','value:=callcode(gas(),owner,0,0,0,0,0)','selfdestruct(owner)']) {
+  const source=`pragma solidity ^0.8.30;contract Unsafe {function run(address owner) external returns(address value){assembly{${operation}}}}`;
+  const input={sources:[{path:'Unsafe.sol',content:source}],contractName:'Unsafe',evmVersion:'shanghai'};await compileSolidity(input);
+  await assert.rejects(compileSolidity({...input,target:'pqvm',nativeAddressContextHeight:2}),/native InlineAssembly does not yet support/);
+ }
+});
+
+test('native assembly guards preserve later signatures and literal switch cases with longer overload aliases', async () => {
+ const {toFunctionSelector,keccak256,toHex}=await import('viem');
+ const literal=toFunctionSelector('probe(uint256)');
+ const names=[...'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'].map(name=>`function ${name}() private pure returns(uint256){return 0;}`).join('\n');
+ const content=`pragma solidity ^0.8.30;contract AssemblySignatures {
+ // Unicode before byte offsets: 地址
+ ${names}
+ function f(address owner) public pure returns(address){return owner;}
+ function f(uint256 owner) public pure returns(uint256){return owner;}
+ function probe(address owner) external pure returns(uint256 value){assembly{switch owner case ${literal}{value:=1}default{value:=2}}}
+ function note(address owner) external {assembly("memory-safe"){mstore(0,owner)}emit Seen(owner);if(owner==address(0))revert Denied(owner);}
+ event Seen(address indexed owner);error Denied(address owner);
+ }`;
+ const input={sources:[{path:'AssemblySignatures.sol',content}],contractName:'AssemblySignatures',evmVersion:'shanghai'};
+ const native=await compileSolidity({...input,target:'pqvm',nativeAddressContextHeight:2});assert.deepEqual(native.abi,(await compileSolidity(input)).abi);
+ assert.ok(native.deployedBytecode.includes(literal.slice(2)));
+ assert.ok(native.deployedBytecode.includes(keccak256(toHex('Seen(address)')).slice(2)));
+ assert.ok(native.deployedBytecode.includes(toFunctionSelector('Denied(address)').slice(2)));
+});

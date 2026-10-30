@@ -13,7 +13,7 @@ import { encodeFunctionData, decodeFunctionResult } from '../dist/contracts.js';
 import { ShellSigner, MlDsa65Adapter, decryptKeystore, buildTransaction, createShellProvider,
   buildInnerCall, buildBatchTransaction } from '../dist/index.js';
 
-const source = `pragma solidity ^0.8.30;
+const baseSource = `pragma solidity ^0.8.30;
 interface IPay { function pay(address owner) external payable returns(address); }
 interface IRead { function peek(address owner) external view returns(address); }
 interface INFT {
@@ -201,8 +201,20 @@ contract Reader {
 
 // Run after npm run build with SHELL_NODE_BIN pointing to a compatible node.
 // Isolated genesis allocation avoids making a native CREATE derivation claim.
-async function runPayableAcceptance(gasOptions = false, contextOptions = false, staticCalls = false, voidCalls = false, tupleCalls = false, narrowCalls = false, signedCalls = false, bytesCalls = false, selectorCalls = false, interfaceIdCalls = false) {
+async function runPayableAcceptance(gasOptions = false, contextOptions = false, staticCalls = false, voidCalls = false, tupleCalls = false, narrowCalls = false, signedCalls = false, bytesCalls = false, selectorCalls = false, interfaceIdCalls = false, noThrowCalls = false) {
   const binary = process.env.SHELL_NODE_BIN;
+  const querySource=noThrowCalls?await readFile(new URL('./fixtures/ERC165Query.sol',import.meta.url),'utf8'):undefined;
+  const source=noThrowCalls?baseSource
+    .replace('pragma solidity ^0.8.30;','pragma solidity ^0.8.30; import "./ERC165Query.sol"; interface IQuery {function doesContractImplementInterface(address target,bytes4 id) external view returns(bool);}')
+    .replace('contract Reader {','contract Reader is ERC165Query {')
+    .replace(' mapping(address=>Entry) entries;',` mapping(address=>Entry) entries;
+ mapping(bytes4=>bool) detections;
+ event Detected(address indexed target,bytes4 indexed id,bool supported);
+ error DetectionDenied(address target);
+ function recordDetection(address target,bytes4 id) external returns(bool){count++;address self=address(this);bool ok=IQuery(self).doesContractImplementInterface(target,id);last=target;detections[id]=ok;emit Detected(target,id,ok);return ok;}
+ function recordedDetection(bytes4 id) external view returns(bool){return detections[id];}
+ function denyDetection(address target) external pure {revert DetectionDenied(target);}`):baseSource;
+  const compilerSources=[{path:'Payable.sol',content:source},...(querySource?[{path:'ERC165Query.sol',content:querySource}]:[])];
   const resumeDirectory = voidCalls || tupleCalls || narrowCalls || signedCalls || bytesCalls ? process.env.SHELL_PQABI_RESUME_DIR : undefined;
   const directory = resumeDirectory ? resolve(resumeDirectory) : await mkdtemp(join(tmpdir(), 'shell-sdk-payable-'));
   const previousReport = resumeDirectory ? JSON.parse(await readFile(join(directory,'report.json'),'utf8')) : undefined;
@@ -221,6 +233,7 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
   const address = byte => '0x' + byte.repeat(32);
   const reader = address('11'), payee = address('22');
   const alias = '0x' + '33'.repeat(12) + '22'.repeat(20);
+  const writeTarget=address('99');
   const short = address('44'), missing = address('55'), badBool = address('66'), plain = address('77'), large = address('88');
   const owner = address('aa'), other = '0x' + 'bb'.repeat(12) + 'aa'.repeat(20);
   const zero = '0x' + word(0);
@@ -248,7 +261,7 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
   const entrySlots = key => Array.from({length:4},(_,index)=>'0x'+((BigInt(keccak256('0x'+key.slice(2)+word(2)))+BigInt(index))&((1n<<256n)-1n)).toString(16));
   const artifacts = {};
   for (const contractName of ['Reader', 'Payee']) {
-    const options = { sources: [{ path: 'Payable.sol', content: source }], contractName, evmVersion: 'shanghai' };
+    const options = { sources: compilerSources, contractName, evmVersion: 'shanghai' };
     const original = await compileSolidity(options);
     artifacts[contractName] = await compileSolidity({ ...options, target: 'pqvm', nativeAddressContextHeight: voidCalls || tupleCalls || narrowCalls || signedCalls || bytesCalls ? 2 : 0 });
     assert.deepEqual(artifacts[contractName].abi, original.abi);
@@ -262,12 +275,13 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
   }
   assert.notEqual(...ports);
   const freshReport = { directory, binarySha256: createHash('sha256').update(await readFile(binary)).digest('hex'),
-    artifacts, source, opens: [], transactions: [], adaptations: [
+    artifacts, source, ...(noThrowCalls?{compilerSources}:{}), opens: [], transactions: [], adaptations: [
       `Source compiler; isolated Dev chain 1337, native context at height ${voidCalls || tupleCalls || narrowCalls || signedCalls || bytesCalls ? 2 : 0}, fee accounting at genesis.`,
       'Fresh ML-DSA keys; full RocksDB producer and independent non-authority observer.',
       'Runtime allocation is not native CREATE or public tutorial deployment acceptance.' ] };
   if(previousReport) {
     assert.equal(previousReport.directory,directory);assert.equal(previousReport.binarySha256,freshReport.binarySha256);
+    if(noThrowCalls) assert.deepEqual(previousReport.compilerSources,compilerSources);
     assert.equal(previousReport.source,source);assert.deepEqual(previousReport.artifacts,JSON.parse(JSON.stringify(artifacts)));
     assert.ok(previousReport.opens.every(entry=>entry.exitCode===0));
   }
@@ -338,10 +352,14 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
   };
   const state = async (i, tag = 'latest') => {
     const accounts = {};
-    for (const target of [reader, payee, alias, short, missing, badBool, plain, large, payer.getAddress(), miner.getAddress()]) {
+    for (const target of [reader, payee, alias, short, missing, badBool, plain, large, ...(noThrowCalls?[writeTarget]:[]), payer.getAddress(), miner.getAddress()]) {
       accounts[target] = { balance: await rpc(i, 'eth_getBalance', [target, tag]),
         nonce: await rpc(i, 'eth_getTransactionCount', [target, tag]), slots: [] };
       for (const slot of ['0x0', '0x1']) accounts[target].slots.push(await rpc(i, 'eth_getStorageAt', [target, slot, tag]));
+      if(noThrowCalls && target===reader) {
+        accounts[target].detections={};
+        for(const id of [erc165,'0xdeadbeef']) accounts[target].detections[id]=await rpc(i,'eth_getStorageAt',[reader,'0x'+BigInt(keccak256('0x'+byteWord(id)+word(3))).toString(16),tag]);
+      }
       if(bytesCalls && [payee,alias].includes(target)) {
         accounts[target].interfaces={};
         for(const id of [markID,echoID]) accounts[target].interfaces[id]=[await rpc(i,'eth_getStorageAt',[target,interfaceSlot(id),tag]),await rpc(i,'eth_getStorageAt',[target,interfaceSlot(id,true),tag])];
@@ -399,7 +417,7 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
     assert.equal(BigInt(before[payer.getAddress()].balance) - BigInt(entry.after[payer.getAddress()].balance), fee + (success ? value : 0n));
     assert.equal(BigInt(entry.after[miner.getAddress()].balance) - BigInt(before[miner.getAddress()].balance), fee);
     assert.equal(BigInt(entry.after[payer.getAddress()].nonce), BigInt(nonce));
-    if (!success) for (const target of [reader, payee, alias, short, missing, badBool, plain, large]) assert.deepEqual(entry.after[target], before[target]);
+    if (!success) for (const target of [reader, payee, alias, short, missing, badBool, plain, large, ...(noThrowCalls?[writeTarget]:[])]) assert.deepEqual(entry.after[target], before[target]);
     for (let attempt = 0; attempt < 160; attempt++) {
       const block = await rpc(1, 'eth_getBlockByNumber', [entry.receipt.blockNumber, false]);
       if (block?.hash === entry.receipt.blockHash) break; await pause(100);
@@ -419,6 +437,9 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
     for (const [account, code] of [[reader, artifacts.Reader.deployedBytecode], [payee, artifacts.Payee.deployedBytecode],
       [alias, artifacts.Payee.deployedBytecode], [short, bytesCalls ? badBytes : signedCalls ? badSigned : narrowCalls ? rawReserves(1n,2n,max32+1n) : tupleCalls ? '0x60635f5560605ff3' : '0x60635f55601f5ff3'], [badBool, narrowCalls ? rawReserves(max112+1n,2n,3n) : tupleCalls ? '0x60635f557f'+owner.slice(2)+'5f527f'+word(maxId)+'6020526002604052600760605260805ff3' : '0x60635f5560025f5260205ff3'], [large, '0x60635f556110005ff3']]) {
       genesis.alloc[account] = { balance: '0x0', nonce: 1, code, storage: {} };
+    }
+    if(noThrowCalls) {
+      for(const[target,code]of [[alias,'0x60015f5260205ff3'],[short,'0x601f5ff3'],[badBool,'0x60025f5260205ff3'],[plain,'0x5f5ffd'],[large,'0x5b5f56'],[writeTarget,'0x60635f5560015f5260205ff3']]) genesis.alloc[target]={balance:'0x0',nonce:1,code,storage:{}};
     }
     if(voidCalls) {
       genesis.alloc[plain]={balance:'0x9',nonce:1,code:null,storage:null};
@@ -468,7 +489,36 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
     const oracleOutput=(round,price,time)=>'0x'+word(round)+signedWord(price)+word(time)+word(time)+word(round);
     const oracleWords=(price,delta,round,time)=>({price:'0x'+signedWord(price),deltaRound:'0x'+word(BigInt.asUintN(112,delta)+(round<<112n)),time:'0x'+word(time)});
     const bytesOutput=(tag,flag)=>'0x'+byteWord(tag)+byteWord(flag);
-    if(interfaceIdCalls) {
+    if(noThrowCalls) {
+      const topic=keccak256('0x'+Buffer.from('Detected(address,bytes4,bool)').toString('hex'));
+      const originalData=(target,id)=>toFunctionSelector('doesContractImplementInterface(address,bytes4)')+target.slice(2)+byteWord(id);
+      const check=(entry,target,id,expected,queries)=>{
+        assert.equal(entry.trace.output,'0x'+word(expected?1:0));
+        const query=entry.trace.calls[0];assert.equal(query.type,'STATICCALL');assert.equal(query.to,reader);assert.equal(query.input,originalData(target,id));
+        assert.equal(query.calls.length,queries);
+        for(const[at,child]of query.calls.entries()) {
+          assert.equal(child.type,'STATICCALL');assert.equal(child.to,target);
+          assert.equal(child.input,toFunctionSelector('supportsInterface(bytes4)')+byteWord([erc165,invalidID,id][at]));
+          assert.ok(BigInt(child.gasUsed)<=30000n);
+        }
+        const ops=entry.trace.structLogs.filter(step=>step.depth===2 && step.op==='STATICCALL');assert.equal(ops.length,queries);for(const step of ops)assert.equal(BigInt(step.stack.at(-1)),30000n);
+        const logs=entry.receipt.logs.filter(log=>log.topics[0]===topic);assert.equal(logs.length,1);assert.equal(logs[0].topics[1],target);assert.equal(logs[0].topics[2],'0x'+byteWord(id));assert.equal(logs[0].data,'0x'+word(expected?1:0));
+        return query.calls;
+      };
+      const pre=await send('original noThrow query before native activation',[assetRequest('doesContractImplementInterface',[payee,erc165])],0n,false);assert.equal(BigInt(pre.receipt.blockNumber),1n);assert.equal((pre.trace.calls??[]).length,0);
+      first=await send('original noThrow query at native activation records true',[assetRequest('recordDetection',[payee,erc165])],0n,true);assert.equal(BigInt(first.receipt.blockNumber),2n);check(first,payee,erc165,true,3);assert.equal(first.after[reader].detections[erc165],'0x'+word(1));
+      const invalid=await send('noThrow same-low20 target with invalid-ID true is false',[assetRequest('recordDetection',[alias,erc165])],0n,true);check(invalid,alias,erc165,false,2);assert.equal(invalid.after[reader].detections[erc165],'0x'+word(0));
+      const eoa=await send('noThrow EOA returns false without parent rejection',[assetRequest('recordDetection',[missing,erc165])],0n,true);for(const child of check(eoa,missing,erc165,false,2))assert.equal(child.output,'0x');
+      const truncated=await send('noThrow zero short response is false without ABI exception',[assetRequest('recordDetection',[short,erc165])],0n,true);assert.equal(check(truncated,short,erc165,false,1)[0].output,'0x'+'00'.repeat(31));
+      const malformed=await send('noThrow constant-two response is false by invalid-ID rule',[assetRequest('recordDetection',[badBool,erc165])],0n,true);for(const child of check(malformed,badBool,erc165,false,2))assert.equal(child.output,'0x'+word(2));
+      for(const[target,label]of [[plain,'callee revert'],[large,'child gas exhaustion'],[writeTarget,'forbidden static write']]) {
+        const entry=await send('noThrow '+label+' returns false',[assetRequest('recordDetection',[target,erc165])],0n,true);assert.ok(check(entry,target,erc165,false,1)[0].error);assert.equal(entry.after[target].slots[0],'0x'+word(0));
+      }
+      const unknown=await send('noThrow unknown interface is false after all three queries',[assetRequest('recordDetection',[payee,'0xdeadbeef'])],0n,true);check(unknown,payee,'0xdeadbeef',false,3);
+      const failed=await send('noThrow AA later rejection restores prior result and events',[assetRequest('recordDetection',[payee,erc165]),assetRequest('denyDetection',[alias])],0n,false,true);assert.equal(failed.receipt.logs.filter(log=>log.topics[0]===topic).length,0);
+      const accepted=await send('noThrow AA results true then false both execute and persist',[assetRequest('recordDetection',[payee,erc165]),assetRequest('recordDetection',[alias,erc165])],0n,true,true);assert.equal(accepted.receipt.logs.filter(log=>log.topics[0]===topic).length,2);
+      report.noThrowQueries={passed:true,activationHeight:2,calleeBudget:30000,calldataBytes:36,algorithm:'Original ERC165Query with only legacy pragma/constant syntax adapted',patterns:['compliant','invalid-ID-always-true','EOA','31-zero-bytes','constant-two','revert','OutOfGas','static-write','unknown'],not_claimed:'Every malformed response pattern or CREATE deployment'};
+    } else if(interfaceIdCalls) {
       const pre=await send('interfaceId native guard before activation',[assetRequest('registerType',[payee,true,tagA,flagA,0n,150000n])],0n,false);assert.equal(BigInt(pre.receipt.blockNumber),1n);
       first=await send('original composite ID persists at activation boundary',[assetRequest('registerType',[payee,true,tagA,flagA,3n,150000n])],9n,true);assert.equal(BigInt(first.receipt.blockNumber),2n);
       assert.equal(first.trace.output,bytesOutput(tagA,flagA));assert.equal(first.trace.calls[0].input,toFunctionSelector('setInterface(bytes4,bool,bytes16,bytes1)')+byteWord(markID)+word(1)+byteWord(tagA)+byteWord(flagA));gasWord(first,'CALL',150000n);
@@ -783,7 +833,14 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
           assert.equal(await rpc(i,'eth_call',[assetRequest('payMetadata',[payee]),'latest']),bytesOutput(tagC,'0x01'));
           report.selectorCalls={passed:true,originalSelectors:expected,originalEipPragmaAdaptation:'^0.4.20 to ^0.8.30',effectfulReceivers:'unqualified'};
         }
-        if(bytesCalls) {
+        if(noThrowCalls) {
+          assert.equal(before[reader].slots[0],'0x'+word(11));assert.equal(before[reader].slots[1],alias);
+          assert.equal(before[reader].detections[erc165],'0x'+word(0));assert.equal(before[reader].detections['0xdeadbeef'],'0x'+word(0));
+          for(const target of [reader,payee,alias,short,missing,badBool,plain,large,writeTarget])assert.equal(before[target].balance,'0x0');
+          assert.equal(before[writeTarget].slots[0],'0x'+word(0));
+          assert.equal(await rpc(i,'eth_call',[assetRequest('doesContractImplementInterface',[lowAlias(payee),erc165]),'latest']),'0x'+word(0));
+          assert.equal(await rpc(i,'eth_call',[assetRequest('doesContractImplementInterface',[payee,erc165]),'latest']),'0x'+word(1));
+        } else if(bytesCalls) {
           assert.equal(before[reader].balance,'0x2');assert.equal(before[payee].balance,'0x4');assert.equal(before[alias].balance,'0x3');
           assert.equal(before[reader].slots[0],'0x'+word(4));assert.equal(before[payee].slots[0],'0x'+word(2));assert.equal(before[alias].slots[0],'0x'+word(2));
           assert.deepEqual(before[payee].interfaces[markID],[interfaceWord(true,tagC,'0x01'),'0x'+word(0)]);const aliasMetadata=interfaceWord(false,tagA,'0x00');
@@ -828,7 +885,9 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
         }
         for (const entry of report.transactions) assert.deepEqual(await rpc(i, 'eth_getTransactionReceipt', [entry.hash]), entry.receipt);
         assert.deepEqual(await state(i, first.receipt.blockNumber), first.after);
-        if(bytesCalls) {
+        if(noThrowCalls) {
+          const query=assetRequest('recordedDetection',[erc165]);assert.equal(await rpc(i,'eth_call',[query,first.receipt.blockNumber]),'0x'+word(1));assert.equal(await rpc(i,'eth_call',[query,'latest']),'0x'+word(0));
+        } else if(bytesCalls) {
           const query=assetRequest('interfaceMetadata',[payee,markID]);
           assert.equal(await rpc(i,'eth_call',[query,first.receipt.blockNumber]),bytesOutput(tagA,flagA));assert.equal(await rpc(i,'eth_call',[query,'latest']),bytesOutput(tagC,'0x01'));
         } else if(signedCalls) {
@@ -900,3 +959,7 @@ test('native static selector expressions: original IDs persist through calls, hi
 
 test('native interface IDs: original direct declarations persist through calls, rollback and reopen',
   {skip:!process.env.SHELL_NODE_BIN,timeout:600000},()=>runPayableAcceptance(false,false,false,false,false,false,false,true,false,true));
+
+
+test('native no-throw query: original assembly decisions, result persistence, rollback and reopen',
+  {skip:!process.env.SHELL_NODE_BIN,timeout:600000},()=>runPayableAcceptance(false,false,false,false,false,false,false,true,false,false,true));

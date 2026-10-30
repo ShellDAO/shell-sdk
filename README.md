@@ -1340,6 +1340,32 @@ Only functions declared directly in the interface contribute to its XOR;
 inherited functions, events and errors do not. An interface declaring no new
 functions has ID `0x00000000`. Direct overrides and overloads contribute their
 original ABI selectors, including `address` parameters.
+Native-address inline assembly also requires an explicit
+`nativeAddressContextHeight` matching the node profile. Each original assembly
+block rejects before that height. Address parameters remain full words in Yul,
+including targets passed to `staticcall`; the original assembly body and its
+user-supplied constants are retained. The compiler adds a height guard and
+preserves the original ABI mutability after original Solidity type checking.
+Manual masks and storage offsets in assembly retain their written meaning;
+recompile and review them for the target’s full-word address layout.
+Assembly `create`, `create2`, `callcode` and `selfdestruct` remain outside this
+native lowering path. Default EVM compilation and address-free arithmetic
+assembly retain their existing behavior.
+
+The adapted ERC-165 query in `tests/fixtures/ERC165Query.sol` preserves the
+published query algorithm with only the legacy pragma and `constant` keyword
+updated. Run its persistent ordinary/AA and two-node checks after building:
+
+```bash
+SHELL_NODE_BIN=/path/to/shell-node node --test --test-name-pattern 'native no-throw query' tests/pqabi.payable.test.mjs
+```
+
+This isolates fresh accounts on a Dev chain with native context at height 2.
+It checks the original 36-byte queries and 30000-gas child budget, result
+recording, child failure isolation, batch rollback, historical reads and physical
+reopen. It does not validate deployment through CREATE or every malformed
+return pattern.
+
 Narrow result lists such
 as `getReserves() returns (uint112, uint112, uint32)` retain their original ABI;
 noncanonical high bits in narrow arguments or results reject rather than truncate.
