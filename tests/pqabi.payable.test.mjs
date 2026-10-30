@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, readdir } from 'node:fs/promises';
 import { openSync, closeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -201,10 +201,11 @@ contract Reader {
 
 // Run after npm run build with SHELL_NODE_BIN pointing to a compatible node.
 // Isolated genesis allocation avoids making a native CREATE derivation claim.
-async function runPayableAcceptance(gasOptions = false, contextOptions = false, staticCalls = false, voidCalls = false, tupleCalls = false, narrowCalls = false, signedCalls = false, bytesCalls = false, selectorCalls = false, interfaceIdCalls = false, noThrowCalls = false) {
+async function runPayableAcceptance(gasOptions = false, contextOptions = false, staticCalls = false, voidCalls = false, tupleCalls = false, narrowCalls = false, signedCalls = false, bytesCalls = false, selectorCalls = false, interfaceIdCalls = false, noThrowCalls = false, batchCalls = false) {
   const binary = process.env.SHELL_NODE_BIN;
+  const batchSource=batchCalls?await readFile(new URL('./fixtures/BatchCalls.sol',import.meta.url),'utf8'):undefined;
   const querySource=noThrowCalls?await readFile(new URL('./fixtures/ERC165Query.sol',import.meta.url),'utf8'):undefined;
-  const source=noThrowCalls?baseSource
+  const source=batchSource??(noThrowCalls?baseSource
     .replace('pragma solidity ^0.8.30;','pragma solidity ^0.8.30; import "./ERC165Query.sol"; interface IQuery {function doesContractImplementInterface(address target,bytes4 id) external view returns(bool);}')
     .replace('contract Reader {','contract Reader is ERC165Query {')
     .replace(' mapping(address=>Entry) entries;',` mapping(address=>Entry) entries;
@@ -213,11 +214,14 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
  error DetectionDenied(address target);
  function recordDetection(address target,bytes4 id) external returns(bool){count++;address self=address(this);bool ok=IQuery(self).doesContractImplementInterface(target,id);last=target;detections[id]=ok;emit Detected(target,id,ok);return ok;}
  function recordedDetection(bytes4 id) external view returns(bool){return detections[id];}
- function denyDetection(address target) external pure {revert DetectionDenied(target);}`):baseSource;
-  const compilerSources=[{path:'Payable.sol',content:source},...(querySource?[{path:'ERC165Query.sol',content:querySource}]:[])];
+ function denyDetection(address target) external pure {revert DetectionDenied(target);}`):baseSource);
+  const compilerSources=[{path:batchCalls?'BatchCalls.sol':'Payable.sol',content:source},...(querySource?[{path:'ERC165Query.sol',content:querySource}]:[])];
   const resumeDirectory = voidCalls || tupleCalls || narrowCalls || signedCalls || bytesCalls ? process.env.SHELL_PQABI_RESUME_DIR : undefined;
   const directory = resumeDirectory ? resolve(resumeDirectory) : await mkdtemp(join(tmpdir(), 'shell-sdk-payable-'));
-  const previousReport = resumeDirectory ? JSON.parse(await readFile(join(directory,'report.json'),'utf8')) : undefined;
+  const reportSequence=name=>name==='report.json'?0:Number(name.match(/^report-resumed(?:-(\d+))?\.json$/)?.[1]??1);
+  const reportFiles=resumeDirectory?(await readdir(directory)).filter(name=>/^report(?:-resumed(?:-\d+)?)?\.json$/.test(name)).sort((a,b)=>reportSequence(b)-reportSequence(a)):[];
+  const previousReportName=reportFiles[0];
+  const previousReport = resumeDirectory ? JSON.parse(await readFile(join(directory,previousReportName),'utf8')) : undefined;
   const password = resumeDirectory ? await readFile(join(directory,'password.txt'),'utf8') : randomBytes(24).toString('hex');
   const passwordFile = join(directory, 'password.txt');
   const keyFile = join(directory, 'validator.json');
@@ -243,6 +247,8 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
   const byteWord=value=>value.slice(2).padEnd(64,'0');
   const xorID=(a,b)=>'0x'+(BigInt(a)^BigInt(b)).toString(16).padStart(8,'0');
   const erc165='0x01ffc9a7',invalidID='0xffffffff',markID=interfaceIdCalls?xorID(toFunctionSelector('pay(address)'),toFunctionSelector('peek(address)')):toFunctionSelector(selectorCalls?'pay(address)':'getInterface(bytes4)'),echoID=interfaceIdCalls?'0x00000000':toFunctionSelector(selectorCalls?'peek(address)':'echoBytes(bytes4,bytes16,bytes1)');
+  const batchIds=[7n,maxId],batchOwners=[reader,owner,other,short,badBool,lowAlias(reader),zero];
+  const multiSlot=(id,who)=>'0x'+BigInt(keccak256('0x'+who.slice(2)+keccak256('0x'+word(id)+word(2)).slice(2))).toString(16);
   const tagA='0x'+'11'.repeat(16),tagB='0x'+'ee'.repeat(16),tagC='0x'+'cc'.repeat(16),flagA='0xab';
   const dirtyTag=word(BigInt('0x'+byteWord(tagA))+1n);
   const badBytes='0x60635f557f'+dirtyTag+'5f527f'+byteWord(flagA)+'60205260405ff3';
@@ -260,7 +266,7 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
   const quantity = value => '0x'+BigInt(value).toString(16);
   const entrySlots = key => Array.from({length:4},(_,index)=>'0x'+((BigInt(keccak256('0x'+key.slice(2)+word(2)))+BigInt(index))&((1n<<256n)-1n)).toString(16));
   const artifacts = {};
-  for (const contractName of ['Reader', 'Payee']) {
+  for (const contractName of ['Reader', 'Payee',...(batchCalls?['BatchReceiver']:[])]) {
     const options = { sources: compilerSources, contractName, evmVersion: 'shanghai' };
     const original = await compileSolidity(options);
     artifacts[contractName] = await compileSolidity({ ...options, target: 'pqvm', nativeAddressContextHeight: voidCalls || tupleCalls || narrowCalls || signedCalls || bytesCalls ? 2 : 0 });
@@ -275,23 +281,25 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
   }
   assert.notEqual(...ports);
   const freshReport = { directory, binarySha256: createHash('sha256').update(await readFile(binary)).digest('hex'),
-    artifacts, source, ...(noThrowCalls?{compilerSources}:{}), opens: [], transactions: [], adaptations: [
+    artifacts, source, ...(noThrowCalls||batchCalls?{compilerSources}:{}), opens: [], transactions: [], adaptations: [
       `Source compiler; isolated Dev chain 1337, native context at height ${voidCalls || tupleCalls || narrowCalls || signedCalls || bytesCalls ? 2 : 0}, fee accounting at genesis.`,
       'Fresh ML-DSA keys; full RocksDB producer and independent non-authority observer.',
       'Runtime allocation is not native CREATE or public tutorial deployment acceptance.' ] };
   if(previousReport) {
     assert.equal(previousReport.directory,directory);assert.equal(previousReport.binarySha256,freshReport.binarySha256);
-    if(noThrowCalls) assert.deepEqual(previousReport.compilerSources,compilerSources);
+    if(noThrowCalls||batchCalls) assert.deepEqual(previousReport.compilerSources,compilerSources);
     assert.equal(previousReport.source,source);assert.deepEqual(previousReport.artifacts,JSON.parse(JSON.stringify(artifacts)));
     assert.ok(previousReport.opens.every(entry=>entry.exitCode===0));
   }
   const report=previousReport??freshReport;
   const acceptedPrefix=previousReport?.transactions.length??0;let prefixCursor=0;
-  if(previousReport) {report.resumedFrom='report.json';report.acceptedPrefix=acceptedPrefix;delete report.error;}
-  const reportName=resumeDirectory?'report-resumed.json':'report.json';
+  if(previousReport) {report.resumedFrom=previousReportName;report.acceptedPrefix=acceptedPrefix;delete report.error;}
+  const nextSequence=resumeDirectory?reportSequence(previousReportName)+1:0;
+  const reportName=!resumeDirectory?'report.json':nextSequence===1?'report-resumed.json':`report-resumed-${nextSequence}.json`;
   const save = () => writeFile(join(directory, reportName), JSON.stringify(report, null, 2));
   const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
   const provider = createShellProvider({ rpcHttpUrl: `http://127.0.0.1:${ports[0]}` });
+  const traceOptions=(aa=false)=>({tracer:'callTracer',...(batchCalls?{disableMemory:true,disableStorage:true,...(aa?{disableStack:true}:{})}:{})});
   const nodes = [], dirs = [join(directory, 'leader'), join(directory, 'observer')];
   async function rpc(i, method, params = []) {
     await pause(100);
@@ -356,11 +364,16 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
       accounts[target] = { balance: await rpc(i, 'eth_getBalance', [target, tag]),
         nonce: await rpc(i, 'eth_getTransactionCount', [target, tag]), slots: [] };
       for (const slot of ['0x0', '0x1']) accounts[target].slots.push(await rpc(i, 'eth_getStorageAt', [target, slot, tag]));
+      if(batchCalls && [payee,alias].includes(target)) {
+        accounts[target].multi={};for(const id of batchIds){accounts[target].multi[id.toString()]={};for(const who of batchOwners)accounts[target].multi[id.toString()][who]=await rpc(i,'eth_getStorageAt',[target,multiSlot(id,who),tag]);}
+      }
+      if(batchCalls && target===reader) accounts[target].readSum=await rpc(i,'eth_getStorageAt',[reader,'0x2',tag]);
+      if(batchCalls && target===short) for(const slot of ['0x2','0x3','0x4','0x5','0x6'])accounts[target].slots.push(await rpc(i,'eth_getStorageAt',[target,slot,tag]));
       if(noThrowCalls && target===reader) {
         accounts[target].detections={};
         for(const id of [erc165,'0xdeadbeef']) accounts[target].detections[id]=await rpc(i,'eth_getStorageAt',[reader,'0x'+BigInt(keccak256('0x'+byteWord(id)+word(3))).toString(16),tag]);
       }
-      if(bytesCalls && [payee,alias].includes(target)) {
+      if(bytesCalls && !batchCalls && [payee,alias].includes(target)) {
         accounts[target].interfaces={};
         for(const id of [markID,echoID]) accounts[target].interfaces[id]=[await rpc(i,'eth_getStorageAt',[target,interfaceSlot(id),tag]),await rpc(i,'eth_getStorageAt',[target,interfaceSlot(id,true),tag])];
       }
@@ -392,10 +405,15 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
     if(prefixCursor<acceptedPrefix) {
       const entry=report.transactions[prefixCursor++];assert.equal(entry.label,label);assert.equal(entry.aa,aa);
       assert.equal(entry.receipt.status,success?'0x1':'0x0');
-      entry.trace??=await rpc(0,'debug_traceTransaction',[entry.hash,{tracer:'callTracer'}]);
+      entry.trace??=await rpc(0,'debug_traceTransaction',[entry.hash,traceOptions(entry.aa)]);
       entry.after??=await state(0,entry.receipt.blockNumber);
       if(!aa) assert.equal(entry.trace.input,calls[0].data);
       assert.deepEqual(await rpc(0,'eth_getTransactionReceipt',[entry.hash]),entry.receipt);
+      const fee=BigInt(entry.receipt.gasUsed)*BigInt(entry.receipt.effectiveGasPrice);
+      assert.equal(BigInt(entry.before[payer.getAddress()].balance)-BigInt(entry.after[payer.getAddress()].balance),fee+(success?value:0n));
+      assert.equal(BigInt(entry.after[miner.getAddress()].balance)-BigInt(entry.before[miner.getAddress()].balance),fee);
+      assert.equal(BigInt(entry.after[payer.getAddress()].nonce),BigInt(prefixCursor));
+      if(!success)for(const target of [reader,payee,alias,short,missing,badBool,plain,large,...(noThrowCalls?[writeTarget]:[])])assert.deepEqual(entry.after[target],entry.before[target]);
       return entry;
     }
     const before = await state(0);
@@ -412,7 +430,7 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
     }
     assert.equal(entry.receipt?.status, success ? '0x1' : '0x0', label);
     nonce++; entry.after = await state(0);
-    entry.trace = await rpc(0, 'debug_traceTransaction', [hash, { tracer: 'callTracer' }]);
+    entry.trace = await rpc(0, 'debug_traceTransaction', [hash, traceOptions(aa)]);
     const fee = BigInt(entry.receipt.gasUsed) * BigInt(entry.receipt.effectiveGasPrice);
     assert.equal(BigInt(before[payer.getAddress()].balance) - BigInt(entry.after[payer.getAddress()].balance), fee + (success ? value : 0n));
     assert.equal(BigInt(entry.after[miner.getAddress()].balance) - BigInt(before[miner.getAddress()].balance), fee);
@@ -437,6 +455,14 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
     for (const [account, code] of [[reader, artifacts.Reader.deployedBytecode], [payee, artifacts.Payee.deployedBytecode],
       [alias, artifacts.Payee.deployedBytecode], [short, bytesCalls ? badBytes : signedCalls ? badSigned : narrowCalls ? rawReserves(1n,2n,max32+1n) : tupleCalls ? '0x60635f5560605ff3' : '0x60635f55601f5ff3'], [badBool, narrowCalls ? rawReserves(max112+1n,2n,3n) : tupleCalls ? '0x60635f557f'+owner.slice(2)+'5f527f'+word(maxId)+'6020526002604052600760605260805ff3' : '0x60635f5560025f5260205ff3'], [large, '0x60635f556110005ff3']]) {
       genesis.alloc[account] = { balance: '0x0', nonce: 1, code, storage: {} };
+    }
+    if(batchCalls) {
+      genesis.alloc[short].code=artifacts.BatchReceiver.deployedBytecode;
+      genesis.alloc[badBool].code='0x60635f557f'+'deadbeef'.padEnd(64,'0')+'5f5260205ff3';
+      genesis.alloc[plain]={balance:'0x0',nonce:1,code:'0x60205f527f'+'ff'.repeat(32)+'60205260405ff3',storage:{}};
+      for(const[token,initial]of [[payee,[100n,200n,11n,13n,17n,19n,23n,29n]],[alias,[300n,400n,1001n,1003n,1007n,1009n,1019n,1021n]]]) {
+        for(const[who,offset]of [[reader,0],[owner,2],[other,4],[lowAlias(reader),6]])for(const[i,id]of batchIds.entries())genesis.alloc[token].storage['0x'+word(BigInt(multiSlot(id,who)))]='0x'+word(initial[offset+i]);
+      }
     }
     if(noThrowCalls) {
       for(const[target,code]of [[alias,'0x60015f5260205ff3'],[short,'0x601f5ff3'],[badBool,'0x60025f5260205ff3'],[plain,'0x5f5ffd'],[large,'0x5b5f56'],[writeTarget,'0x60635f5560015f5260205ff3']]) genesis.alloc[target]={balance:'0x0',nonce:1,code,storage:{}};
@@ -489,7 +515,36 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
     const oracleOutput=(round,price,time)=>'0x'+word(round)+signedWord(price)+word(time)+word(time)+word(round);
     const oracleWords=(price,delta,round,time)=>({price:'0x'+signedWord(price),deltaRound:'0x'+word(BigInt.asUintN(112,delta)+(round<<112n)),time:'0x'+word(time)});
     const bytesOutput=(tag,flag)=>'0x'+byteWord(tag)+byteWord(flag);
-    if(noThrowCalls) {
+    if(batchCalls) {
+      const data='0x01020304deadbeef',array=values=>word(values.length)+values.map(word).join('');
+      const bytes=value=>word((value.length-2)/2)+value.slice(2).padEnd(Math.ceil((value.length-2)/64)*64,'0');
+      const batchInput=(signature,from,to,ids,amounts,value)=>toFunctionSelector(signature)+from.slice(2)+to.slice(2)+word(160)+word(160+(ids.length+1)*32)+word(160+(ids.length+1)*32+(amounts.length+1)*32)+array(ids)+array(amounts)+bytes(value);
+      const eventTopic=keccak256('0x'+Buffer.from('TransferBatch(address,address,address,uint256[],uint256[])').toString('hex'));
+      const event=(entry,token,to,ids,amounts)=>{const logs=entry.receipt.logs.filter(log=>log.topics[0]===eventTopic);assert.equal(logs.length,1);assert.equal(logs[0].address,token);assert.deepEqual(logs[0].topics.slice(1),[reader,reader,to]);assert.equal(logs[0].data,'0x'+word(64)+word(64+(ids.length+1)*32)+array(ids)+array(amounts));};
+      const sendBatch=(token,to,ids,amounts,value)=>assetRequest('batchSend',[token,to,ids,amounts,value,350000n]);
+      const owners=[owner,other,reader,short,lowAlias(reader)],ids=[7n,7n,maxId,7n,7n];
+      const pre=await send('batch ABI native guard before activation',[assetRequest('batchBalances',[payee,owners,ids])],0n,false);assert.equal(BigInt(pre.receipt.blockNumber),1n);assert.equal((pre.trace.calls??[]).length,0);
+      first=await send('batch transfer and real receiver at activation boundary',[sendBatch(payee,short,batchIds,[3n,4n],data)],0n,true);assert.equal(BigInt(first.receipt.blockNumber),2n);
+      assert.equal(first.trace.calls[0].input,batchInput('safeBatchTransferFrom(address,address,uint256[],uint256[],bytes)',reader,short,batchIds,[3n,4n],data));gasWord(first,'CALL',350000n);
+      assert.equal(first.trace.calls[0].calls[0].to,short);assert.equal(first.trace.calls[0].calls[0].input,batchInput('onERC1155BatchReceived(address,address,uint256[],uint256[],bytes)',reader,reader,batchIds,[3n,4n],data));event(first,payee,short,batchIds,[3n,4n]);
+      assert.deepEqual(first.after[short].slots,[reader,reader,payee,'0x'+word(2),'0x'+word(7),keccak256(data),'0x'+word(1)]);
+      const balances=await send('batch balance native owner arrays and dynamic results',[assetRequest('batchBalances',[payee,owners,ids])],0n,true);
+      assert.equal(balances.trace.calls[0].input,toFunctionSelector('balanceOfBatch(address[],uint256[])')+word(64)+word(64+(owners.length+1)*32)+array(owners)+array(ids));
+      const expected=[11n,17n,196n,3n,23n];assert.equal(balances.trace.output,'0x'+word(32)+array(expected));assert.deepEqual(decodeFunctionResult({abi:artifacts.Reader.abi,functionName:'batchBalances',data:balances.trace.output}),expected);assert.equal(balances.after[reader].readSum,'0x'+word(250));
+      const alternate=await send('batch independent native token and EOA recipient',[sendBatch(alias,other,batchIds,[5n,6n],data)],0n,true);assert.deepEqual(alternate.before[payee],alternate.after[payee]);event(alternate,alias,other,batchIds,[5n,6n]);
+      await send('batch unequal array lengths reject',[sendBatch(payee,short,batchIds,[1n],data)],0n,false);
+      await send('batch later insufficient balance rolls back first ID',[sendBatch(payee,short,batchIds,[1n,500n],data)],0n,false);
+      await send('batch zero recipient rejects',[sendBatch(payee,zero,batchIds,[1n,1n],data)],0n,false);
+      const wrong=await send('batch bad receiver magic restores token and receiver writes',[sendBatch(payee,badBool,batchIds,[1n,1n],data)],0n,false);assert.equal(wrong.after[badBool].slots[0],'0x'+word(0));assert.equal(wrong.receipt.logs.filter(log=>log.topics[0]===eventTopic).length,0);
+      await send('batch same-low20 unauthorized owner rejects despite funds',[assetRequest('batchFrom',[payee,lowAlias(reader),short,batchIds,[1n,1n],data])],0n,false);
+      const malformed=await send('batch oversized return length rejects and restores parent count',[assetRequest('batchBalances',[plain,owners,ids])],0n,false);assert.equal(malformed.trace.calls[0].output,'0x'+word(32)+word(maxId));
+      const badInput=assetRequest('batchBalances',[payee,owners,ids]);badInput.data=badInput.data.slice(0,74)+word(maxId)+badInput.data.slice(138);
+      const rejected=await send('batch out-of-bounds argument offset rejects before child',[badInput],0n,false);assert.equal((rejected.trace.calls??[]).length,0);
+      const empty=await send('batch empty arrays and bytes reach real receiver',[sendBatch(payee,short,[],[],'0x')],0n,true);event(empty,payee,short,[],[]);assert.deepEqual(empty.after[short].slots,[reader,reader,payee,'0x'+word(0),'0x'+word(0),keccak256('0x'),'0x'+word(2)]);
+      const failed=await send('batch AA later receiver refusal restores earlier balances and metadata',[sendBatch(payee,short,batchIds,[1n,1n],data),sendBatch(alias,badBool,[7n],[1n],data)],0n,false,true);assert.equal(failed.receipt.logs.filter(log=>log.topics[0]===eventTopic).length,0);
+      const accepted=await send('batch AA both tokens and receiver metadata persist',[sendBatch(payee,short,batchIds,[2n,3n],'0x11223344'),sendBatch(alias,short,[7n],[4n],'0xaabb')],0n,true,true);assert.equal(accepted.receipt.logs.filter(log=>log.topics[0]===eventTopic).length,2);
+      report.batchCalls={passed:true,activationHeight:2,arrayShapes:['address[]','uint256[]'],bytesData:true,tokenIds:batchIds.map(String),not_claimed:'Complete ERC1155 token, URI/single transfers, nested ABI or CREATE deployment'};
+    } else if(noThrowCalls) {
       const topic=keccak256('0x'+Buffer.from('Detected(address,bytes4,bool)').toString('hex'));
       const originalData=(target,id)=>toFunctionSelector('doesContractImplementInterface(address,bytes4)')+target.slice(2)+byteWord(id);
       const check=(entry,target,id,expected,queries)=>{
@@ -833,7 +888,16 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
           assert.equal(await rpc(i,'eth_call',[assetRequest('payMetadata',[payee]),'latest']),bytesOutput(tagC,'0x01'));
           report.selectorCalls={passed:true,originalSelectors:expected,originalEipPragmaAdaptation:'^0.4.20 to ^0.8.30',effectfulReceivers:'unqualified'};
         }
-        if(noThrowCalls) {
+        if(batchCalls) {
+          const wordBalance=(token,id,who)=>BigInt(before[token].multi[id.toString()][who]);
+          assert.equal(before[reader].slots[0],'0x'+word(6));assert.equal(before[reader].slots[1],short);assert.equal(before[reader].readSum,'0x'+word(250));
+          for(const[token,id,held,received,third,total]of [[payee,7n,95n,5n,17n,151n],[payee,maxId,193n,7n,19n,261n],[alias,7n,291n,4n,1012n,3327n],[alias,maxId,394n,0n,1015n,3433n]]) {
+            assert.equal(wordBalance(token,id,reader),held);assert.equal(wordBalance(token,id,short),received);assert.equal(wordBalance(token,id,other),third);
+            assert.equal(batchOwners.reduce((sum,who)=>sum+wordBalance(token,id,who),0n),total);
+          }
+          assert.equal(before[payee].slots[0],'0x'+word(3));assert.equal(before[alias].slots[0],'0x'+word(2));
+          assert.deepEqual(before[short].slots,[reader,reader,alias,'0x'+word(1),'0x'+word(4),keccak256('0xaabb'),'0x'+word(4)]);assert.equal(before[badBool].slots[0],'0x'+word(0));
+        } else if(noThrowCalls) {
           assert.equal(before[reader].slots[0],'0x'+word(11));assert.equal(before[reader].slots[1],alias);
           assert.equal(before[reader].detections[erc165],'0x'+word(0));assert.equal(before[reader].detections['0xdeadbeef'],'0x'+word(0));
           for(const target of [reader,payee,alias,short,missing,badBool,plain,large,writeTarget])assert.equal(before[target].balance,'0x0');
@@ -885,7 +949,13 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
         }
         for (const entry of report.transactions) assert.deepEqual(await rpc(i, 'eth_getTransactionReceipt', [entry.hash]), entry.receipt);
         assert.deepEqual(await state(i, first.receipt.blockNumber), first.after);
-        if(noThrowCalls) {
+        if(batchCalls) {
+          const owners=[owner,other,reader,short,lowAlias(reader)],ids=[7n,7n,maxId,7n,7n];
+          const query=assetRequest('readBatch',[payee,owners,ids]);
+          const firstOutput='0x'+word(32)+word(5)+[11n,17n,196n,3n,23n].map(word).join('');
+          const latestOutput='0x'+word(32)+word(5)+[11n,17n,193n,5n,23n].map(word).join('');
+          assert.equal(await rpc(i,'eth_call',[query,first.receipt.blockNumber]),firstOutput);assert.equal(await rpc(i,'eth_call',[query,'latest']),latestOutput);
+        } else if(noThrowCalls) {
           const query=assetRequest('recordedDetection',[erc165]);assert.equal(await rpc(i,'eth_call',[query,first.receipt.blockNumber]),'0x'+word(1));assert.equal(await rpc(i,'eth_call',[query,'latest']),'0x'+word(0));
         } else if(bytesCalls) {
           const query=assetRequest('interfaceMetadata',[payee,markID]);
@@ -914,7 +984,7 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
           assert.equal(await rpc(i,'eth_call',[contextRequest('contextual'),'latest']),other);
           assert.deepEqual(before[reader].entryWords[payer.getAddress()],['0x'+word(payee),other,'0x'+word(2),'0x'+word(90000)]);
         } else assert.equal(await rpc(i, 'eth_call', [request(payee, other, 1n), first.receipt.blockNumber]), other);
-        assert.deepEqual(await rpc(i, 'debug_traceTransaction', [first.hash, { tracer: 'callTracer' }]), first.trace);
+        assert.deepEqual(await rpc(i, 'debug_traceTransaction', [first.hash, traceOptions(first.aa)]), first.trace);
         assert.deepEqual(await state(i), before);
         assert.equal((await rpc(i, 'eth_getBlockByNumber', ['latest', false])).stateRoot, head.stateRoot);
         const final = await rpc(i, 'shell_getFinalityInfo'); assert.equal(BigInt(final.lastFinalizedBlock), BigInt(head.number));
@@ -963,3 +1033,7 @@ test('native interface IDs: original direct declarations persist through calls, 
 
 test('native no-throw query: original assembly decisions, result persistence, rollback and reopen',
   {skip:!process.env.SHELL_NODE_BIN,timeout:600000},()=>runPayableAcceptance(false,false,false,false,false,false,false,true,false,false,true));
+
+
+test('native batch arrays: balance changes, receiver bytes, rollback, history and reopen',
+  {skip:!process.env.SHELL_NODE_BIN,timeout:900000},()=>runPayableAcceptance(false,false,false,false,false,false,false,true,false,false,false,true));

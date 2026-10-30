@@ -281,6 +281,21 @@ function visit(value: unknown, visitor: (node: AstNode) => void): void {
   }
 }
 
+function staticAbiScalar(type: AstNode): boolean {
+  return (type?.name === "address" && type.stateMutability !== "payable")
+    || /^u?int(?:[0-9]+)?$/.test(String(type?.name))
+    || /^bytes[0-9]+$/.test(String(type?.name)) || type?.name === "bool";
+}
+
+function supportedAbiValue(type: AstNode): boolean {
+  return staticAbiScalar(type) || type?.name === "bytes"
+    || (type?.nodeType === "ArrayTypeName" && staticAbiScalar(type.baseType as AstNode));
+}
+
+function abiReference(type: AstNode): boolean {
+  return type.nodeType === "ArrayTypeName" || type.name === "bytes";
+}
+
 /**
  * Compile address values as full storage/ABI words, keeping Solidity's original
  * type checking and the original public ABI/dispatch selectors. Source edits
@@ -481,16 +496,9 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
           const returns = (definition?.returnParameters as AstNode)?.parameters as AstNode[] | undefined;
           const receiver = (target.arguments as AstNode[])?.[0];
           const arguments_ = node.arguments as AstNode[] | undefined;
-          const staticParameter = (parameter: AstNode) => {
-            const type = parameter.typeName as AstNode;
-            return (type?.name === "address" && type.stateMutability !== "payable")
-              // Solidity has already checked elementary integer widths in this AST.
-              || /^u?int(?:[0-9]+)?$/.test(String(type?.name))
-              || /^bytes[0-9]+$/.test(String(type?.name))
-              || type?.name === "bool";
-          };
+          const supportedParameter = (parameter: AstNode) => supportedAbiValue(parameter.typeName as AstNode);
           if (!definition || !parameters || !returns
-            || !parameters.every(staticParameter) || !returns.every(staticParameter)
+            || !parameters.every(supportedParameter) || !returns.every(supportedParameter)
             || (target.arguments as AstNode[])?.length !== 1 || !(receiver?.nodeType === "Identifier" || (receiver && structMember(receiver)))
             || receiver.typeDescriptions?.typeString !== "address" || !arguments_ || arguments_.length !== parameters.length
             || arguments_.some((argument) => !["Identifier", "Literal"].includes(argument.nodeType ?? "")
@@ -499,7 +507,7 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
                 && (argument.subExpression as AstNode).kind === "number")
               && !integerLimit(argument) && !blockTimestamp(argument) && !structMember(argument) && !builtin(argument) && !staticBytes4(argument))
             || (node.names as unknown[])?.length || node.tryCall) {
-            throw new Error("PQABI typed calls currently require an interface cast of an address variable or typed struct field, static address, integer, fixed bytes or bool arguments and results");
+            throw new Error("PQABI typed calls currently require an interface cast of an address variable or typed struct field, static address, integer, fixed bytes or bool, one-dimensional scalar arrays or bytes arguments and results");
           }
           if (nativeHeight === undefined) throw new Error("PQABI typed call requires nativeAddressContextHeight matching an activated node profile");
           const selector = definition.functionSelector;
@@ -517,11 +525,21 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
           if (definition.stateMutability === "pure") needsViewBackend = true;
           const lowName = `_${callGas ? "g" : ""}${value ? "v" : operation === "call" ? "k" : "s"}${node.src!.split(":")[2]}`;
           if (returns.length) helpers.set(operation + (callGas ? "gas" : ""), lowName);
-          const nativeType = (parameter: AstNode) => (parameter.typeName as AstNode).name === "address"
-            ? "uint256" : (parameter.typeName as AstNode).name!;
-          const resultType = returns.map(nativeType).join(", ");
+          const nativeType = (parameter: AstNode): string => {
+            const type = parameter.typeName as AstNode;
+            if (type.nodeType === "ArrayTypeName") {
+              const name = type.typeDescriptions?.typeString;
+              if (!name) throw new Error("PQABI array ABI type unavailable");
+              return name.replace(/\baddress\b/g, "uint256");
+            }
+            return type.name === "address" ? "uint256" : type.name!;
+          };
+          const declarationType = (parameter: AstNode) => nativeType(parameter)
+            + (abiReference(parameter.typeName as AstNode) ? " memory" : "");
+          const resultType = returns.map(declarationType).join(", ");
+          const decodedType = returns.map(nativeType).join(", ");
           const argumentNames = parameters.map((_, index) => parameters.length === 1 ? "argument" : `argument${index}`);
-          const declarations = parameters.map((parameter, index) => `${nativeType(parameter)} ${argumentNames[index]}`);
+          const declarations = parameters.map((parameter, index) => `${declarationType(parameter)} ${argumentNames[index]}`);
           const key = `typed:${definition.id}:${operation}:${!!callGas}`;
           let name = helpers.get(key);
           if (!name) {
@@ -532,7 +550,7 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
               const amount = opcode === "call" ? `${value ? "value" : "0"}, ` : "";
               typedDeclarations.set(name, `function ${name}(uint256 target${declarations.length ? ", " + declarations.join(", ") : ""}${value ? ", uint256 value" : ""}${callGas ? ", uint256 callGas" : ""}) ${operation === "staticcall" ? "view " : ""}{ bytes memory data = abi.encodeWithSelector(bytes4(0x${selector})${argumentNames.length ? ", " + argumentNames.join(", ") : ""}); assembly { if lt(number(), ${nativeHeight}) { revert(0, 0) } if iszero(extcodesize(target)) { revert(0, 0) } if iszero(${opcode}(${callGas ? "callGas" : "gas()"}, target, ${amount}add(data, 32), mload(data), 0, 0)) { returndatacopy(0, 0, returndatasize()) revert(0, returndatasize()) } } }`);
             } else {
-            typedDeclarations.set(name, `function ${name}(uint256 target${declarations.length ? ", " + declarations.join(", ") : ""}${value ? ", uint256 value" : ""}${callGas ? ", uint256 callGas" : ""}) ${operation === "staticcall" ? "view " : ""}returns (${resultType}) { (bool success, bytes memory output) = ${lowName}(target, ${value ? "value, " : ""}${callGas ? "callGas, " : ""}abi.encodeWithSelector(bytes4(0x${selector})${argumentNames.length ? ", " + argumentNames.join(", ") : ""})); if (!success) { assembly { revert(add(output, 32), mload(output)) } } return abi.decode(output, (${resultType})); }`);
+            typedDeclarations.set(name, `function ${name}(uint256 target${declarations.length ? ", " + declarations.join(", ") : ""}${value ? ", uint256 value" : ""}${callGas ? ", uint256 callGas" : ""}) ${operation === "staticcall" ? "view " : ""}returns (${resultType}) { (bool success, bytes memory output) = ${lowName}(target, ${value ? "value, " : ""}${callGas ? "callGas, " : ""}abi.encodeWithSelector(bytes4(0x${selector})${argumentNames.length ? ", " + argumentNames.join(", ") : ""})); if (!success) { assembly { revert(add(output, 32), mload(output)) } } return abi.decode(output, (${decodedType})); }`);
             }
           }
           const text = `${name}(${read(receiver)}${arguments_.length ? "," + arguments_.map(read).join(",") : ""}${value ? "," + read(value) : ""}${callGas ? "," + read(callGas) : ""})`;
@@ -598,7 +616,8 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
     visit(original.sources[path].ast, (node) => {
       if (node.id !== undefined && handled.has(node.id)) return;
       if (node.nodeType === "InlineAssembly"
-        || node.nodeType === "FunctionTypeName" || node.nodeType === "NewExpression"
+        || node.nodeType === "FunctionTypeName"
+        || (node.nodeType === "NewExpression" && (!abiReference(node.typeName as AstNode) || !supportedAbiValue(node.typeName as AstNode)))
         || (node.nodeType === "ElementaryTypeName" && node.name === "address"
           && node.stateMutability === "payable")
         || (node.nodeType === "Identifier" && ["this", "super"].includes(node.name ?? ""))

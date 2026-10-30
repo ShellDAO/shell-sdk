@@ -1305,7 +1305,7 @@ evaluated once. The node applies its existing call-gas forwarding rules,
 including the EIP-150 cap. Other receiver expressions remain unsupported.
 
 Typed `I(target).echo(value)` calls also preserve the original selector and
-complete address with zero or multiple static `address`, integer,
+complete address with zero or multiple `address`, integer,
 fixed bytes (`bytes1` through `bytes32`) or `bool` arguments and results.
 Integers retain their declared
 width, including `uint8`, `uint112`, `int112` and `int256`. Signed values retain
@@ -1366,6 +1366,29 @@ recording, child failure isolation, batch rollback, historical reads and physica
 reopen. It does not validate deployment through CREATE or every malformed
 return pattern.
 
+Typed calls also retain one-dimensional dynamic or fixed-length arrays of these
+scalar types, including `address[]`, `uint256[]` and `address[2]`, plus dynamic
+`bytes`. Helper parameters/results use memory references while ABI decoding
+keeps the original array and bytes value types. Address array elements remain
+complete native addresses. Memory allocation such as `new address[](length)`
+and `new bytes(length)` is supported; this does not enable contract CREATE.
+For example, `IERC1155(token).balanceOfBatch(owners, ids)` retains its original
+selector, array offsets/lengths and `uint256[]` result. Batch transfer calls can
+pass IDs, amounts and bytes data through to an actual receiver callback.
+Nested arrays, arrays of dynamic values, strings and struct/tuple ABI fields
+remain outside this typed-call subset.
+The scoped batch fixture has one manual entry after building:
+
+```bash
+SHELL_NODE_BIN=/path/to/shell-node node --test --test-name-pattern 'native batch arrays' tests/pqabi.payable.test.mjs
+```
+
+It uses fresh local accounts, two native token targets, actual receiver hooks
+and persisted balances; it checks malformed dynamic ABI, receiver refusal and
+atomic rollback through historical reads and physical database reopen. This
+validates the batch call path rather than a complete ERC-1155 token or CREATE.
+
+
 Narrow result lists such
 as `getReserves() returns (uint112, uint112, uint32)` retain their original ABI;
 noncanonical high bits in narrow arguments or results reject rather than truncate.
@@ -1421,7 +1444,8 @@ assertion failure. Resume requires matching source, compiled
 artifacts, node binary, isolated genesis and clean node exits. It rechecks the
 accepted prefix and continues with the retained payer nonce; it does not replay
 transactions. The original `report.json` is preserved and continuation results
-are written to `report-resumed.json`.
+are written to `report-resumed.json`, then numbered continuation reports without
+overwriting earlier attempts.
 
 Complex option expressions, named arguments, try/catch, contract variables and
 other ABI shapes still require further compiler support. This form requires the same unreleased profile and explicit activation option.
