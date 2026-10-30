@@ -1306,11 +1306,15 @@ including the EIP-150 cap. Other receiver expressions remain unsupported.
 
 Typed `I(target).echo(value)` calls also preserve the original selector and
 complete address with zero or multiple static `address`, `uint256`, `bytes32`
-or `bool` arguments and zero or one result of those types. Address fields remain
+or `bool` arguments and zero or multiple results of those types. Address fields remain
 nonpayable. For example, `IERC20(token).transfer(msg.sender, amount)` retains
 both input words and its boolean result; `IERC20(token).totalSupply()` takes no
 arguments. A returned `false` remains false, while malformed boolean return data
-reverts the caller rather than accepting a noncanonical value. Calls with no
+reverts the caller rather than accepting a noncanonical value. Multiple results
+retain their declared order, including complete native addresses; short return
+data or a noncanonical boolean rejects the entire call and its state changes.
+For example, an interface returning `(address, uint256, bool, bytes32)` can be
+returned directly or assigned to four local variables. Calls with no
 result, such as `INFT(nft).transferFrom(address(this), recipient, id)`, require
 code at the complete target address. An absent or empty-code target reverts.
 Successful void calls ignore return data without copying it; failed calls
@@ -1353,7 +1357,8 @@ SHELL_NODE_BIN=/path/to/shell-node node --test tests/pqabi.payable.test.mjs
 The test creates temporary keys, ports and isolated genesis allocations; it
 retains its report and chain data for inspection. It does not deploy through
 native CREATE or change any existing network’s activation schedule.
-For the void-call test, `SHELL_PQABI_RESUME_DIR` can point to its retained test
+For the void-call and static return-tuple tests, `SHELL_PQABI_RESUME_DIR` can
+point to the retained test
 directory after an assertion failure. Resume requires matching source, compiled
 artifacts, node binary, isolated genesis and clean node exits. It rechecks the
 accepted prefix and continues with the retained payer nonce; it does not replay

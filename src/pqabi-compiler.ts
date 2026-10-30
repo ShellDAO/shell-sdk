@@ -408,14 +408,14 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
             return (type?.name === "address" && type.stateMutability !== "payable")
               || ["uint", "uint256", "bytes32", "bool"].includes(String(type?.name));
           };
-          if (!definition || !parameters || !returns || returns.length > 1
+          if (!definition || !parameters || !returns
             || !parameters.every(staticParameter) || !returns.every(staticParameter)
             || (target.arguments as AstNode[])?.length !== 1 || !(receiver?.nodeType === "Identifier" || (receiver && structMember(receiver)))
             || receiver.typeDescriptions?.typeString !== "address" || !arguments_ || arguments_.length !== parameters.length
             || arguments_.some((argument) => !["Identifier", "Literal"].includes(argument.nodeType ?? "")
               && !integerLimit(argument) && !structMember(argument) && !builtin(argument))
             || (node.names as unknown[])?.length || node.tryCall) {
-            throw new Error("PQABI typed calls currently require an interface cast of an address variable or typed struct field, static address, uint256, bytes32 or bool arguments and at most one address, bytes32, uint256 or bool result");
+            throw new Error("PQABI typed calls currently require an interface cast of an address variable or typed struct field, static address, uint256, bytes32 or bool arguments and address, bytes32, uint256 or bool results");
           }
           if (nativeHeight === undefined) throw new Error("PQABI typed call requires nativeAddressContextHeight matching an activated node profile");
           const selector = definition.functionSelector;
@@ -435,7 +435,7 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
           if (returns.length) helpers.set(operation + (callGas ? "gas" : ""), lowName);
           const nativeType = (parameter: AstNode) => (parameter.typeName as AstNode).name === "address"
             ? "uint256" : (parameter.typeName as AstNode).name!;
-          const resultType = returns.length ? nativeType(returns[0]) : "";
+          const resultType = returns.map(nativeType).join(", ");
           const argumentNames = parameters.map((_, index) => parameters.length === 1 ? "argument" : `argument${index}`);
           const declarations = parameters.map((parameter, index) => `${nativeType(parameter)} ${argumentNames[index]}`);
           const key = `typed:${definition.id}:${operation}:${!!callGas}`;

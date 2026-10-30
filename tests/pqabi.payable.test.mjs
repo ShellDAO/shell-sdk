@@ -22,6 +22,11 @@ interface INFT {
  function checkOwner(address owner,uint256 id) external view;
 }
 interface IVoid {function touch(address owner,uint256 id) external payable;function ping() external;}
+interface IPosition {
+ function snapshot(address owner) external view returns(address,uint256,bool,bytes32);
+ function capture(address owner) external payable returns(address,uint256,bool,bytes32);
+ function facts(address owner,uint256 amount,bool enabled,bytes32 tag) external pure returns(address,uint256,bool,bytes32);
+}
 interface IAsset {
  function transfer(address recipient,uint256 amount) external returns(bool);
  function totalSupply() external view returns(uint256);
@@ -46,6 +51,9 @@ contract Payee {
  function checkOwner(address owner,uint256 id) external view {if(owners[id]!=owner) revert WrongOwner(owner,id);}
  function touch(address owner,uint256 id) external payable {require(owner!=address(0));owners[id]=owner;seen=owner;count++;}
  function ping() external {count++;}
+ function snapshot(address owner) external view returns(address,uint256,bool,bytes32){return(seen,count,seen==owner,bytes32(uint256(7)));}
+ function capture(address owner) external payable returns(address,uint256,bool,bytes32){count++;seen=owner;if(owner==address(0)) revert Denied(owner);return(seen,count,true,bytes32(uint256(7)));}
+ function facts(address owner,uint256 amount,bool enabled,bytes32 tag) external pure returns(address,uint256,bool,bytes32){return(owner,amount,enabled,tag);}
  event Transfer(address indexed from,address indexed to,uint256 value);
  function transfer(address recipient,uint256 amount) external returns(bool) {
   if(recipient==address(0)) return false;
@@ -94,6 +102,11 @@ contract Reader {
  function probe(address target) external {count++;IVoid(target).ping();}
  function verifyOwner(address nft,address owner,uint256 id) external view {INFT(nft).checkOwner(owner,id);}
  function nftOwner(address nft,uint256 id) external view returns(address){return INFT(nft).ownerOf(id);}
+ function tupleRead(address target,address owner) external view returns(address,uint256,bool,bytes32){return IPosition(target).snapshot(owner);}
+ function tupleCapture(address target,address owner,uint256 amount,uint256 budget) external payable returns(address,uint256,bool,bytes32){
+  count++;(address who,uint256 size,bool ok,bytes32 tag)=IPosition(target).capture{value:amount,gas:budget}(owner);last=who;return(who,size,ok,tag);
+ }
+ function tupleFacts(address target,address owner,uint256 amount,bool enabled,bytes32 tag) external pure returns(address,uint256,bool,bytes32){return IPosition(target).facts(owner,amount,enabled,tag);}
  function assetSend(address token,address recipient,uint256 amount) external returns(bool){count++;last=recipient;return IAsset(token).transfer(recipient,amount);}
  function assetToSender(address token,uint256 amount) external returns(bool){count++;last=msg.sender;return IAsset(token).transfer(msg.sender,amount);}
  function assetSupply(address token) external view returns(uint256){return IAsset(token).totalSupply();}
@@ -131,9 +144,9 @@ contract Reader {
 
 // Run after npm run build with SHELL_NODE_BIN pointing to a compatible node.
 // Isolated genesis allocation avoids making a native CREATE derivation claim.
-async function runPayableAcceptance(gasOptions = false, contextOptions = false, staticCalls = false, voidCalls = false) {
+async function runPayableAcceptance(gasOptions = false, contextOptions = false, staticCalls = false, voidCalls = false, tupleCalls = false) {
   const binary = process.env.SHELL_NODE_BIN;
-  const resumeDirectory = voidCalls ? process.env.SHELL_PQABI_RESUME_DIR : undefined;
+  const resumeDirectory = voidCalls || tupleCalls ? process.env.SHELL_PQABI_RESUME_DIR : undefined;
   const directory = resumeDirectory ? resolve(resumeDirectory) : await mkdtemp(join(tmpdir(), 'shell-sdk-payable-'));
   const previousReport = resumeDirectory ? JSON.parse(await readFile(join(directory,'report.json'),'utf8')) : undefined;
   const password = resumeDirectory ? await readFile(join(directory,'password.txt'),'utf8') : randomBytes(24).toString('hex');
@@ -167,7 +180,7 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
   for (const contractName of ['Reader', 'Payee']) {
     const options = { sources: [{ path: 'Payable.sol', content: source }], contractName, evmVersion: 'shanghai' };
     const original = await compileSolidity(options);
-    artifacts[contractName] = await compileSolidity({ ...options, target: 'pqvm', nativeAddressContextHeight: voidCalls ? 2 : 0 });
+    artifacts[contractName] = await compileSolidity({ ...options, target: 'pqvm', nativeAddressContextHeight: voidCalls || tupleCalls ? 2 : 0 });
     assert.deepEqual(artifacts[contractName].abi, original.abi);
   }
   const ports = [];
@@ -180,7 +193,7 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
   assert.notEqual(...ports);
   const freshReport = { directory, binarySha256: createHash('sha256').update(await readFile(binary)).digest('hex'),
     artifacts, source, opens: [], transactions: [], adaptations: [
-      `Source compiler; isolated Dev chain 1337, native context at height ${voidCalls ? 2 : 0}, fee accounting at genesis.`,
+      `Source compiler; isolated Dev chain 1337, native context at height ${voidCalls || tupleCalls ? 2 : 0}, fee accounting at genesis.`,
       'Fresh ML-DSA keys; full RocksDB producer and independent non-authority observer.',
       'Runtime allocation is not native CREATE or public tutorial deployment acceptance.' ] };
   if(previousReport) {
@@ -316,14 +329,14 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
   }
   try {
     const genesis = { chain_id: 1337, network_type: 'Dev', timestamp: Math.floor(Date.now() / 1000) - 120,
-      gas_limit: 30000000, registered_key_algorithm_height: 0, native_address_context_height: voidCalls ? 2 : 0,
+      gas_limit: 30000000, registered_key_algorithm_height: 0, native_address_context_height: voidCalls || tupleCalls ? 2 : 0,
       fee_accounting_activation_height: 0, aa_account_manager_height: 0,
       consensus: { engine: 'wpoa', authorities: [miner.getAddress()],
         authority_pubkeys: ['0x' + Buffer.from(miner.getPublicKey()).toString('hex')], weights: [1],
         stakes: [], block_time_secs: 2, max_future_secs: 300, epoch_length: 0 }, alloc: {} };
     for (const account of [miner.getAddress(), payer.getAddress()]) genesis.alloc[account] = { balance: '0x3635c9adc5dea00000', nonce: 0 };
     for (const [account, code] of [[reader, artifacts.Reader.deployedBytecode], [payee, artifacts.Payee.deployedBytecode],
-      [alias, artifacts.Payee.deployedBytecode], [short, '0x60635f55601f5ff3'], [badBool, '0x60635f5560025f5260205ff3'], [large, '0x60635f556110005ff3']]) {
+      [alias, artifacts.Payee.deployedBytecode], [short, tupleCalls ? '0x60635f5560605ff3' : '0x60635f55601f5ff3'], [badBool, tupleCalls ? '0x60635f557f'+owner.slice(2)+'5f527f'+word(maxId)+'6020526002604052600760605260805ff3' : '0x60635f5560025f5260205ff3'], [large, '0x60635f556110005ff3']]) {
       genesis.alloc[account] = { balance: '0x0', nonce: 1, code, storage: {} };
     }
     if(voidCalls) {
@@ -366,7 +379,37 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
     const assetRequest = (fn,args) => ({from:payer.getAddress(),to:reader,gas:'0x927c0',
       data:encodeFunctionData({abi:artifacts.Reader.abi,functionName:fn,args})});
     const boolean = (entry,value) => assert.equal(entry.trace.output,'0x'+word(value?1:0));
-    if(voidCalls) {
+    const tupleOutput=(who,size,ok,tag='0x'+word(7))=>who+word(size)+word(ok?1:0)+tag.slice(2);
+    if(tupleCalls) {
+      const read=assetRequest('tupleRead',[payee,owner]);
+      const pre=await send('tuple guard before native activation',[read],0n,false);assert.equal(BigInt(pre.receipt.blockNumber),1n);
+      first=await send('tuple capture at activation boundary',[assetRequest('tupleCapture',[payee,owner,3n,100000n])],9n,true);
+      assert.equal(BigInt(first.receipt.blockNumber),2n);assert.equal(first.trace.output,tupleOutput(owner,1n,true));gasWord(first,'CALL',100000n);
+      assert.equal(first.trace.calls[0].input,toFunctionSelector('capture(address)')+owner.slice(2));
+      const alternate=await send('tuple same-low20 identities',[assetRequest('tupleCapture',[alias,other,2n,100000n])],0n,true);
+      assert.equal(alternate.trace.output,tupleOutput(other,1n,true));assert.deepEqual(alternate.before[payee],alternate.after[payee]);
+      const malformed=await send('tuple noncanonical bool restores callee writes and value',[assetRequest('tupleCapture',[badBool,other,1n,100000n])],3n,false);
+      assert.equal(malformed.trace.calls[0].output,owner+word(maxId)+word(2)+word(7));
+      const truncated=await send('tuple truncated result restores callee writes and value',[assetRequest('tupleCapture',[short,other,1n,100000n])],3n,false);
+      assert.equal(truncated.trace.calls[0].output.length,194);
+      await send('tuple empty-code decode rejection',[assetRequest('tupleCapture',[missing,other,0n,100000n])],0n,false);
+      await send('tuple zero-gas stipend failure',[assetRequest('tupleCapture',[payee,other,1n,0n])],3n,false);
+      const rollback=await send('tuple AA second failure restores first capture',[
+        assetRequest('tupleCapture',[payee,other,1n,100000n]),assetRequest('tupleCapture',[alias,zero,1n,100000n])],0n,false,true);
+      assert.equal(rollback.receipt.logs.length,0);
+      await send('tuple AA both captures persist',[
+        assetRequest('tupleCapture',[payee,other,1n,100000n]),assetRequest('tupleCapture',[alias,owner,1n,100000n])],0n,true,true);
+      const viewed=await send('tuple view preserves false',[read],0n,true);
+      assert.equal(viewed.trace.output,tupleOutput(other,2n,false));assert.equal(viewed.trace.calls[0].type,'STATICCALL');
+      for(const[who,size,ok,tag]of [[other,maxId,false,'0x'+word(maxId)],[owner,0n,true,zero]]) {
+        const facts=await send('tuple pure boundary '+size,[assetRequest('tupleFacts',[payee,who,size,ok,tag])],0n,true);
+        assert.equal(facts.trace.output,tupleOutput(who,size,ok,tag));assert.equal(facts.trace.calls[0].type,'STATICCALL');
+        assert.deepEqual(decodeFunctionResult({abi:artifacts.Reader.abi,functionName:'tupleFacts',data:facts.trace.output}),[who,size,ok,tag]);
+      }
+      const aliasView=await send('tuple alternate owner remains full32',[assetRequest('tupleRead',[alias,owner])],0n,true);
+      assert.equal(aliasView.trace.output,tupleOutput(owner,2n,true));
+      report.tupleCalls={passed:true,activationHeight:2,staticFields:['address','uint256','bool','bytes32']};
+    } else if(voidCalls) {
       const pre=await send('void guard before native activation',[assetRequest('probe',[payee])],0n,false);
       assert.equal(BigInt(pre.receipt.blockNumber),1n);assert.ok(!pre.trace.structLogs.some(step=>step.depth===1 && step.op==='EXTCODESIZE'));
       first=await send('void NFT transfer at activation boundary',[assetRequest('deliver',[payee,owner,7n])],0n,true);
@@ -525,7 +568,12 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
     const verify = async () => {
       for (const i of [0, 1]) {
         const before = await state(i), head = await rpc(i, 'eth_getBlockByNumber', ['latest', false]);
-        if(voidCalls) {
+        if(tupleCalls) {
+          assert.equal(before[reader].balance,'0x2');assert.equal(before[payee].balance,'0x4');assert.equal(before[alias].balance,'0x3');
+          assert.equal(before[reader].slots[0],'0x'+word(4));assert.equal(before[reader].slots[1],owner);
+          assert.equal(before[payee].slots[0],'0x'+word(2));assert.equal(before[payee].slots[1],other);
+          assert.equal(before[alias].slots[0],'0x'+word(2));assert.equal(before[alias].slots[1],owner);
+        } else if(voidCalls) {
           assert.equal(before[reader].balance,'0x4');assert.equal(before[payee].balance,'0x5');assert.equal(before[plain].balance,'0x9');
           assert.equal(before[reader].slots[0],'0x'+word(8));assert.equal(before[payee].slots[0],'0x'+word(4));assert.equal(before[alias].slots[0],'0x'+word(2));
           assert.deepEqual(before[payee].owners,{'7':owner,[maxId.toString()]:other,'99':other,'100':zero});
@@ -551,7 +599,11 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
         }
         for (const entry of report.transactions) assert.deepEqual(await rpc(i, 'eth_getTransactionReceipt', [entry.hash]), entry.receipt);
         assert.deepEqual(await state(i, first.receipt.blockNumber), first.after);
-        if(voidCalls) {
+        if(tupleCalls) {
+          const query=assetRequest('tupleRead',[payee,owner]);
+          assert.equal(await rpc(i,'eth_call',[query,first.receipt.blockNumber]),tupleOutput(owner,1n,true));
+          assert.equal(await rpc(i,'eth_call',[query,'latest']),tupleOutput(other,2n,false));
+        } else if(voidCalls) {
           assert.equal(await rpc(i,'eth_call',[assetRequest('nftOwner',[payee,maxId]),first.receipt.blockNumber]),reader);
           assert.equal(await rpc(i,'eth_call',[assetRequest('nftOwner',[payee,maxId]),'latest']),other);
         } else if(staticCalls) {
@@ -588,3 +640,6 @@ test('native static interface calls: token balances, bool, views, rollback, hist
   {skip:!process.env.SHELL_NODE_BIN,timeout:600000},()=>runPayableAcceptance(false,false,true));
 test('native void interface calls: code guards, NFT state, no copy, rollback, history and disk reopen',
   {skip:!process.env.SHELL_NODE_BIN,timeout:600000},()=>runPayableAcceptance(false,false,false,true));
+
+test('native return tuples: full32 field order, decode rejection, rollback, history and disk reopen',
+  {skip:!process.env.SHELL_NODE_BIN,timeout:600000},()=>runPayableAcceptance(false,false,false,false,true));
