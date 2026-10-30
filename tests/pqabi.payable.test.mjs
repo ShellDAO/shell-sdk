@@ -201,13 +201,14 @@ contract Reader {
 
 // Run after npm run build with SHELL_NODE_BIN pointing to a compatible node.
 // Isolated genesis allocation avoids making a native CREATE derivation claim.
-async function runPayableAcceptance(gasOptions = false, contextOptions = false, staticCalls = false, voidCalls = false, tupleCalls = false, narrowCalls = false, signedCalls = false, bytesCalls = false, selectorCalls = false, interfaceIdCalls = false, noThrowCalls = false, batchCalls = false, stringCalls = false, nestedCalls = false) {
+async function runPayableAcceptance(gasOptions = false, contextOptions = false, staticCalls = false, voidCalls = false, tupleCalls = false, narrowCalls = false, signedCalls = false, bytesCalls = false, selectorCalls = false, interfaceIdCalls = false, noThrowCalls = false, batchCalls = false, stringCalls = false, nestedCalls = false, payableAddressCalls = false) {
   const binary = process.env.SHELL_NODE_BIN;
+  const payableAddressSource=payableAddressCalls?await readFile(new URL('./fixtures/PayableAddress.sol',import.meta.url),'utf8'):undefined;
   const nestedSource=nestedCalls?await readFile(new URL('./fixtures/NestedCalls.sol',import.meta.url),'utf8'):undefined;
   const stringSource=stringCalls?await readFile(new URL('./fixtures/StringMetadata.sol',import.meta.url),'utf8'):undefined;
   const batchSource=batchCalls?await readFile(new URL('./fixtures/BatchCalls.sol',import.meta.url),'utf8'):undefined;
   const querySource=noThrowCalls?await readFile(new URL('./fixtures/ERC165Query.sol',import.meta.url),'utf8'):undefined;
-  const source=nestedSource??stringSource??batchSource??(noThrowCalls?baseSource
+  const source=payableAddressSource??nestedSource??stringSource??batchSource??(noThrowCalls?baseSource
     .replace('pragma solidity ^0.8.30;','pragma solidity ^0.8.30; import "./ERC165Query.sol"; interface IQuery {function doesContractImplementInterface(address target,bytes4 id) external view returns(bool);}')
     .replace('contract Reader {','contract Reader is ERC165Query {')
     .replace(' mapping(address=>Entry) entries;',` mapping(address=>Entry) entries;
@@ -217,8 +218,8 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
  function recordDetection(address target,bytes4 id) external returns(bool){count++;address self=address(this);bool ok=IQuery(self).doesContractImplementInterface(target,id);last=target;detections[id]=ok;emit Detected(target,id,ok);return ok;}
  function recordedDetection(bytes4 id) external view returns(bool){return detections[id];}
  function denyDetection(address target) external pure {revert DetectionDenied(target);}`):baseSource);
-  const compilerSources=[{path:nestedCalls?'NestedCalls.sol':stringCalls?'StringMetadata.sol':batchCalls?'BatchCalls.sol':'Payable.sol',content:source},...(querySource?[{path:'ERC165Query.sol',content:querySource}]:[])];
-  const resumeDirectory = voidCalls || tupleCalls || narrowCalls || signedCalls || bytesCalls ? process.env.SHELL_PQABI_RESUME_DIR : undefined;
+  const compilerSources=[{path:payableAddressCalls?'PayableAddress.sol':nestedCalls?'NestedCalls.sol':stringCalls?'StringMetadata.sol':batchCalls?'BatchCalls.sol':'Payable.sol',content:source},...(querySource?[{path:'ERC165Query.sol',content:querySource}]:[])];
+  const resumeDirectory = voidCalls || tupleCalls || narrowCalls || signedCalls || bytesCalls || payableAddressCalls ? process.env.SHELL_PQABI_RESUME_DIR : undefined;
   const directory = resumeDirectory ? resolve(resumeDirectory) : await mkdtemp(join(tmpdir(), 'shell-sdk-payable-'));
   const reportSequence=name=>name==='report.json'?0:Number(name.match(/^report-resumed(?:-(\d+))?\.json$/)?.[1]??1);
   const reportFiles=resumeDirectory?(await readdir(directory)).filter(name=>/^report(?:-resumed(?:-\d+)?)?\.json$/.test(name)).sort((a,b)=>reportSequence(b)-reportSequence(a)):[];
@@ -283,13 +284,13 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
   }
   assert.notEqual(...ports);
   const freshReport = { directory, binarySha256: createHash('sha256').update(await readFile(binary)).digest('hex'),
-    artifacts, source, ...(noThrowCalls||batchCalls||stringCalls||nestedCalls?{compilerSources}:{}), opens: [], transactions: [], adaptations: [
+    artifacts, source, ...(noThrowCalls||batchCalls||stringCalls||nestedCalls||payableAddressCalls?{compilerSources}:{}), opens: [], transactions: [], adaptations: [
       `Source compiler; isolated Dev chain 1337, native context at height ${voidCalls || tupleCalls || narrowCalls || signedCalls || bytesCalls ? 2 : 0}, fee accounting at genesis.`,
       'Fresh ML-DSA keys; full RocksDB producer and independent non-authority observer.',
       'Runtime allocation is not native CREATE or public tutorial deployment acceptance.' ] };
   if(previousReport) {
     assert.equal(previousReport.directory,directory);assert.equal(previousReport.binarySha256,freshReport.binarySha256);
-    if(noThrowCalls||batchCalls||stringCalls||nestedCalls) assert.deepEqual(previousReport.compilerSources,compilerSources);
+    if(noThrowCalls||batchCalls||stringCalls||nestedCalls||payableAddressCalls) assert.deepEqual(previousReport.compilerSources,compilerSources);
     assert.equal(previousReport.source,source);assert.deepEqual(previousReport.artifacts,JSON.parse(JSON.stringify(artifacts)));
     assert.ok(previousReport.opens.every(entry=>entry.exitCode===0));
   }
@@ -367,7 +368,7 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
   };
   const state = async (i, tag = 'latest') => {
     const accounts = {};
-    for (const target of [reader, payee, alias, short, missing, badBool, plain, large, ...(noThrowCalls?[writeTarget]:[]), payer.getAddress(), miner.getAddress()]) {
+    for (const target of [reader, payee, alias, short, missing, badBool, plain, large, ...(noThrowCalls?[writeTarget]:[]), ...(payableAddressCalls?[owner,other]:[]), payer.getAddress(), miner.getAddress()]) {
       accounts[target] = { balance: await rpc(i, 'eth_getBalance', [target, tag]),
         nonce: await rpc(i, 'eth_getTransactionCount', [target, tag]), slots: [] };
       for (const slot of ['0x0', '0x1']) accounts[target].slots.push(await rpc(i, 'eth_getStorageAt', [target, slot, tag]));
@@ -501,7 +502,7 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
     }
     if(!resumeDirectory) for (const dir of dirs) { await mkdir(dir); await writeFile(join(dir, 'genesis.json'), JSON.stringify(genesis)); }
     else for(const dir of dirs) {
-      const retained=JSON.parse(await readFile(join(dir,'genesis.json'),'utf8'));assert.equal(retained.chain_id,1337);assert.equal(retained.native_address_context_height,2);
+      const retained=JSON.parse(await readFile(join(dir,'genesis.json'),'utf8'));assert.equal(retained.chain_id,1337);assert.equal(retained.native_address_context_height,voidCalls || tupleCalls || narrowCalls || signedCalls || bytesCalls ? 2 : 0);
     }
     await start(1, await peer(await start(0)));
     if(resumeDirectory) {
@@ -940,6 +941,15 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
     await send('AA second call reverts first value and storage', [request(payee, owner, 1n), request(alias, zero, 1n)], 0n, false, true);
     await send('AA successful payable call', [request(payee, owner, 1n)], 0n, true, true);
     }
+    if(payableAddressCalls) {
+      await send('qualified owner changes after value flow',[request(payee,other,0n,'plain')],0n,true);
+      const topic=keccak256('0x'+Buffer.from('Paid(address,uint256)').toString('hex'));
+      for(const[index,target,who,value]of [[0,payee,owner,7],[1,payee,other,0],[2,alias,other,4],[9,payee,owner,1],[10,payee,other,0]]) {
+        const logs=report.transactions[index].receipt.logs.filter(log=>log.topics[0]===topic);assert.equal(logs.length,1);assert.equal(logs[0].address,target);assert.deepEqual(logs[0].topics.slice(1),[who]);assert.equal(logs[0].data,'0x'+word(value));
+      }
+      for(const entry of report.transactions.filter(entry=>entry.receipt.status==='0x0'))assert.equal(entry.receipt.logs.filter(log=>log.topics[0]===topic).length,0);
+      report.payableAddressCalls={passed:true,activationHeight:0,ordinaryAndQualifiedReceiver:true,payableCastInOuterRejection:true,msgValueEventAmounts:[7,0,4,1,0],not_claimed:'transfer/send, implicit owner payments, every cast/array combination or CREATE deployment'};
+    }
     const verify = async () => {
       for (const i of [0, 1]) {
         const before = await state(i), head = await rpc(i, 'eth_getBlockByNumber', ['latest', false]);
@@ -1040,8 +1050,14 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
           }
         } else {
         assert.equal(before[payee].balance, contextOptions ? '0x8' : gasOptions ? '0x9' : '0x8'); assert.equal(before[alias].balance, contextOptions ? '0x0' : '0x4');
-        assert.equal(before[reader].balance, contextOptions || gasOptions ? '0x1' : '0x2'); assert.equal(before[reader].slots[0], '0x' + word(contextOptions || gasOptions ? 8 : 4));
-        assert.equal(before[payee].slots[0], '0x' + word(contextOptions ? 8 : gasOptions ? 5 : 3)); assert.equal(before[alias].slots[0], '0x' + word(contextOptions ? 0 : 1));
+        assert.equal(before[reader].balance, contextOptions || gasOptions ? '0x1' : '0x2'); assert.equal(before[reader].slots[0], '0x' + word(contextOptions || gasOptions ? 8 : payableAddressCalls ? 5 : 4));
+        assert.equal(before[payee].slots[0], '0x' + word(contextOptions ? 8 : gasOptions ? 5 : payableAddressCalls ? 4 : 3)); assert.equal(before[alias].slots[0], '0x' + word(contextOptions ? 0 : 1));
+        }
+        if(payableAddressCalls) {
+          for(const who of [owner,other])assert.equal(before[who].balance,'0x0');
+          assert.equal(before[reader].slots[1],other);assert.equal(before[payee].slots[1],other);
+          assert.equal(await rpc(i,'eth_getStorageAt',[payee,'0x1',first.receipt.blockNumber]),owner);assert.equal(await rpc(i,'eth_getStorageAt',[payee,'0x1','latest']),other);
+          assert.equal(await rpc(i,'eth_getBalance',[payee,first.receipt.blockNumber]),'0x7');assert.equal(before[payee].balance,'0x8');
         }
         for (const entry of report.transactions) assert.deepEqual(await rpc(i, 'eth_getTransactionReceipt', [entry.hash]), entry.receipt);
         assert.deepEqual(await state(i, first.receipt.blockNumber), first.after);
@@ -1146,3 +1162,7 @@ test('native string metadata: URI bytes, storage boundaries, rollback, history a
 
 test('native nested arrays: original ABI example, persistent groups, rollback, history and reopen',
   {skip:!process.env.SHELL_NODE_BIN,timeout:900000},()=>runPayableAcceptance(false,false,false,false,false,false,false,true,false,false,false,false,false,true));
+
+
+test('native payable addresses: qualified values, msg.value, rollback, history and reopen',
+  {skip:!process.env.SHELL_NODE_BIN,timeout:600000},()=>runPayableAcceptance(false,false,false,false,false,false,false,false,false,false,false,false,false,false,true));

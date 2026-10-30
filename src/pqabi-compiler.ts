@@ -155,7 +155,7 @@ function nativeOverloadAliases(
   for (const file of Object.values(contracts)) for (const contract of Object.values(file)) {
     const groups = new Map<string, Set<string>>();
     for (const signature of Object.keys(contract.evm.methodIdentifiers)) {
-      const lowered = signature.replace(/\baddress\b/g, "uint256");
+      const lowered = signature.replace(/\baddress(?: payable)?\b/g, "uint256");
       const group = groups.get(lowered) ?? new Set<string>();
       group.add(signature); groups.set(lowered, group);
     }
@@ -179,7 +179,7 @@ function nativeOverloadAliases(
     for (const node of scope) {
       if (node.nodeType !== "FunctionDefinition" || !node.name) continue;
       const before = signature(node);
-      const lowered = before.replace(/\baddress\b/g, "uint256");
+      const lowered = before.replace(/\baddress(?: payable)?\b/g, "uint256");
       const group = groups.get(lowered) ?? new Set<string>();
       group.add(before); groups.set(lowered, group);
     }
@@ -282,7 +282,7 @@ function visit(value: unknown, visitor: (node: AstNode) => void): void {
 }
 
 function staticAbiScalar(type: AstNode): boolean {
-  return (type?.name === "address" && type.stateMutability !== "payable")
+  return type?.name === "address"
     || /^u?int(?:[0-9]+)?$/.test(String(type?.name))
     || /^bytes[0-9]+$/.test(String(type?.name)) || type?.name === "bool";
 }
@@ -333,6 +333,10 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
       ["Identifier", "Literal"].includes(argument.nodeType ?? ""))
     && (node.expression as AstNode)?.nodeType === "Identifier"
     && (node.expression as AstNode)?.typeDescriptions?.typeIdentifier?.startsWith("t_function_internal");
+  const msgValue = (node: AstNode): boolean => node.nodeType === "MemberAccess" && node.memberName === "value"
+    && (node.expression as AstNode)?.nodeType === "Identifier"
+    && (node.expression as AstNode).name === "msg"
+    && (node.expression as AstNode).typeDescriptions?.typeIdentifier === "t_magic_message";
   const selection = {
     "*": { "": ["ast"], "*": ["abi", "evm.methodIdentifiers", "ir"] },
   };
@@ -361,6 +365,14 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
     && typeof node.referencedDeclaration === "number"
     && structMembers.has(node.referencedDeclaration)
     && (node.expression as AstNode)?.typeDescriptions?.typeIdentifier?.startsWith("t_struct$_") === true;
+  const payableCast = (node: AstNode): boolean => {
+    const type = (node.expression as AstNode)?.typeName as AstNode;
+    const args = node.arguments as AstNode[] | undefined;
+    return node.nodeType === "FunctionCall" && node.kind === "typeConversion"
+      && type?.name === "address" && type.stateMutability === "payable" && args?.length === 1
+      && ["address", "address payable"].includes(args[0].typeDescriptions?.typeString ?? "")
+      && (args[0].nodeType === "Identifier" || structMember(args[0]) || builtin(args[0]) !== undefined);
+  };
 
   const externalFunctions = new Map<number, AstNode>();
   const interfaceIds = new Map<number, string>();
@@ -419,14 +431,23 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
       helpers.set(operation, name);
       return name;
     };
+    const addressTypeText = (node: AstNode): string => {
+      const [start, length] = node.src!.split(":").map(Number);
+      const raw = Buffer.from(source.content).subarray(start, start + length).toString("utf8");
+      // Solidity includes the opening parenthesis in payable-cast type ranges.
+      const text = "uint256" + (raw.trimEnd().endsWith("(") ? "(" : "");
+      if (text.length > length) throw new Error("unsupported PQABI address source range");
+      return text.padEnd(length, " ");
+    };
     const read = (node: AstNode): string => {
       const [start, length] = node.src!.split(":").map(Number);
       const contexts: { start: number; length: number; text: string }[] = [];
       visit(node, (child) => {
-        if (!builtin(child) && !staticBytes4(child)) return;
+        const addressType = child.nodeType === "ElementaryTypeName" && child.name === "address";
+        if (!addressType && !builtin(child) && !staticBytes4(child)) return;
         const [offset, size] = child.src!.split(":").map(Number);
         if (contexts.some((edit) => offset >= edit.start && offset + size <= edit.start + edit.length)) return;
-        contexts.push({start: offset, length: size, text: renderContext(child)});
+        contexts.push({start: offset, length: size, text: addressType ? addressTypeText(child) : renderContext(child)});
       });
       const edits = [
         ...overloads.longerNames.get(path)!.filter((edit) => edit.start >= start && edit.start + edit.length <= start + length
@@ -500,12 +521,12 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
           if (!definition || !parameters || !returns
             || !parameters.every(supportedParameter) || !returns.every(supportedParameter)
             || (target.arguments as AstNode[])?.length !== 1 || !(receiver?.nodeType === "Identifier" || (receiver && structMember(receiver)))
-            || receiver.typeDescriptions?.typeString !== "address" || !arguments_ || arguments_.length !== parameters.length
+            || !["address", "address payable"].includes(receiver.typeDescriptions?.typeString ?? "") || !arguments_ || arguments_.length !== parameters.length
             || arguments_.some((argument) => !["Identifier", "Literal"].includes(argument.nodeType ?? "")
               && !(argument.nodeType === "UnaryOperation" && argument.operator === "-"
                 && (argument.subExpression as AstNode)?.nodeType === "Literal"
                 && (argument.subExpression as AstNode).kind === "number")
-              && !integerLimit(argument) && !blockTimestamp(argument) && !structMember(argument) && !builtin(argument) && !staticBytes4(argument))
+              && !integerLimit(argument) && !blockTimestamp(argument) && !structMember(argument) && !builtin(argument) && !staticBytes4(argument) && !payableCast(argument) && !msgValue(argument))
             || (node.names as unknown[])?.length || node.tryCall) {
             throw new Error("PQABI typed calls currently require an interface cast of an address variable or typed struct field, static address, integer, fixed bytes or bool, bytes, string or arrays of these arguments and results");
           }
@@ -518,7 +539,7 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
           const callGas = options[names.indexOf("gas")];
           if (names.some((name) => !["value", "gas"].includes(name))
             || options.some((option) => !["Identifier", "Literal"].includes(option.nodeType ?? "")
-              && !integerLimit(option) && !blockTimestamp(option) && !structMember(option))) {
+              && !integerLimit(option) && !blockTimestamp(option) && !structMember(option) && !msgValue(option))) {
             throw new Error("PQABI typed call options currently require simple value/gas expressions or typed struct fields");
           }
           const operation = value ? "callvalue" : ["view", "pure"].includes(String(definition.stateMutability)) ? "staticcall" : "call";
@@ -530,7 +551,7 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
             if (type.nodeType === "ArrayTypeName") {
               const name = type.typeDescriptions?.typeString;
               if (!name) throw new Error("PQABI array ABI type unavailable");
-              return name.replace(/\baddress\b/g, "uint256");
+              return name.replace(/\baddress(?: payable)?\b/g, "uint256");
             }
             return type.name === "address" ? "uint256" : type.name!;
           };
@@ -622,17 +643,14 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
       if (node.nodeType === "InlineAssembly"
         || node.nodeType === "FunctionTypeName"
         || (node.nodeType === "NewExpression" && (!abiReference(node.typeName as AstNode) || !supportedAbiValue(node.typeName as AstNode)))
-        || (node.nodeType === "ElementaryTypeName" && node.name === "address"
-          && node.stateMutability === "payable")
         || (node.nodeType === "Identifier" && ["this", "super"].includes(node.name ?? ""))
-        || (node.nodeType === "MemberAccess" && !abiEncode && !integerLimit(node) && !blockTimestamp(node) && !structMember(node)
+        || (node.nodeType === "MemberAccess" && !abiEncode && !msgValue(node) && !integerLimit(node) && !blockTimestamp(node) && !structMember(node)
           && !["length", "push", "pop"].includes(node.memberName ?? ""))) {
         throw new Error(`PQABI target does not yet support ${node.nodeType}${node.memberName ? ` .${node.memberName}` : ""} in ${path}; native context/calls require further compiler support`);
       }
       if (node.nodeType === "ElementaryTypeName" && node.name === "address") {
         const [start, length] = node.src!.split(":").map(Number);
-        if (length !== 7) throw new Error("unsupported PQABI address source range");
-        replacements.push({ start, length, text: "uint256" });
+        replacements.push({ start, length, text: addressTypeText(node) });
       }
     });
     // Whole-expression edits already render any renamed references they contain.
@@ -706,7 +724,7 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
     const selectors = new Map<string, string>();
     for (const [signature, selector] of Object.entries(originalContract.evm.methodIdentifiers)) {
       const alias = overloads.bySelector.get(selector);
-      const loweredSignature = signature.replace(/\baddress\b/g, "uint256")
+      const loweredSignature = signature.replace(/\baddress(?: payable)?\b/g, "uint256")
         .replace(/^[^(]+/, alias ?? signature.slice(0, signature.indexOf("(")));
       const loweredSelector = loweredContract.evm.methodIdentifiers[loweredSignature];
       if (!loweredSelector) throw new Error(`missing lowered selector for ${signature}`);

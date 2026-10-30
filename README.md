@@ -1419,6 +1419,24 @@ historical reads, independent import and database reopen. Other depths and
 array combinations still need runtime qualification. `abi.encode` of supported
 values also retains complete address words, including nested address arrays.
 
+`address payable` values keep the original ABI `address` type, full native
+word and source-level Solidity checks in typed parameters/results, storage and
+receiver variables. Supported `payable(...)` casts of existing address variables,
+caller context or typed struct fields can be used as typed arguments. Arrays of
+payable addresses follow the same recursive array rules. The qualifier itself
+does not send funds. `msg.value` retains the incoming call amount as a standard
+scalar in contract bodies, typed arguments and value options.
+
+```bash
+SHELL_NODE_BIN=/path/to/shell-node node --test --test-name-pattern 'native payable addresses' tests/pqabi.payable.test.mjs
+```
+
+This fixture verifies actual transferred value, incoming-amount events, full
+owner words, partial AA/outer/callee rollback, fees/nonces, historical reads and
+database reopen. Solidity `transfer`/`send` and general address conversions
+remain separate unsupported paths. Cast/array combinations beyond the recorded
+runtime cases still need qualification.
+
 Narrow result lists such
 as `getReserves() returns (uint112, uint112, uint32)` retain their original ABI;
 noncanonical high bits in narrow arguments or results reject rather than truncate.

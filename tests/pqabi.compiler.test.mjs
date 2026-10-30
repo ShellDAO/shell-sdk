@@ -26,11 +26,10 @@ test('PQABI target retains original ABI types and selector dispatch', async () =
   assert.notEqual(native.bytecode,original.bytecode);
 });
 
-test('PQABI target rejects context, assembly and payable address instead of narrowing', async () => {
+test('PQABI target rejects unconfigured context and assembly instead of narrowing', async () => {
   for (const body of [
     'function caller() external view returns(address) { return msg.sender; }',
     'function raw() external { assembly { stop() } }',
-    'address payable public owner;',
   ]) {
     await assert.rejects(compileSolidity({sources:[{path:'Unsupported.sol',content:`pragma solidity ^0.8.20; contract Unsupported { address stored; ${body} }`}],contractName:'Unsupported',target:'pqvm'}),/does not yet support/);
   }
@@ -585,7 +584,7 @@ test('typed calls accept stored, memory and nested address struct fields with th
       await assert.rejects(compileSolidity({...args,target:'pqvm'}),/typed call requires nativeAddressContextHeight/);
     }
   }
-  await assert.rejects(compileSolidity({sources:[{path:'Ledger.sol',content:original.replaceAll('address owner','address payable owner')}],contractName:'Ledger',target:'pqvm',nativeAddressContextHeight:2}),/address variable or typed struct field/);
+  const payableField={sources:[{path:'Ledger.sol',content:original.replaceAll('address owner','address payable owner')}],contractName:'Ledger'};assert.deepEqual((await compileSolidity({...payableField,target:'pqvm',nativeAddressContextHeight:2})).abi,(await compileSolidity(payableField)).abi);
 });
 
 
@@ -1096,4 +1095,29 @@ test('native recursive arrays still reject struct ABI elements', async () => {
 test('native abi.encode preserves original API and nested full-word address values', async () => {
  const content=`pragma solidity ^0.8.30;contract Reader{function pack(address[][] memory owners,string[] memory labels)external pure returns(bytes32){return keccak256(abi.encode(owners,labels));}}`;const args={sources:[{path:'Reader.sol',content}],contractName:'Reader',evmVersion:'shanghai'};assert.deepEqual((await compileSolidity({...args,target:'pqvm',nativeAddressContextHeight:2})).abi,(await compileSolidity(args)).abi);
  const deep=content.replaceAll('address[][]','address[][][]');const native=await compileSolidity({...args,sources:[{path:'Reader.sol',content:deep}],target:'pqvm',nativeAddressContextHeight:2});assert.ok(native.deployedBytecode.length>2);
+});
+
+
+test('native payable address ABI preserves qualified values, casts, fields and arrays', async () => {
+ const content=`pragma solidity ^0.8.30;interface I{function pay(address payable owner)external payable returns(address payable);function echo(address payable[][] calldata owners)external pure returns(address payable[][] memory);}
+ contract Reader{struct Entry{address payable target;address payable owner;}
+ function run(address payable target,address payable owner,uint256 amount,uint256 budget)external payable returns(address payable){return I(target).pay{gas:budget,value:amount}(owner);}
+ function cast(address target,address owner)external returns(address payable){return I(target).pay(payable(owner));}
+ function caller(address target)external returns(address payable){return I(target).pay(payable(msg.sender));}
+ function field(Entry memory entry)external returns(address payable){return I(entry.target).pay(payable(entry.owner));}
+ function echo(address target,address payable[][] memory owners)external pure returns(address payable[][] memory){return I(target).echo(owners);}
+ function pick(address payable owner)internal pure returns(uint256){return owner==address(0)?0:1;}function pick(uint256 value)internal pure returns(uint256){return value;}
+ function which(address payable owner)external pure returns(uint256){return pick(owner)+pick(uint256(7));}}`;
+ const args={sources:[{path:'Reader.sol',content}],contractName:'Reader',evmVersion:'shanghai'};const original=await compileSolidity(args);const native=await compileSolidity({...args,target:'pqvm',nativeAddressContextHeight:2});assert.deepEqual(native.abi,original.abi);assert.equal(native.abi.find(e=>e.name==='run').inputs[0].internalType,'address payable');assert.equal(native.abi.find(e=>e.name==='run').outputs[0].type,'address');
+ await assert.rejects(compileSolidity({...args,target:'pqvm'}),/nativeAddressContextHeight/);
+ const values={sources:[{path:'AddressRoundtrip.sol',content:source.replaceAll('address','address payable')}],contractName:'AddressRoundtrip'};assert.deepEqual((await compileSolidity({...values,target:'pqvm'})).abi,(await compileSolidity(values)).abi);
+ for(const operation of ['transfer','send']){const body=`pragma solidity ^0.8.30;contract Reader{function payout(address payable target)external payable{target.${operation}(msg.value);}}`;await compileSolidity({...args,sources:[{path:'Reader.sol',content:body}]});await assert.rejects(compileSolidity({...args,sources:[{path:'Reader.sol',content:body}],target:'pqvm',nativeAddressContextHeight:2}),/MemberAccess/);}
+});
+
+
+test('native msg.value retains standard scalar opcode in bodies, arguments and call options', async () => {
+ const content=`pragma solidity ^0.8.30;interface I{function accept(address payable owner,uint256 declared)external payable returns(address payable);}
+ contract Reader{event Amount(address indexed owner,uint256 amount);function forward(address target,address payable owner)external payable returns(address payable){emit Amount(owner,msg.value);return I(target).accept{value:msg.value}(owner,msg.value);}
+ function amount(address owner)external payable returns(address,uint256){return(owner,msg.value);}}`;const args={sources:[{path:'Reader.sol',content}],contractName:'Reader',evmVersion:'shanghai'};assert.deepEqual((await compileSolidity({...args,target:'pqvm',nativeAddressContextHeight:2})).abi,(await compileSolidity(args)).abi);
+ const plain={...args,sources:[{path:'Reader.sol',content:'pragma solidity ^0.8.30;contract Reader{function amount()external payable returns(uint256){return msg.value;}}'}]};assert.equal((await compileSolidity({...plain,target:'pqvm'})).deployedBytecode,(await compileSolidity(plain)).deployedBytecode);
 });
