@@ -129,7 +129,7 @@ test('native low-level call retains full address ABI and explicit activation', a
  const native=await compileSolidity({...options,nativeAddressContextHeight:2});
  const evm=await compileSolidity({...options,target:'evm'});assert.deepEqual(native.abi,evm.abi);
  await compileSolidity({...options,sources:[{path:'NativeCall.sol',content:source.replace('{value:value}','')}],nativeAddressContextHeight:2});
- await assert.rejects(compileSolidity({...options,sources:[{path:'NativeCall.sol',content:source.replace('value:value','gas:value')}],nativeAddressContextHeight:2}),/optional simple value/);
+ await compileSolidity({...options,sources:[{path:'NativeCall.sol',content:source.replace('value:value','gas:value')}],nativeAddressContextHeight:2});
 });
 
 
@@ -217,9 +217,28 @@ test('typed payable calls preserve original ABI with value and plain calls to th
   await compileSolidity({...args,sources:[{path:'Payable.sol',content:payableSource.replace('value:amount',`value:${value}`)}]});
  }
  for(const option of ['gas:amount','value:amount,gas:100000','gas:100000,value:amount']) {
-  await assert.rejects(compileSolidity({...args,sources:[{path:'Payable.sol',content:payableSource.replace('value:amount',option)}]}),/typed call options/);
+  const content=payableSource.replace('value:amount',option);
+  const native=await compileSolidity({...args,sources:[{path:'Payable.sol',content}]});
+  assert.deepEqual(native.abi,(await compileSolidity({...args,target:'evm',nativeAddressContextHeight:undefined,sources:[{path:'Payable.sol',content}]})).abi);
  }
  await assert.rejects(compileSolidity({...args,sources:[{path:'Payable.sol',content:payableSource.replace('external payable returns(address);','external returns(address);')}]}),/non-payable|payable/);
+});
+
+
+test('native gas options preserve CALL STATICCALL DELEGATECALL ABI and reject complex option expressions', async () => {
+ for(const mode of ['call','staticcall','delegatecall']) {
+  const source=`pragma solidity ^0.8.30; contract Gas { function invoke(address target,bytes memory data,uint256 budget) external ${mode==='staticcall'?'view':''} returns(bool,bytes memory) {return target.${mode}{gas:budget}(data);} }`;
+  const args={sources:[{path:'Gas.sol',content:source}],contractName:'Gas',evmVersion:'shanghai'};
+  const native=await compileSolidity({...args,target:'pqvm',nativeAddressContextHeight:2});
+  assert.deepEqual(native.abi,(await compileSolidity(args)).abi);
+  await assert.rejects(compileSolidity({...args,target:'pqvm'}),/nativeAddressContextHeight/);
+  for(const gas of ['0','type(uint256).max']) await compileSolidity({...args,target:'pqvm',nativeAddressContextHeight:2,sources:[{path:'Gas.sol',content:source.replace('gas:budget',`gas:${gas}`)}]});
+  await assert.rejects(compileSolidity({...args,target:'pqvm',nativeAddressContextHeight:2,sources:[{path:'Gas.sol',content:source.replace('gas:budget','gas:gasleft()')}]}),/optional simple value\/gas/);
+ }
+ const content=payableSource.replace('value:amount','value:amount,gas:amount');
+ const args={sources:[{path:'Payable.sol',content}],contractName:'PayableReader',target:'pqvm',nativeAddressContextHeight:2};
+ await compileSolidity({...args,sources:[{path:'Payable.sol',content:content.replaceAll('value:entries[id].amount','value:entries[id].amount,gas:entries[id].amount')}]});
+ await assert.rejects(compileSolidity({...args,sources:[{path:'Payable.sol',content:content.replace('gas:amount','gas:gasleft()')}]}),/typed call options/);
 });
 
 
@@ -336,7 +355,7 @@ test('typed owner calls accept integer type limits and preserve activation and r
   assert.equal(executableBytecode(native),executableBytecode(literal));
   for (const body of [
     'function name() external pure returns(string memory) {return type(Other).name;}',
-    'function unsafe(address target,bytes memory data) external returns(bool,bytes memory) {return target.call{gas:100000}(data);}',
+    'function unsafe(address target,bytes memory data) external returns(bool,bytes memory) {return target.call{gas:gasleft()}(data);}',
   ]) {
     await assert.rejects(compileSolidity({sources:[{path:'Unsupported.sol',content:`pragma solidity ^0.8.20; contract Other {} contract Unsupported {address stored; ${body}}`}],contractName:'Unsupported',target:'pqvm',nativeAddressContextHeight:2}), /does not yet support|optional simple value/);
   }

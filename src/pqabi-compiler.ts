@@ -390,25 +390,26 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
           if (typeof selector !== "string" || !/^[0-9a-f]{8}$/.test(selector)) throw new Error("PQABI typed call selector unavailable");
           const options = call.nodeType === "FunctionCallOptions" ? call.options as AstNode[] : [];
           const names = call.nodeType === "FunctionCallOptions" ? call.names as string[] : [];
-          const value = options[0];
-          if (names.length > 1 || (names.length === 1 && names[0] !== "value")
-            || (value && !["Identifier", "Literal"].includes(value.nodeType ?? "")
-              && !integerLimit(value) && !structMember(value))) {
-            throw new Error("PQABI typed call options currently require a simple value or typed struct field");
+          const value = options[names.indexOf("value")];
+          const callGas = options[names.indexOf("gas")];
+          if (names.some((name) => !["value", "gas"].includes(name))
+            || options.some((option) => !["Identifier", "Literal"].includes(option.nodeType ?? "")
+              && !integerLimit(option) && !structMember(option))) {
+            throw new Error("PQABI typed call options currently require simple value/gas expressions or typed struct fields");
           }
           const operation = value ? "callvalue" : ["view", "pure"].includes(String(definition.stateMutability)) ? "staticcall" : "call";
           if (definition.stateMutability === "pure") hasPureTypedCall = true;
-          const lowName = `_${value ? "v" : operation === "call" ? "k" : "s"}${node.src!.split(":")[2]}`;
-          helpers.set(operation, lowName);
+          const lowName = `_${callGas ? "g" : ""}${value ? "v" : operation === "call" ? "k" : "s"}${node.src!.split(":")[2]}`;
+          helpers.set(operation + (callGas ? "gas" : ""), lowName);
           const resultType = (returns[0].typeName as AstNode)?.name === "bytes32" ? "bytes32" : "uint256";
-          const key = `typed:${definition.id}:${operation}`;
+          const key = `typed:${definition.id}:${operation}:${!!callGas}`;
           let name = helpers.get(key);
           if (!name) {
             name = `_t${node.id!.toString(36)}`;
             helpers.set(key, name);
-            typedDeclarations.set(name, `function ${name}(uint256 target, uint256 argument${value ? ", uint256 value" : ""}) ${operation === "staticcall" ? "view " : ""}returns (${resultType}) { (bool success, bytes memory output) = ${lowName}(target, ${value ? "value, " : ""}abi.encodeWithSelector(bytes4(0x${selector}), argument)); if (!success) { assembly { revert(add(output, 32), mload(output)) } } return abi.decode(output, (${resultType})); }`);
+            typedDeclarations.set(name, `function ${name}(uint256 target, uint256 argument${value ? ", uint256 value" : ""}${callGas ? ", uint256 callGas" : ""}) ${operation === "staticcall" ? "view " : ""}returns (${resultType}) { (bool success, bytes memory output) = ${lowName}(target, ${value ? "value, " : ""}${callGas ? "callGas, " : ""}abi.encodeWithSelector(bytes4(0x${selector}), argument)); if (!success) { assembly { revert(add(output, 32), mload(output)) } } return abi.decode(output, (${resultType})); }`);
           }
-          const text = `${name}(${read(receiver)},${read(argument)}${value ? "," + read(value) : ""})`;
+          const text = `${name}(${read(receiver)},${read(argument)}${value ? "," + read(value) : ""}${callGas ? "," + read(callGas) : ""})`;
           const [start, length] = node.src!.split(":").map(Number);
           if (Buffer.byteLength(text) > length) throw new Error("unsupported PQABI typed call source range");
           replacements.push({start, length, text: text + " ".repeat(length - Buffer.byteLength(text))});
@@ -424,17 +425,20 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
           const arguments_ = node.arguments as AstNode[];
           const options = call.nodeType === "FunctionCallOptions" ? call.options as AstNode[] : [];
           const names = call.nodeType === "FunctionCallOptions" ? call.names as string[] : [];
-          const value = options[0];
+          const value = options[names.indexOf("value")];
+          const callGas = options[names.indexOf("gas")];
           if (arguments_.length !== 1 || arguments_[0].nodeType !== "Identifier"
             || !arguments_[0].typeDescriptions?.typeString?.startsWith("bytes ")
-            || names.length > 1 || (names.length === 1 && (names[0] !== "value" || member.memberName !== "call"))
-            || (value && !["Identifier", "Literal"].includes(value.nodeType ?? ""))) {
-            throw new Error("PQABI native call currently requires address and bytes variables, with an optional simple value");
+            || names.some((name) => !["value", "gas"].includes(name))
+            || (value && member.memberName !== "call")
+            || options.some((option) => !["Identifier", "Literal"].includes(option.nodeType ?? "")
+              && !integerLimit(option) && !structMember(option))) {
+            throw new Error("PQABI native call currently requires address and bytes variables, with optional simple value/gas expressions or typed struct fields");
           }
           const operation = value ? "callvalue" : member.memberName!;
           const letter = value ? "v" : ({call:"k",staticcall:"s",delegatecall:"d"} as Record<string,string>)[operation];
-          const name = `_${letter}${node.src!.split(":")[2]}`;
-          helpers.set(operation, name);
+          const name = `_${callGas ? "g" : ""}${letter}${node.src!.split(":")[2]}`;
+          helpers.set(operation + (callGas ? "gas" : ""), name);
           const context = builtin(target);
           let receiver = read(target);
           if (context) {
@@ -443,7 +447,7 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
             helpers.set(context, contextName);
             receiver = `${contextName}()`;
           }
-          const text = `${name}(${receiver},${value ? read(value) + "," : ""}${read(arguments_[0])})`;
+          const text = `${name}(${receiver},${value ? read(value) + "," : ""}${callGas ? read(callGas) + "," : ""}${read(arguments_[0])})`;
           const [start, length] = node.src!.split(":").map(Number);
           if (Buffer.byteLength(text) > length) throw new Error("unsupported PQABI native call source range");
           replacements.push({start, length, text: text + " ".repeat(length - Buffer.byteLength(text))});
@@ -508,10 +512,12 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
     const declarations = [...helpers].map(([opcode, name]) => {
       if (typedDeclarations.has(name)) return typedDeclarations.get(name)!;
       const guard = `if lt(number(), ${nativeHeight}) { revert(0, 0) }`;
-      if (["call", "callvalue", "staticcall", "delegatecall"].includes(opcode)) {
-        const operation = opcode === "callvalue" ? "call" : opcode;
-        const value = operation === "call" ? `${opcode === "callvalue" ? "value" : "0"}, ` : "";
-        return `function ${name}(uint256 target, ${opcode === "callvalue" ? "uint256 value, " : ""}bytes memory data) ${opcode === "staticcall" ? "view " : ""}returns (bool success, bytes memory output) { uint256 size; assembly { ${guard} success := ${operation}(gas(), target, ${value}add(data, 32), mload(data), 0, 0) size := returndatasize() } output = new bytes(size); assembly { returndatacopy(add(output, 32), 0, size) } }`;
+      const callGas = opcode.endsWith("gas");
+      const callKind = callGas ? opcode.slice(0, -3) : opcode;
+      if (["call", "callvalue", "staticcall", "delegatecall"].includes(callKind)) {
+        const operation = callKind === "callvalue" ? "call" : callKind;
+        const value = operation === "call" ? `${callKind === "callvalue" ? "value" : "0"}, ` : "";
+        return `function ${name}(uint256 target, ${callKind === "callvalue" ? "uint256 value, " : ""}${callGas ? "uint256 callGas, " : ""}bytes memory data) ${callKind === "staticcall" ? "view " : ""}returns (bool success, bytes memory output) { uint256 size; assembly { ${guard} success := ${operation}(${callGas ? "callGas" : "gas()"}, target, ${value}add(data, 32), mload(data), 0, 0) size := returndatasize() } output = new bytes(size); assembly { returndatacopy(add(output, 32), 0, size) } }`;
       }
       if (opcode === "code") return `function ${name}(uint256 target) view returns (bytes memory value) { uint256 size; assembly { ${guard} size := extcodesize(target) } value = new bytes(size); assembly { extcodecopy(target, add(value, 32), 0, size) } }`;
       if (opcode === "balance" || opcode === "codehash") {

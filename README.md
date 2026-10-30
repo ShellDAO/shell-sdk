@@ -1297,9 +1297,12 @@ Receivers can be address variables or the context expressions `msg.sender`,
 `tx.origin`, `block.coinbase` and `address(this)`, or a direct internal function
 call that returns an address and takes identifier or literal arguments. That
 receiver is evaluated once.
-This initial form requires a
-bytes variable and a simple value variable or literal; call gas options,
-other receiver expressions remain unsupported.
+These forms require a bytes variable. Gas limits can be supplied with
+`{gas: budget}` on CALL, STATICCALL and DELEGATECALL; CALL also accepts
+`{value: amount, gas: budget}` in either order. Value and gas expressions can be
+identifiers, literals, typed struct fields or integer type limits and are
+evaluated once. The node applies its existing call-gas forwarding rules,
+including the EIP-150 cap. Other receiver expressions remain unsupported.
 
 Typed `I(target).echo(value)` calls also preserve the original selector and
 complete address when the external function takes one nonpayable `address` or
@@ -1320,8 +1323,11 @@ short return value reverts. Payable interface calls also accept
 `IPay(target).pay{value: amount}(owner)`, sending the specified Wei through the
 same full-width CALL path. The value can be an identifier, literal, typed struct
 field, or integer type limit; it is evaluated once. Plain and value calls to the
-same interface declaration can coexist. This support is in unreleased source
-builds. After building the SDK, verify real signed ordinary and AA calls,
+same interface declaration can coexist. Typed calls also accept `{gas: budget}`
+and both orders of `{gas: budget, value: amount}` for payable functions. View
+and pure interfaces retain STATICCALL; other interfaces use CALL, with the
+specified gas operand and the node’s existing forwarding rules. This support is
+in unreleased source builds. After building the SDK, verify real signed ordinary and AA calls,
 independent block import, historical reads and RocksDB reopen with a compatible
 node (verified with v0.27.13):
 
@@ -1334,8 +1340,8 @@ The test creates temporary keys, ports and isolated genesis allocations; it
 retains its report and chain data for inspection. It does not deploy through
 native CREATE or change any existing network’s activation schedule.
 
-Gas options, named arguments, try/catch, contract variables and other ABI shapes still require further compiler support. This
-form requires the same unreleased profile and explicit activation option.
+Complex option expressions, named arguments, try/catch, contract variables and
+other ABI shapes still require further compiler support. This form requires the same unreleased profile and explicit activation option.
 
 Numeric results use the same form, for example:
 

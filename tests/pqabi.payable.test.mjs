@@ -9,16 +9,18 @@ import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes, createHash } from 'node:crypto';
 import { toFunctionSelector } from 'viem';
 import { compileSolidity } from '../dist/contracts-compiler.js';
-import { encodeFunctionData } from '../dist/contracts.js';
+import { encodeFunctionData, decodeFunctionResult } from '../dist/contracts.js';
 import { ShellSigner, MlDsa65Adapter, decryptKeystore, buildTransaction, createShellProvider,
   buildInnerCall, buildBatchTransaction } from '../dist/index.js';
 
 const source = `pragma solidity ^0.8.30;
 interface IPay { function pay(address owner) external payable returns(address); }
+interface IRead { function peek(address owner) external view returns(address); }
 contract Payee {
  error Denied(address owner);
  uint256 public count;
  address public seen;
+ function peek(address owner) external view returns(address) { require(owner==seen); return seen; }
  function pay(address owner) external payable returns(address) {
   count++; seen=owner; if (owner==address(0)) revert Denied(owner); return owner;
  }
@@ -32,6 +34,24 @@ contract Reader {
  function plain(address target,address owner) external returns(address) {
   count++; last=IPay(target).pay(owner); return last;
  }
+ function invokeGas(address target,address owner,uint256 amount,uint256 budget) external payable returns(address) {
+  count++; last=IPay(target).pay{gas:budget,value:amount}(owner); return last;
+ }
+ function reverseGas(address target,address owner,uint256 amount,uint256 budget) external payable returns(address) {
+  count++; last=IPay(target).pay{value:amount,gas:budget}(owner); return last;
+ }
+ function lookupGas(address target,address owner,uint256 budget) external view returns(address) {
+  return IRead(target).peek{gas:budget}(owner);
+ }
+ function low(address target,bytes memory data,uint256 amount,uint256 budget) external payable returns(bool,bytes memory) {
+  (bool success,bytes memory output)=target.call{gas:budget,value:amount}(data); count++; return(success,output);
+ }
+ function lowRead(address target,bytes memory data,uint256 amount,uint256 budget) external view returns(bool,bytes memory) {
+  return target.staticcall{gas:budget}(data);
+ }
+ function lowDelegate(address target,bytes memory data,uint256 amount,uint256 budget) external returns(bool,bytes memory) {
+  return target.delegatecall{gas:budget}(data);
+ }
  function reject(address target,address owner,uint256 amount) external payable {
   count++; last=IPay(target).pay{value:amount}(owner); require(false);
  }
@@ -39,8 +59,7 @@ contract Reader {
 
 // Run after npm run build with SHELL_NODE_BIN pointing to a compatible node.
 // Isolated genesis allocation avoids making a native CREATE derivation claim.
-test('typed payable calls: signed value, rollback, import, history and disk reopen',
-  { skip: !process.env.SHELL_NODE_BIN, timeout: 240000 }, async () => {
+async function runPayableAcceptance(gasOptions = false) {
   const binary = process.env.SHELL_NODE_BIN;
   const directory = await mkdtemp(join(tmpdir(), 'shell-sdk-payable-'));
   const password = randomBytes(24).toString('hex');
@@ -134,11 +153,12 @@ test('typed payable calls: signed value, rollback, import, history and disk reop
     }
     throw new Error('peer address timeout');
   }
-  const request = (target, beneficiary, amount, fn = 'invoke') => {
-    const data = encodeFunctionData({ abi: artifacts.Reader.abi, functionName: fn,
-      args: fn === 'plain' ? [target, beneficiary] : [target, beneficiary, amount] });
-    const signature = `${fn}(address,address${fn === 'plain' ? '' : ',uint256'})`;
-    assert.equal(data, toFunctionSelector(signature) + word(target) + word(beneficiary) + (fn === 'plain' ? '' : word(amount)));
+  const request = (target, beneficiary, amount, fn = 'invoke', budget = 100000n) => {
+    const gas = ['invokeGas','reverseGas','lookupGas'].includes(fn);
+    const args = [target, beneficiary, ...(fn === 'plain' || fn === 'lookupGas' ? [] : [amount]), ...(gas ? [budget] : [])];
+    const data = encodeFunctionData({ abi: artifacts.Reader.abi, functionName: fn, args });
+    const signature = `${fn}(address,address${fn === 'plain' || fn === 'lookupGas' ? '' : ',uint256'}${gas ? ',uint256' : ''})`;
+    assert.equal(data, toFunctionSelector(signature) + args.map(word).join(''));
     return { from: payer.getAddress(), to: reader, gas: '0x927c0', data };
   };
   const state = async (i, tag = 'latest') => {
@@ -194,7 +214,58 @@ test('typed payable calls: signed value, rollback, import, history and disk reop
     }
     for (const dir of dirs) { await mkdir(dir); await writeFile(join(dir, 'genesis.json'), JSON.stringify(genesis)); }
     await start(1, await peer(await start(0)));
-    const first = await send('pay full32 target', [request(payee, owner, 7n)], 9n, true);
+    let first;
+    const lowRequest = (target, beneficiary, amount, budget, fn = 'low') => {
+      const payload = toFunctionSelector(fn === 'lowRead' ? 'peek(address)' : 'pay(address)') + beneficiary.slice(2);
+      return { from: payer.getAddress(), to: reader, gas: '0x927c0', data: encodeFunctionData({ abi: artifacts.Reader.abi,
+        functionName: fn, args: [target, payload, amount, budget] }) };
+    };
+    const gasWord = (entry, opcode, budget) => {
+      const step = entry.trace.structLogs.find(step => step.depth === 1 && step.op === opcode);
+      assert.ok(step, `missing ${opcode}`); assert.equal(BigInt(step.stack.at(-1)), budget);
+    };
+    if (gasOptions) {
+      first = await send('typed explicit gas/value', [request(payee, owner, 7n, 'invokeGas')], 9n, true);
+      gasWord(first, 'CALL', 100000n);
+      assert.equal(first.trace.calls[0].to.toLowerCase(), payee);
+      assert.equal(first.trace.calls[0].input, toFunctionSelector('pay(address)') + owner.slice(2));
+      const reversed = await send('reversed options same-low20 alias', [request(alias, other, 4n, 'reverseGas')], 5n, true);
+      gasWord(reversed, 'CALL', 100000n);
+      const lowGas = await send('typed zero gas reverts', [request(payee, owner, 0n, 'invokeGas', 0n)], 0n, false);
+      gasWord(lowGas, 'CALL', 0n);
+      const stipend = await send('typed zero gas value stipend cannot store', [request(payee, owner, 1n, 'invokeGas', 0n)], 0n, false);
+      gasWord(stipend, 'CALL', 0n);
+      const refused = await send('low-level zero gas returns false', [lowRequest(payee, owner, 0n, 0n)], 0n, true);
+      gasWord(refused, 'CALL', 0n);
+      assert.deepEqual(decodeFunctionResult({abi:artifacts.Reader.abi,functionName:'low',data:refused.trace.output}),[false,'0x']);
+      assert.deepEqual(refused.after[payee], refused.before[payee]);
+      const paid = await send('low-level gas/value succeeds', [lowRequest(payee, owner, 1n, 100000n)], 0n, true);
+      gasWord(paid, 'CALL', 100000n);
+      assert.deepEqual(decodeFunctionResult({abi:artifacts.Reader.abi,functionName:'low',data:paid.trace.output}),[true,owner]);
+      for(const budget of [0n,100000n]) {
+        const delegated=await send('delegatecall explicit gas '+budget,[lowRequest(payee,other,0n,budget,'lowDelegate')],0n,true);
+        gasWord(delegated,'DELEGATECALL',budget);
+        assert.deepEqual(decodeFunctionResult({abi:artifacts.Reader.abi,functionName:'lowDelegate',data:delegated.trace.output}),[budget>0n,budget>0n?other:'0x']);
+        assert.deepEqual(delegated.after[payee],delegated.before[payee]);
+      }
+      await send('plain call coexists with gas helpers',[request(payee,owner,0n,'plain')],0n,true);
+      await send('AA gas failure rolls back earlier value',[request(payee,owner,1n,'invokeGas'),request(alias,other,0n,'invokeGas',0n)],0n,false,true);
+      await send('AA gas success',[request(payee,owner,1n,'invokeGas')],0n,true,true);
+      const huge=await send('gas above uint64 is EIP150 capped',[request(payee,owner,0n,'invokeGas',1n<<64n)],0n,true);
+      gasWord(huge,'CALL',1n<<64n);
+      const viewed=await send('typed STATICCALL explicit gas',[request(payee,owner,0n,'lookupGas')],0n,true);
+      gasWord(viewed,'STATICCALL',100000n);assert.equal(viewed.trace.output,owner);
+      const viewFailed=await send('typed STATICCALL zero gas rejects',[request(payee,owner,0n,'lookupGas',0n)],0n,false);
+      gasWord(viewFailed,'STATICCALL',0n);
+      const before=await state(0);
+      for(const budget of [0n,100000n]) {
+        const data=await rpc(0,'eth_call',[lowRequest(payee,owner,0n,budget,'lowRead'),'latest']);
+        assert.deepEqual(decodeFunctionResult({abi:artifacts.Reader.abi,functionName:'lowRead',data}),[budget>0n,budget>0n?owner:'0x']);
+      }
+      assert.deepEqual(await state(0),before);
+      report.gasOptions={passed:true,rawGasOperandsVerified:true,staticcallReadonly:true};
+    } else {
+    first = await send('pay full32 target', [request(payee, owner, 7n)], 9n, true);
     assert.equal(first.after[payee].balance, '0x7'); assert.equal(first.after[reader].balance, '0x2');
     assert.equal(first.after[alias].balance, '0x0'); assert.equal(first.after[payee].slots[1], owner);
     assert.equal(first.trace.output, owner); assert.equal(first.trace.calls[0].to.toLowerCase(), payee);
@@ -212,12 +283,13 @@ test('typed payable calls: signed value, rollback, import, history and disk reop
     await send('outer rejection restores successful callee', [request(payee, owner, 1n, 'reject')], 3n, false);
     await send('AA second call reverts first value and storage', [request(payee, owner, 1n), request(alias, zero, 1n)], 0n, false, true);
     await send('AA successful payable call', [request(payee, owner, 1n)], 0n, true, true);
+    }
     const verify = async () => {
       for (const i of [0, 1]) {
         const before = await state(i), head = await rpc(i, 'eth_getBlockByNumber', ['latest', false]);
-        assert.equal(before[payee].balance, '0x8'); assert.equal(before[alias].balance, '0x4');
-        assert.equal(before[reader].balance, '0x2'); assert.equal(before[reader].slots[0], '0x' + word(4));
-        assert.equal(before[payee].slots[0], '0x' + word(3)); assert.equal(before[alias].slots[0], '0x' + word(1));
+        assert.equal(before[payee].balance, gasOptions ? '0x9' : '0x8'); assert.equal(before[alias].balance, '0x4');
+        assert.equal(before[reader].balance, gasOptions ? '0x1' : '0x2'); assert.equal(before[reader].slots[0], '0x' + word(gasOptions ? 8 : 4));
+        assert.equal(before[payee].slots[0], '0x' + word(gasOptions ? 5 : 3)); assert.equal(before[alias].slots[0], '0x' + word(1));
         for (const entry of report.transactions) assert.deepEqual(await rpc(i, 'eth_getTransactionReceipt', [entry.hash]), entry.receipt);
         assert.deepEqual(await state(i, first.receipt.blockNumber), first.after);
         assert.equal(await rpc(i, 'eth_call', [request(payee, other, 1n), first.receipt.blockNumber]), other);
@@ -234,4 +306,9 @@ test('typed payable calls: signed value, rollback, import, history and disk reop
     try { await stop(1); await stop(0); }
     finally { miner.dispose(); payer.dispose(); await save(); console.log(`Payable acceptance report: ${join(directory, 'report.json')}`); }
   }
-});
+ }
+
+test('typed payable calls: signed value, rollback, import, history and disk reopen',
+  {skip:!process.env.SHELL_NODE_BIN,timeout:360000},()=>runPayableAcceptance());
+test('native gas options: exact operands, limits, rollback, import, history and disk reopen',
+  {skip:!process.env.SHELL_NODE_BIN,timeout:360000},()=>runPayableAcceptance(true));
