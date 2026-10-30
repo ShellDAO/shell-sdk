@@ -290,7 +290,7 @@ test('native typed calls preserve zero/multiple static inputs and bool results',
  assert.deepEqual(native.abi,original.abi);
  await assert.rejects(compileSolidity({...args,target:'pqvm'}),/nativeAddressContextHeight/);
  for(const result of ['string[] memory','uint256[][] memory','bytes[] memory']) {
-  await assert.rejects(compileSolidity({...args,sources:[{path:'Reader.sol',content:source.replace('returns(bool);',`returns(${result});`).replace('function send(address token,uint256 amount) external returns(bool)','function send(address token,uint256 amount) external returns('+result+')')}],target:'pqvm',nativeAddressContextHeight:2}),/static address, integer, fixed bytes or bool/);
+  const options={...args,sources:[{path:'Reader.sol',content:source.replace('returns(bool);',`returns(${result});`).replace('function send(address token,uint256 amount) external returns(bool)','function send(address token,uint256 amount) external returns('+result+')')}]};assert.deepEqual((await compileSolidity({...options,target:'pqvm',nativeAddressContextHeight:2})).abi,(await compileSolidity(options)).abi);
  }
 });
 
@@ -433,7 +433,7 @@ test('typed bytes32 owner result retains its ABI and uint256 argument', async ()
  assert.equal(native.abi.find(entry=>entry.name==='lookup').outputs[0].type,'bytes32');
  await assert.rejects(compileSolidity({...args,target:'pqvm'}),/typed call requires nativeAddressContextHeight/);
  for (const result of ['uint256[][] memory','bytes[] memory']) {
-  await assert.rejects(compileSolidity({...args,sources:[{path:'Reader.sol',content:source.replaceAll('bytes32',result)}],target:'pqvm',nativeAddressContextHeight:2}),/static address, integer, fixed bytes or bool/);
+  const options={...args,sources:[{path:'Reader.sol',content:source.replaceAll('bytes32',result)}]};assert.deepEqual((await compileSolidity({...options,target:'pqvm',nativeAddressContextHeight:2})).abi,(await compileSolidity(options)).abi);
  }
 });
 
@@ -452,7 +452,7 @@ test('typed balance calls retain integer results and the original address ABI', 
   }
  }
  for (const result of ['string[] memory','bytes[] memory','uint256[][] memory']) {
-  await assert.rejects(compileSolidity({sources:[{path:'Reader.sol',content:source.replaceAll('uint256',result)}],contractName:'Reader',target:'pqvm',nativeAddressContextHeight:2}),/static address, integer, fixed bytes or bool/);
+  const options={sources:[{path:'Reader.sol',content:source.replaceAll('uint256',result)}],contractName:'Reader'};assert.deepEqual((await compileSolidity({...options,target:'pqvm',nativeAddressContextHeight:2})).abi,(await compileSolidity(options)).abi);
  }
 });
 
@@ -1070,5 +1070,30 @@ test('native typed strings retain original ABI, memory decode and value/gas opti
  const args={sources:[{path:'Reader.sol',content}],contractName:'Reader',evmVersion:'shanghai'};const original=await compileSolidity(args);const native=await compileSolidity({...args,target:'pqvm',nativeAddressContextHeight:2});assert.deepEqual(native.abi,original.abi);
  await assert.rejects(compileSolidity({...args,target:'pqvm'}),/nativeAddressContextHeight/);
  const array=content.replace('function uri(uint256 id)external view returns(string memory);','function uri(uint256 id)external view returns(string[] memory);').replace('function read(address target,uint256 id)external view returns(string memory)','function read(address target,uint256 id)external view returns(string[] memory)');
- await assert.rejects(compileSolidity({...args,sources:[{path:'Reader.sol',content:array}],target:'pqvm',nativeAddressContextHeight:2}),/one-dimensional scalar arrays/);
+ assert.deepEqual((await compileSolidity({...args,sources:[{path:'Reader.sol',content:array}],target:'pqvm',nativeAddressContextHeight:2})).abi,(await compileSolidity({...args,sources:[{path:'Reader.sol',content:array}]})).abi);
+});
+
+
+test('native nested and dynamic-element arrays retain canonical types and original ABI', async () => {
+ for(const type of ['address[][]','uint112[][2]','bytes[]','string[2]','bytes32[][]','bool[2][]']) {
+  const content=`pragma solidity ^0.8.30;interface I{function echo(${type} calldata value)external pure returns(${type} memory);}
+  contract Reader{function run(address target,${type} memory value)external pure returns(${type} memory){return I(target).echo(value);}
+  function allocate(address owner,uint256 size)external pure returns(address[][] memory){address[][] memory out=new address[][](size);if(size>0){out[0]=new address[](1);out[0][0]=owner;}return out;}}`;
+  const args={sources:[{path:'Reader.sol',content}],contractName:'Reader',evmVersion:'shanghai'};assert.deepEqual((await compileSolidity({...args,target:'pqvm',nativeAddressContextHeight:2})).abi,(await compileSolidity(args)).abi);
+  await assert.rejects(compileSolidity({...args,target:'pqvm'}),/nativeAddressContextHeight/);
+ }
+});
+
+test('native recursive arrays still reject struct ABI elements', async () => {
+ for(const type of ['P','P[]','P[][]']) {
+  const content=`pragma solidity ^0.8.30;struct P{address owner;uint256 value;}interface I{function echo(${type} calldata value)external pure returns(${type} memory);}
+  contract Reader{function run(address target,${type} memory value)external pure returns(${type} memory){return I(target).echo(value);}}`;
+  const args={sources:[{path:'Reader.sol',content}],contractName:'Reader',evmVersion:'shanghai'};await compileSolidity(args);await assert.rejects(compileSolidity({...args,target:'pqvm',nativeAddressContextHeight:2}),/static address, integer, fixed bytes or bool/);
+ }
+});
+
+
+test('native abi.encode preserves original API and nested full-word address values', async () => {
+ const content=`pragma solidity ^0.8.30;contract Reader{function pack(address[][] memory owners,string[] memory labels)external pure returns(bytes32){return keccak256(abi.encode(owners,labels));}}`;const args={sources:[{path:'Reader.sol',content}],contractName:'Reader',evmVersion:'shanghai'};assert.deepEqual((await compileSolidity({...args,target:'pqvm',nativeAddressContextHeight:2})).abi,(await compileSolidity(args)).abi);
+ const deep=content.replaceAll('address[][]','address[][][]');const native=await compileSolidity({...args,sources:[{path:'Reader.sol',content:deep}],target:'pqvm',nativeAddressContextHeight:2});assert.ok(native.deployedBytecode.length>2);
 });

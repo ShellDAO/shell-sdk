@@ -1366,7 +1366,7 @@ recording, child failure isolation, batch rollback, historical reads and physica
 reopen. It does not validate deployment through CREATE or every malformed
 return pattern.
 
-Typed calls also retain one-dimensional dynamic or fixed-length arrays of these
+Typed calls also retain dynamic or fixed-length arrays of these
 scalar types, including `address[]`, `uint256[]` and `address[2]`, plus dynamic
 `bytes`. Helper parameters/results use memory references while ABI decoding
 keeps the original array and bytes value types. Address array elements remain
@@ -1375,8 +1375,8 @@ and `new bytes(length)` is supported; this does not enable contract CREATE.
 For example, `IERC1155(token).balanceOfBatch(owners, ids)` retains its original
 selector, array offsets/lengths and `uint256[]` result. Batch transfer calls can
 pass IDs, amounts and bytes data through to an actual receiver callback.
-Nested arrays, arrays of dynamic values and struct/tuple ABI fields
-remain outside this typed-call subset.
+Arrays may contain supported arrays, `bytes` or `string` values recursively.
+Struct/tuple ABI fields remain outside this typed-call subset.
 The scoped batch fixture has one manual entry after building:
 
 ```bash
@@ -1402,6 +1402,22 @@ SHELL_NODE_BIN=/path/to/shell-node node --test --test-name-pattern 'native strin
 
 It validates the call and storage path. Metadata JSON retrieval, client-side
 `{id}` substitution and a complete ERC-1155 token are separate concerns.
+
+Nested forms such as `uint256[][]`, `address[][]`, `string[]` and `bytes[]`
+retain their original ABI and relative offsets at each array level. Address
+elements remain full native words throughout nested array arguments/results.
+The focused manual acceptance entry after building is:
+
+```bash
+SHELL_NODE_BIN=/path/to/shell-node node --test --test-name-pattern 'native nested arrays' tests/pqabi.payable.test.mjs
+```
+
+It uses the published Solidity `g(uint256[][],string[])` encoding example,
+actual persisted groups/labels, native address weights and returned bytes arrays.
+It checks malformed nested offsets/results, partial-write and AA rollback,
+historical reads, independent import and database reopen. Other depths and
+array combinations still need runtime qualification. `abi.encode` of supported
+values also retains complete address words, including nested address arrays.
 
 Narrow result lists such
 as `getReserves() returns (uint112, uint112, uint32)` retain their original ABI;

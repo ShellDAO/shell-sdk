@@ -201,12 +201,13 @@ contract Reader {
 
 // Run after npm run build with SHELL_NODE_BIN pointing to a compatible node.
 // Isolated genesis allocation avoids making a native CREATE derivation claim.
-async function runPayableAcceptance(gasOptions = false, contextOptions = false, staticCalls = false, voidCalls = false, tupleCalls = false, narrowCalls = false, signedCalls = false, bytesCalls = false, selectorCalls = false, interfaceIdCalls = false, noThrowCalls = false, batchCalls = false, stringCalls = false) {
+async function runPayableAcceptance(gasOptions = false, contextOptions = false, staticCalls = false, voidCalls = false, tupleCalls = false, narrowCalls = false, signedCalls = false, bytesCalls = false, selectorCalls = false, interfaceIdCalls = false, noThrowCalls = false, batchCalls = false, stringCalls = false, nestedCalls = false) {
   const binary = process.env.SHELL_NODE_BIN;
+  const nestedSource=nestedCalls?await readFile(new URL('./fixtures/NestedCalls.sol',import.meta.url),'utf8'):undefined;
   const stringSource=stringCalls?await readFile(new URL('./fixtures/StringMetadata.sol',import.meta.url),'utf8'):undefined;
   const batchSource=batchCalls?await readFile(new URL('./fixtures/BatchCalls.sol',import.meta.url),'utf8'):undefined;
   const querySource=noThrowCalls?await readFile(new URL('./fixtures/ERC165Query.sol',import.meta.url),'utf8'):undefined;
-  const source=stringSource??batchSource??(noThrowCalls?baseSource
+  const source=nestedSource??stringSource??batchSource??(noThrowCalls?baseSource
     .replace('pragma solidity ^0.8.30;','pragma solidity ^0.8.30; import "./ERC165Query.sol"; interface IQuery {function doesContractImplementInterface(address target,bytes4 id) external view returns(bool);}')
     .replace('contract Reader {','contract Reader is ERC165Query {')
     .replace(' mapping(address=>Entry) entries;',` mapping(address=>Entry) entries;
@@ -216,7 +217,7 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
  function recordDetection(address target,bytes4 id) external returns(bool){count++;address self=address(this);bool ok=IQuery(self).doesContractImplementInterface(target,id);last=target;detections[id]=ok;emit Detected(target,id,ok);return ok;}
  function recordedDetection(bytes4 id) external view returns(bool){return detections[id];}
  function denyDetection(address target) external pure {revert DetectionDenied(target);}`):baseSource);
-  const compilerSources=[{path:stringCalls?'StringMetadata.sol':batchCalls?'BatchCalls.sol':'Payable.sol',content:source},...(querySource?[{path:'ERC165Query.sol',content:querySource}]:[])];
+  const compilerSources=[{path:nestedCalls?'NestedCalls.sol':stringCalls?'StringMetadata.sol':batchCalls?'BatchCalls.sol':'Payable.sol',content:source},...(querySource?[{path:'ERC165Query.sol',content:querySource}]:[])];
   const resumeDirectory = voidCalls || tupleCalls || narrowCalls || signedCalls || bytesCalls ? process.env.SHELL_PQABI_RESUME_DIR : undefined;
   const directory = resumeDirectory ? resolve(resumeDirectory) : await mkdtemp(join(tmpdir(), 'shell-sdk-payable-'));
   const reportSequence=name=>name==='report.json'?0:Number(name.match(/^report-resumed(?:-(\d+))?\.json$/)?.[1]??1);
@@ -282,13 +283,13 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
   }
   assert.notEqual(...ports);
   const freshReport = { directory, binarySha256: createHash('sha256').update(await readFile(binary)).digest('hex'),
-    artifacts, source, ...(noThrowCalls||batchCalls||stringCalls?{compilerSources}:{}), opens: [], transactions: [], adaptations: [
+    artifacts, source, ...(noThrowCalls||batchCalls||stringCalls||nestedCalls?{compilerSources}:{}), opens: [], transactions: [], adaptations: [
       `Source compiler; isolated Dev chain 1337, native context at height ${voidCalls || tupleCalls || narrowCalls || signedCalls || bytesCalls ? 2 : 0}, fee accounting at genesis.`,
       'Fresh ML-DSA keys; full RocksDB producer and independent non-authority observer.',
       'Runtime allocation is not native CREATE or public tutorial deployment acceptance.' ] };
   if(previousReport) {
     assert.equal(previousReport.directory,directory);assert.equal(previousReport.binarySha256,freshReport.binarySha256);
-    if(noThrowCalls||batchCalls||stringCalls) assert.deepEqual(previousReport.compilerSources,compilerSources);
+    if(noThrowCalls||batchCalls||stringCalls||nestedCalls) assert.deepEqual(previousReport.compilerSources,compilerSources);
     assert.equal(previousReport.source,source);assert.deepEqual(previousReport.artifacts,JSON.parse(JSON.stringify(artifacts)));
     assert.ok(previousReport.opens.every(entry=>entry.exitCode===0));
   }
@@ -305,7 +306,7 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
   const save = () => writeFile(join(directory, reportName), JSON.stringify(report, null, 2));
   const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
   const provider = createShellProvider({ rpcHttpUrl: `http://127.0.0.1:${ports[0]}` });
-  const traceOptions=(aa=false)=>({tracer:'callTracer',...(batchCalls||stringCalls?{disableMemory:true,disableStorage:true,...(aa?{disableStack:true}:{})}:{})});
+  const traceOptions=(aa=false)=>({tracer:'callTracer',...(batchCalls||stringCalls||nestedCalls?{disableMemory:true,disableStorage:true,...(aa||nestedCalls?{disableStack:true}:{})}:{})});
   const nodes = [], dirs = [join(directory, 'leader'), join(directory, 'observer')];
   async function rpc(i, method, params = []) {
     await pause(100);
@@ -373,6 +374,14 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
       if(batchCalls && [payee,alias].includes(target)) {
         accounts[target].multi={};for(const id of batchIds){accounts[target].multi[id.toString()]={};for(const who of batchOwners)accounts[target].multi[id.toString()][who]=await rpc(i,'eth_getStorageAt',[target,multiSlot(id,who),tag]);}
       }
+      if(nestedCalls && [reader,payee,alias].includes(target))for(const slot of ['0x2','0x3','0x4','0x5',...([payee,alias].includes(target)?['0x6','0x7']:[])])accounts[target].slots.push(await rpc(i,'eth_getStorageAt',[target,slot,tag]));
+      if(nestedCalls && [payee,alias].includes(target)) {
+        const at=async slot=>rpc(i,'eth_getStorageAt',[target,'0x'+(BigInt(slot)&maxId).toString(16),tag]);
+        const groupsBase=BigInt(keccak256('0x'+word(6))),textsBase=BigInt(keccak256('0x'+word(7)));accounts[target].nested={groups:[],texts:[],weights:{}};
+        for(let n=0;n<2;n++){const head=groupsBase+BigInt(n),base=BigInt(keccak256('0x'+word(head&maxId)));accounts[target].nested.groups.push([await at(head),await at(base),await at(base+1n)]);}
+        for(let n=0;n<3;n++){const head=textsBase+BigInt(n),base=BigInt(keccak256('0x'+word(head&maxId)));accounts[target].nested.texts.push([await at(head),await at(base),await at(base+1n)]);}
+        for(const who of [owner,other,zero,lowAlias(owner)])accounts[target].nested.weights[who]=await at(BigInt(keccak256('0x'+word(who)+word(8))));
+      }
       if(stringCalls && target===reader) for(const slot of ['0x2','0x3'])accounts[target].slots.push(await rpc(i,'eth_getStorageAt',[target,slot,tag]));
       if(stringCalls && [payee,alias].includes(target)) {
         accounts[target].strings={};for(const id of [7n,maxId]){const head=keccak256('0x'+word(id)+word(2));const base=BigInt(keccak256(head));accounts[target].strings[id.toString()]={head:await rpc(i,'eth_getStorageAt',[target,'0x'+BigInt(head).toString(16),tag]),words:[]};for(let n=0;n<4;n++)accounts[target].strings[id.toString()].words.push(await rpc(i,'eth_getStorageAt',[target,'0x'+((base+BigInt(n))&maxId).toString(16),tag]));}
@@ -383,7 +392,7 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
         accounts[target].detections={};
         for(const id of [erc165,'0xdeadbeef']) accounts[target].detections[id]=await rpc(i,'eth_getStorageAt',[reader,'0x'+BigInt(keccak256('0x'+byteWord(id)+word(3))).toString(16),tag]);
       }
-      if(bytesCalls && !batchCalls && !stringCalls && [payee,alias].includes(target)) {
+      if(bytesCalls && !batchCalls && !stringCalls && !nestedCalls && [payee,alias].includes(target)) {
         accounts[target].interfaces={};
         for(const id of [markID,echoID]) accounts[target].interfaces[id]=[await rpc(i,'eth_getStorageAt',[target,interfaceSlot(id),tag]),await rpc(i,'eth_getStorageAt',[target,interfaceSlot(id,true),tag])];
       }
@@ -427,10 +436,11 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
       return entry;
     }
     const before = await state(0);
-    const built = aa ? buildBatchTransaction({ chainId: 1337, nonce, gasLimit: Math.max(1200000, calls.length * 500000 + 100000),
-      innerCalls: calls.map(call => buildInnerCall(reader, call.data, 500000, 0n)) }) : null;
+    const innerGas=nestedCalls?900000:500000;
+    const built = aa ? buildBatchTransaction({ chainId: 1337, nonce, gasLimit: Math.max(1200000, calls.length * innerGas + 100000),
+      innerCalls: calls.map(call => buildInnerCall(reader, call.data, innerGas, 0n)) }) : null;
     const tx = built?.tx ?? buildTransaction({ chainId: 1337, nonce, to: reader,
-      data: calls[0].data, value, gasLimit: 600000 });
+      data: calls[0].data, value, gasLimit: nestedCalls?1600000:600000 });
     const signed = await payer.buildSignedTransaction({ tx, ...(built ? { aaBundle: built.aa_bundle } : {}), includePublicKey: true });
     const hash = await provider.sendTransaction(signed);
     const entry = { label, hash, aa, before }; report.transactions.push(entry); await save();
@@ -466,6 +476,7 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
       [alias, artifacts.Payee.deployedBytecode], [short, bytesCalls ? badBytes : signedCalls ? badSigned : narrowCalls ? rawReserves(1n,2n,max32+1n) : tupleCalls ? '0x60635f5560605ff3' : '0x60635f55601f5ff3'], [badBool, narrowCalls ? rawReserves(max112+1n,2n,3n) : tupleCalls ? '0x60635f557f'+owner.slice(2)+'5f527f'+word(maxId)+'6020526002604052600760605260805ff3' : '0x60635f5560025f5260205ff3'], [large, '0x60635f556110005ff3']]) {
       genesis.alloc[account] = { balance: '0x0', nonce: 1, code, storage: {} };
     }
+    if(nestedCalls)genesis.alloc[plain]={balance:'0x0',nonce:1,code:'0x60405f5260606020527f'+'ff'.repeat(32)+'6040527f'+'ff'.repeat(32)+'60605260805ff3',storage:{}};
     if(stringCalls) genesis.alloc[plain]={balance:'0x0',nonce:1,code:'0x60205f527f'+'ff'.repeat(32)+'60205260405ff3',storage:{}};
     if(batchCalls) {
       genesis.alloc[short].code=artifacts.BatchReceiver.deployedBytecode;
@@ -516,7 +527,7 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
       assert.equal(data,toFunctionSelector('configure(address,address,address,uint256,uint256)')+args.map(word).join(''));
       return {from:payer.getAddress(),to:reader,gas:'0x927c0',data};
     };
-    const assetRequest = (fn,args) => ({from:payer.getAddress(),to:reader,gas:'0x927c0',
+    const assetRequest = (fn,args) => ({from:payer.getAddress(),to:reader,gas:nestedCalls?'0x186a00':'0x927c0',
       data:encodeFunctionData({abi:artifacts.Reader.abi,functionName:fn,args})});
     const boolean = (entry,value) => assert.equal(entry.trace.output,'0x'+word(value?1:0));
     const tupleOutput=(who,size,ok,tag='0x'+word(7))=>who+word(size)+word(ok?1:0)+tag.slice(2);
@@ -531,7 +542,39 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
     const stringTail=value=>{const raw=Buffer.from(value,'utf8').toString('hex');return word(raw.length/2)+raw.padEnd(Math.ceil(raw.length/64)*64,'0');};
     const stringOutput=value=>'0x'+word(32)+stringTail(value);
     const stringStorage=value=>{const raw=Buffer.from(value,'utf8').toString('hex'),size=raw.length/2;return{head:size<32?'0x'+raw.padEnd(62,'0')+(size*2).toString(16).padStart(2,'0'):'0x'+word(size*2+1),words:Array.from({length:4},(_,n)=>'0x'+(size<32?'':raw.slice(n*64,(n+1)*64)).padEnd(64,'0'))};};
-    if(stringCalls) {
+    const dynamicTuple=parts=>{let offset=parts.length*32;const heads=parts.map(part=>{const head=word(offset);offset+=part.length/2;return head;});return heads.join('')+parts.join('');};
+    const dynamicArray=parts=>word(parts.length)+dynamicTuple(parts),numbers=values=>word(values.length)+values.map(word).join('');
+    const matrixNumbers=values=>dynamicArray(values.map(numbers));
+    const binaryTail=hex=>word(hex.length/2)+hex.padEnd(Math.ceil(hex.length/64)*64,'0');
+    const textArray=values=>dynamicArray(values.map(value=>binaryTail(Buffer.from(value,'utf8').toString('hex'))));
+    const byteArray=values=>dynamicArray(values.map(value=>binaryTail(value.slice(2))));
+    const nestedOutput=(groups,texts)=>'0x'+dynamicTuple([matrixNumbers(groups),textArray(texts)]);
+    const groupStorage=groups=>Array.from({length:2},(_,n)=>['0x'+word(groups[n]?.length??0),'0x'+word(groups[n]?.[0]??0),'0x'+word(groups[n]?.[1]??0)]);
+    const labelStorage=texts=>Array.from({length:3},(_,n)=>{const raw=Buffer.from(texts[n]??'','utf8').toString('hex'),size=raw.length/2;return[size<32?'0x'+raw.padEnd(62,'0')+(size*2).toString(16).padStart(2,'0'):'0x'+word(size*2+1),...Array.from({length:2},(_,i)=>'0x'+(size<32?'':raw.slice(i*64,(i+1)*64)).padEnd(64,'0'))];});
+    const finalGroups=[[8n,9n],[]],finalTexts=['','done'],aliasGroups=[[4n],[5n]],aliasTexts=['量子','tail'];
+    const matrixOwners=[[owner,other],[zero]],matrixAmounts=[[7n,11n],[13n]],matrixNotes=['0x0102','0x'+'ab'.repeat(33)];
+    const matrixOutput='0x'+dynamicTuple([matrixNumbers(matrixOwners),byteArray(matrixNotes)]);
+    if(nestedCalls) {
+      const groups=[[1n,2n],[3n]],texts=['one','two','three'];
+      const original='0x2289b18c'+[64n,320n,2n,64n,160n,2n,1n,2n,1n,3n,3n,96n,160n,224n,3n].map(word).join('')+'6f6e65'.padEnd(64,'0')+word(3)+'74776f'.padEnd(64,'0')+word(5)+'7468726565'.padEnd(64,'0');
+      assert.equal(toFunctionSelector('g(uint256[][],string[])')+nestedOutput(groups,texts).slice(2),original);
+      const topic=keccak256('0x'+Buffer.from('Grouped(address,uint256[][],string[])').toString('hex'));
+      const event=(entry,target,g,t)=>{const logs=entry.receipt.logs.filter(log=>log.topics[0]===topic);assert.equal(logs.length,1);assert.equal(logs[0].address,target);assert.deepEqual(logs[0].topics.slice(1),[reader]);assert.equal(logs[0].data,nestedOutput(g,t));assert.equal(entry.trace.output,nestedOutput(g,t));};
+      const run=(target,g,t)=>assetRequest('run',[target,g,t,600000n]);
+      const pre=await send('nested ABI native guard before activation',[run(payee,groups,texts)],0n,false);assert.equal(BigInt(pre.receipt.blockNumber),1n);assert.equal((pre.trace.calls??[]).length,0);
+      first=await send('nested original Solidity ABI example at boundary',[run(payee,groups,texts)],0n,true);assert.equal(BigInt(first.receipt.blockNumber),2n);assert.equal(first.trace.calls[0].input,original);assert.equal(first.trace.calls[0].type,'CALL');assert.ok(BigInt(first.trace.calls[0].gas)>0n && BigInt(first.trace.calls[0].gas)<=600000n);assert.ok(first.trace.calls[0].gasUsed<=first.trace.calls[0].gas);event(first,payee,groups,texts);assert.deepEqual(decodeFunctionResult({abi:artifacts.Reader.abi,functionName:'run',data:first.trace.output}),[groups,texts]);
+      assert.deepEqual(first.after[payee].nested.groups,groupStorage(groups));assert.deepEqual(first.after[payee].nested.texts,labelStorage(texts));assert.equal(first.after[payee].slots[3],'0x'+word(6));assert.equal(first.after[payee].slots[2],keccak256(nestedOutput(groups,texts)));
+      const otherGroups=[[],[maxId]],otherTexts=['量子🌐','','z'.repeat(33)];const alternate=await send('nested same-low20 target, empty row, max uint and UTF8 strings',[run(alias,otherGroups,otherTexts)],0n,true);event(alternate,alias,otherGroups,otherTexts);assert.equal(BigInt(alternate.trace.calls[0].gas),600000n);assert.deepEqual(alternate.before[payee],alternate.after[payee]);assert.deepEqual(alternate.after[alias].nested.groups,groupStorage(otherGroups));assert.deepEqual(alternate.after[alias].nested.texts,labelStorage(otherTexts));assert.equal(alternate.after[alias].slots[3],'0x'+word(maxId));
+      const matrix=await send('nested full32 address matrix and dynamic bytes elements',[assetRequest('matrix',[payee,matrixOwners,matrixAmounts,matrixNotes])],0n,true);assert.equal(matrix.trace.calls[0].input,toFunctionSelector('matrix(address[][],uint256[][],bytes[])')+dynamicTuple([matrixNumbers(matrixOwners),matrixNumbers(matrixAmounts),byteArray(matrixNotes)]));assert.equal(matrix.trace.output,matrixOutput);assert.equal(matrix.after[reader].slots[4],keccak256(matrixOutput));assert.equal(matrix.after[payee].slots[4],keccak256(matrixOutput));
+      const matrixTopic=keccak256('0x'+Buffer.from('Matrix(address,address[][],bytes[])').toString('hex'));const log=matrix.receipt.logs.find(log=>log.topics[0]===matrixTopic);assert.equal(log.address,payee);assert.deepEqual(log.topics.slice(1),[reader]);assert.equal(log.data,matrixOutput);
+      await send('nested matrix later row refusal restores first weights',[assetRequest('matrix',[payee,matrixOwners,[[2n,3n],[]],matrixNotes])],0n,false);
+      const malformed=await send('nested oversized dynamic result rejects and restores metadata',[run(plain,groups,texts)],0n,false);assert.equal(malformed.trace.calls[0].output,'0x'+word(64)+word(96)+word(maxId)+word(maxId));
+      const bad=run(payee,groups,texts);bad.data=bad.data.slice(0,330)+word(maxId)+bad.data.slice(394);const rejected=await send('nested inner row offset rejects before child',[bad],0n,false);assert.equal((rejected.trace.calls??[]).length,0);
+      const empty=await send('nested empty root arrays clear persistent data',[run(payee,[],[])],0n,true);event(empty,payee,[],[]);assert.deepEqual(empty.after[payee].nested.groups,groupStorage([]));assert.deepEqual(empty.after[payee].nested.texts,labelStorage([]));
+      const failed=await send('nested AA later rejection restores earlier arrays and events',[run(payee,[[5n],[6n]],['left','right']),run(alias,[[99n]],['refuse'])],0n,false,true);assert.equal(failed.receipt.logs.filter(log=>log.topics[0]===topic).length,0);
+      const accepted=await send('nested AA both targets persist returned arrays',[run(payee,finalGroups,finalTexts),run(alias,aliasGroups,aliasTexts)],0n,true,true);assert.equal(accepted.receipt.logs.filter(log=>log.topics[0]===topic).length,2);
+      report.nestedCalls={passed:true,activationHeight:2,originalExampleCalldata:original,shapes:['uint256[][]','string[]','address[][]','bytes[]'],not_claimed:'All nesting depths, struct/tuple ABI or CREATE deployment'};
+    } else if(stringCalls) {
       const topic=keccak256('0x'+Buffer.from('URI(string,uint256)').toString('hex'));
       const event=(entry,target,id,value)=>{const logs=entry.receipt.logs.filter(log=>log.topics[0]===topic);assert.equal(logs.length,1);assert.equal(logs[0].address,target);assert.deepEqual(logs[0].topics.slice(1),['0x'+word(id)]);assert.equal(logs[0].data,stringOutput(value));};
       const update=(target,id,value)=>assetRequest('update',[target,id,value,250000n]);
@@ -926,7 +969,13 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
           assert.equal(await rpc(i,'eth_call',[assetRequest('payMetadata',[payee]),'latest']),bytesOutput(tagC,'0x01'));
           report.selectorCalls={passed:true,originalSelectors:expected,originalEipPragmaAdaptation:'^0.4.20 to ^0.8.30',effectfulReceivers:'unqualified'};
         }
-        if(stringCalls) {
+        if(nestedCalls) {
+          assert.deepEqual(before[reader].slots,['0x'+word(6),alias,keccak256(nestedOutput(aliasGroups,aliasTexts)),'0x'+word(9),keccak256(matrixOutput),'0x'+word(2)]);
+          for(const[target,count,g,t,total]of [[payee,3,finalGroups,finalTexts,17],[alias,2,aliasGroups,aliasTexts,9]]) {
+            assert.deepEqual(before[target].slots,['0x'+word(count),reader,keccak256(nestedOutput(g,t)),'0x'+word(total),target===payee?keccak256(matrixOutput):'0x'+word(0),'0x'+word(2),'0x'+word(2),'0x'+word(2)]);assert.deepEqual(before[target].nested.groups,groupStorage(g));assert.deepEqual(before[target].nested.texts,labelStorage(t));
+            for(const[who,value]of [[owner,7],[other,11],[zero,13],[lowAlias(owner),0]])assert.equal(before[target].nested.weights[who],'0x'+word(target===payee?value:0));
+          }
+        } else if(stringCalls) {
           assert.deepEqual(before[reader].slots,['0x'+word(10),payee,keccak256('0x'+Buffer.from(uri32).toString('hex')),'0x'+word(32)]);
           assert.equal(before[payee].slots[0],'0x'+word(6));assert.equal(before[payee].slots[1],reader);assert.equal(before[alias].slots[0],'0x'+word(2));assert.equal(before[alias].slots[1],reader);
           assert.deepEqual(before[payee].strings['7'],stringStorage(uri31));assert.deepEqual(before[alias].strings['7'],stringStorage(uri33));
@@ -996,7 +1045,9 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
         }
         for (const entry of report.transactions) assert.deepEqual(await rpc(i, 'eth_getTransactionReceipt', [entry.hash]), entry.receipt);
         assert.deepEqual(await state(i, first.receipt.blockNumber), first.after);
-        if(stringCalls) {
+        if(nestedCalls) {
+          assert.equal(await rpc(i,'eth_call',[assetRequest('read',[payee]),first.receipt.blockNumber]),nestedOutput([[1n,2n],[3n]],['one','two','three']));assert.equal(await rpc(i,'eth_call',[assetRequest('read',[payee]),'latest']),nestedOutput(finalGroups,finalTexts));assert.equal(await rpc(i,'eth_call',[assetRequest('read',[alias]),first.receipt.blockNumber]),nestedOutput([],[]));assert.equal(await rpc(i,'eth_call',[assetRequest('read',[alias]),'latest']),nestedOutput(aliasGroups,aliasTexts));
+        } else if(stringCalls) {
           const query=assetRequest('read',[payee,7n]);assert.equal(await rpc(i,'eth_call',[query,first.receipt.blockNumber]),stringOutput(uri32));assert.equal(await rpc(i,'eth_call',[query,'latest']),stringOutput(uri31));
           assert.equal(await rpc(i,'eth_call',[assetRequest('read',[alias,7n]),first.receipt.blockNumber]),stringOutput(''));assert.equal(await rpc(i,'eth_call',[assetRequest('read',[alias,7n]),'latest']),stringOutput(uri33));
         } else if(batchCalls) {
@@ -1091,3 +1142,7 @@ test('native batch arrays: balance changes, receiver bytes, rollback, history an
 
 test('native string metadata: URI bytes, storage boundaries, rollback, history and reopen',
   {skip:!process.env.SHELL_NODE_BIN,timeout:900000},()=>runPayableAcceptance(false,false,false,false,false,false,false,true,false,false,false,false,true));
+
+
+test('native nested arrays: original ABI example, persistent groups, rollback, history and reopen',
+  {skip:!process.env.SHELL_NODE_BIN,timeout:900000},()=>runPayableAcceptance(false,false,false,false,false,false,false,true,false,false,false,false,false,true));

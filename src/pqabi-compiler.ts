@@ -289,7 +289,7 @@ function staticAbiScalar(type: AstNode): boolean {
 
 function supportedAbiValue(type: AstNode): boolean {
   return staticAbiScalar(type) || type?.name === "bytes" || type?.name === "string"
-    || (type?.nodeType === "ArrayTypeName" && staticAbiScalar(type.baseType as AstNode));
+    || (type?.nodeType === "ArrayTypeName" && supportedAbiValue(type.baseType as AstNode));
 }
 
 function abiReference(type: AstNode): boolean {
@@ -507,7 +507,7 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
                 && (argument.subExpression as AstNode).kind === "number")
               && !integerLimit(argument) && !blockTimestamp(argument) && !structMember(argument) && !builtin(argument) && !staticBytes4(argument))
             || (node.names as unknown[])?.length || node.tryCall) {
-            throw new Error("PQABI typed calls currently require an interface cast of an address variable or typed struct field, static address, integer, fixed bytes or bool, one-dimensional scalar arrays, bytes or string arguments and results");
+            throw new Error("PQABI typed calls currently require an interface cast of an address variable or typed struct field, static address, integer, fixed bytes or bool, bytes, string or arrays of these arguments and results");
           }
           if (nativeHeight === undefined) throw new Error("PQABI typed call requires nativeAddressContextHeight matching an activated node profile");
           const selector = definition.functionSelector;
@@ -615,13 +615,17 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
     });
     visit(original.sources[path].ast, (node) => {
       if (node.id !== undefined && handled.has(node.id)) return;
+      const abiEncode = node.nodeType === "MemberAccess" && node.memberName === "encode"
+        && (node.expression as AstNode)?.nodeType === "Identifier"
+        && (node.expression as AstNode).name === "abi"
+        && (node.expression as AstNode).typeDescriptions?.typeString === "abi";
       if (node.nodeType === "InlineAssembly"
         || node.nodeType === "FunctionTypeName"
         || (node.nodeType === "NewExpression" && (!abiReference(node.typeName as AstNode) || !supportedAbiValue(node.typeName as AstNode)))
         || (node.nodeType === "ElementaryTypeName" && node.name === "address"
           && node.stateMutability === "payable")
         || (node.nodeType === "Identifier" && ["this", "super"].includes(node.name ?? ""))
-        || (node.nodeType === "MemberAccess" && !integerLimit(node) && !blockTimestamp(node) && !structMember(node)
+        || (node.nodeType === "MemberAccess" && !abiEncode && !integerLimit(node) && !blockTimestamp(node) && !structMember(node)
           && !["length", "push", "pop"].includes(node.memberName ?? ""))) {
         throw new Error(`PQABI target does not yet support ${node.nodeType}${node.memberName ? ` .${node.memberName}` : ""} in ${path}; native context/calls require further compiler support`);
       }
