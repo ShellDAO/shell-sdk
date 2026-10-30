@@ -1314,6 +1314,11 @@ argument can be an identifier, literal, typed struct field, or integer `type(T).
 expression, such as `IOwner(target).ownerOf(type(uint256).max)` or
 `IBalance(entries[id].token).balanceOf(entries[id].beneficiary)`. Struct field
 arguments are evaluated once and retain the complete native address or integer word.
+Native context reads also retain their complete address inside these expressions,
+for example `IPay(entries[msg.sender].target).pay(entries[msg.sender].owner)`.
+The same applies to nested `tx.origin`, `block.coinbase` and `address(this)` in
+receivers, arguments and supported value/gas option fields, using the same
+explicit activation profile.
 View and pure declarations use STATICCALL;
 pure callers of pure interfaces retain their original public ABI. The backend
 uses view annotations for these calls after checking the original source's
@@ -1328,7 +1333,8 @@ and both orders of `{gas: budget, value: amount}` for payable functions. View
 and pure interfaces retain STATICCALL; other interfaces use CALL, with the
 specified gas operand and the node’s existing forwarding rules. This support is
 in unreleased source builds. After building the SDK, verify real signed ordinary and AA calls,
-independent block import, historical reads and RocksDB reopen with a compatible
+independent block import, nested caller-indexed mappings, historical reads and
+RocksDB reopen with a compatible
 node (verified with v0.27.13):
 
 ```bash

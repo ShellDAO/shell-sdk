@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { createServer } from 'node:net';
 import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes, createHash } from 'node:crypto';
-import { toFunctionSelector } from 'viem';
+import { toFunctionSelector, keccak256 } from 'viem';
 import { compileSolidity } from '../dist/contracts-compiler.js';
 import { encodeFunctionData, decodeFunctionResult } from '../dist/contracts.js';
 import { ShellSigner, MlDsa65Adapter, decryptKeystore, buildTransaction, createShellProvider,
@@ -28,6 +28,29 @@ contract Payee {
 contract Reader {
  uint256 public count;
  address public last;
+ struct Entry {address target;address owner;uint256 amount;uint256 budget;}
+ mapping(address=>Entry) entries;
+ function configure(address key,address target,address owner,uint256 amount,uint256 budget) external {
+  entries[key]=Entry(target,owner,amount,budget);
+ }
+ function contextual() external payable returns(address) {
+  count++; last=IPay(entries[msg.sender].target).pay(entries[msg.sender].owner); return last;
+ }
+ function contextOptions() external payable returns(address) {
+  count++; last=IPay(entries[msg.sender].target).pay{value:entries[msg.sender].amount,gas:entries[msg.sender].budget}(entries[msg.sender].owner); return last;
+ }
+ function originContext() external returns(address) {
+  count++; last=IPay(entries[tx.origin].target).pay{gas:entries[tx.origin].budget,value:entries[tx.origin].amount}(entries[tx.origin].owner); return last;
+ }
+ function coinbaseContext() external returns(address) {
+  count++; last=IPay(entries[block.coinbase].target).pay{value:entries[block.coinbase].amount,gas:entries[block.coinbase].budget}(entries[block.coinbase].owner); return last;
+ }
+ function selfContext() external returns(address) {
+  count++; last=IPay(entries[address(this)].target).pay{value:entries[address(this)].amount,gas:entries[address(this)].budget}(entries[address(this)].owner); return last;
+ }
+ function lowContext(address target,bytes memory data) external returns(bool,bytes memory) {
+  (bool success,bytes memory output)=target.call{value:entries[msg.sender].amount,gas:entries[msg.sender].budget}(data); count++; return(success,output);
+ }
  function invoke(address target,address owner,uint256 amount) external payable returns(address) {
   count++; last=IPay(target).pay{value:amount}(owner); return last;
  }
@@ -59,20 +82,20 @@ contract Reader {
 
 // Run after npm run build with SHELL_NODE_BIN pointing to a compatible node.
 // Isolated genesis allocation avoids making a native CREATE derivation claim.
-async function runPayableAcceptance(gasOptions = false) {
+async function runPayableAcceptance(gasOptions = false, contextOptions = false) {
   const binary = process.env.SHELL_NODE_BIN;
   const directory = await mkdtemp(join(tmpdir(), 'shell-sdk-payable-'));
   const password = randomBytes(24).toString('hex');
   const passwordFile = join(directory, 'password.txt');
   const keyFile = join(directory, 'validator.json');
   await writeFile(passwordFile, password, { mode: 0o600 });
-  for (const file of [keyFile, join(directory, 'observer.json')]) {
+  for (const file of [keyFile, join(directory, 'observer.json'), join(directory, 'payer.json')]) {
     const key = spawnSync(binary, ['--password-file', passwordFile, 'key', 'generate',
       '--algorithm', 'mldsa65', '--output', file], { encoding: 'utf8' });
     assert.equal(key.status, 0, key.stderr);
   }
   const miner = await decryptKeystore(JSON.parse(await readFile(keyFile, 'utf8')), password);
-  const payer = new ShellSigner('MlDsa65', MlDsa65Adapter.generate());
+  const payer = await decryptKeystore(JSON.parse(await readFile(join(directory, 'payer.json'), 'utf8')), password);
   const word = value => BigInt(value).toString(16).padStart(64, '0');
   const address = byte => '0x' + byte.repeat(32);
   const reader = address('11'), payee = address('22');
@@ -80,6 +103,9 @@ async function runPayableAcceptance(gasOptions = false) {
   const short = address('44'), missing = address('55');
   const owner = address('aa'), other = '0x' + 'bb'.repeat(12) + 'aa'.repeat(20);
   const zero = '0x' + word(0);
+  const lowAlias = account => '0x' + '00'.repeat(12) + account.slice(-40);
+  const callerAlias = lowAlias(payer.getAddress());
+  const entrySlots = key => Array.from({length:4},(_,index)=>'0x'+((BigInt(keccak256('0x'+key.slice(2)+word(2)))+BigInt(index))&((1n<<256n)-1n)).toString(16));
   const artifacts = {};
   for (const contractName of ['Reader', 'Payee']) {
     const options = { sources: [{ path: 'Payable.sol', content: source }], contractName, evmVersion: 'shanghai' };
@@ -167,13 +193,20 @@ async function runPayableAcceptance(gasOptions = false) {
       accounts[target] = { balance: await rpc(i, 'eth_getBalance', [target, tag]),
         nonce: await rpc(i, 'eth_getTransactionCount', [target, tag]), slots: [] };
       for (const slot of ['0x0', '0x1']) accounts[target].slots.push(await rpc(i, 'eth_getStorageAt', [target, slot, tag]));
+      if (contextOptions && target===reader) {
+        accounts[target].entryWords={};
+        for(const key of [payer.getAddress(),callerAlias]) {
+          accounts[target].entryWords[key]=[];
+          for(const slot of entrySlots(key)) accounts[target].entryWords[key].push(await rpc(i,'eth_getStorageAt',[reader,slot,tag]));
+        }
+      }
     }
     return accounts;
   };
   let nonce = 0;
   async function send(label, calls, value, success, aa = false) {
     const before = await state(0);
-    const built = aa ? buildBatchTransaction({ chainId: 1337, nonce, gasLimit: 1200000,
+    const built = aa ? buildBatchTransaction({ chainId: 1337, nonce, gasLimit: Math.max(1200000, calls.length * 500000 + 100000),
       innerCalls: calls.map(call => buildInnerCall(reader, call.data, 500000, 0n)) }) : null;
     const tx = built?.tx ?? buildTransaction({ chainId: 1337, nonce, to: reader,
       data: calls[0].data, value, gasLimit: 600000 });
@@ -224,7 +257,46 @@ async function runPayableAcceptance(gasOptions = false) {
       const step = entry.trace.structLogs.find(step => step.depth === 1 && step.op === opcode);
       assert.ok(step, `missing ${opcode}`); assert.equal(BigInt(step.stack.at(-1)), budget);
     };
-    if (gasOptions) {
+    const contextRequest = fn => ({from:payer.getAddress(),to:reader,gas:'0x927c0',
+      data:toFunctionSelector(`${fn}()`)});
+    const configureRequest = (key,target,beneficiary,amount,budget) => {
+      const args=[key,target,beneficiary,amount,budget];
+      const data=encodeFunctionData({abi:artifacts.Reader.abi,functionName:'configure',args});
+      assert.equal(data,toFunctionSelector('configure(address,address,address,uint256,uint256)')+args.map(word).join(''));
+      return {from:payer.getAddress(),to:reader,gas:'0x927c0',data};
+    };
+    if (contextOptions) {
+      const keys=[payer.getAddress(),miner.getAddress(),reader];
+      const allKeys=keys.flatMap(key=>[key,lowAlias(key)]);
+      assert.equal(new Set(allKeys).size,6);
+      await send('configure full32 caller/coinbase/self and alias entries',keys.flatMap(key=>[
+        configureRequest(key,payee,owner,1n,100000n),configureRequest(lowAlias(key),alias,other,2n,0n)]),0n,true,true);
+      for(const key of allKeys) {
+        const expected=keys.includes(key)?[payee,owner,1n,100000n]:[alias,other,2n,0n];
+        for(const[index,slot]of entrySlots(key).entries()) assert.equal(await rpc(0,'eth_getStorageAt',[reader,slot,'latest']),'0x'+word(expected[index]));
+      }
+      first=await send('nested caller receiver and argument', [contextRequest('contextual')],9n,true);
+      assert.equal(first.trace.output,owner);assert.equal(first.trace.calls[0].to.toLowerCase(),payee);
+      assert.equal(first.after[alias].slots[0],'0x'+word(0));
+      for(const fn of ['contextOptions','originContext','coinbaseContext','selfContext']) {
+        const entry=await send('nested context target/owner/value/gas '+fn,[contextRequest(fn)],0n,true);
+        assert.equal(entry.trace.output,owner);assert.equal(entry.trace.calls[0].to.toLowerCase(),payee);
+        assert.equal(BigInt(entry.trace.calls[0].value),1n);gasWord(entry,'CALL',100000n);
+      }
+      const low=await send('low-level nested caller value and gas',[{from:payer.getAddress(),to:reader,gas:'0x927c0',
+        data:encodeFunctionData({abi:artifacts.Reader.abi,functionName:'lowContext',args:[payee,toFunctionSelector('pay(address)')+owner.slice(2)]})}],0n,true);
+      assert.deepEqual(decodeFunctionResult({abi:artifacts.Reader.abi,functionName:'lowContext',data:low.trace.output}),[true,owner]);
+      gasWord(low,'CALL',100000n);
+      await send('AA failure restores mapping policy and earlier callee value',[
+        configureRequest(payer.getAddress(),alias,other,2n,100000n),contextRequest('contextOptions'),request(payee,owner,0n,'invokeGas',0n)],0n,false,true);
+      await send('AA nested full32 caller context succeeds',[contextRequest('contextOptions')],0n,true,true);
+      await send('change caller mapping after original historical block',[configureRequest(payer.getAddress(),payee,other,2n,90000n)],0n,true);
+      const changed=await send('updated context uses changed owner value and gas',[contextRequest('contextOptions')],0n,true);
+      assert.equal(changed.trace.output,other);gasWord(changed,'CALL',90000n);
+      assert.equal(BigInt(changed.trace.calls[0].value),2n);
+      report.nestedContext={passed:true,keys,aliases:keys.map(lowAlias),mappingSlot:2,
+        nativeContextReads:['caller','origin','coinbase','address'],mappingRollback:true};
+    } else if (gasOptions) {
       first = await send('typed explicit gas/value', [request(payee, owner, 7n, 'invokeGas')], 9n, true);
       gasWord(first, 'CALL', 100000n);
       assert.equal(first.trace.calls[0].to.toLowerCase(), payee);
@@ -287,12 +359,17 @@ async function runPayableAcceptance(gasOptions = false) {
     const verify = async () => {
       for (const i of [0, 1]) {
         const before = await state(i), head = await rpc(i, 'eth_getBlockByNumber', ['latest', false]);
-        assert.equal(before[payee].balance, gasOptions ? '0x9' : '0x8'); assert.equal(before[alias].balance, '0x4');
-        assert.equal(before[reader].balance, gasOptions ? '0x1' : '0x2'); assert.equal(before[reader].slots[0], '0x' + word(gasOptions ? 8 : 4));
-        assert.equal(before[payee].slots[0], '0x' + word(gasOptions ? 5 : 3)); assert.equal(before[alias].slots[0], '0x' + word(1));
+        assert.equal(before[payee].balance, contextOptions ? '0x8' : gasOptions ? '0x9' : '0x8'); assert.equal(before[alias].balance, contextOptions ? '0x0' : '0x4');
+        assert.equal(before[reader].balance, contextOptions || gasOptions ? '0x1' : '0x2'); assert.equal(before[reader].slots[0], '0x' + word(contextOptions || gasOptions ? 8 : 4));
+        assert.equal(before[payee].slots[0], '0x' + word(contextOptions ? 8 : gasOptions ? 5 : 3)); assert.equal(before[alias].slots[0], '0x' + word(contextOptions ? 0 : 1));
         for (const entry of report.transactions) assert.deepEqual(await rpc(i, 'eth_getTransactionReceipt', [entry.hash]), entry.receipt);
         assert.deepEqual(await state(i, first.receipt.blockNumber), first.after);
-        assert.equal(await rpc(i, 'eth_call', [request(payee, other, 1n), first.receipt.blockNumber]), other);
+        if(contextOptions) {
+          assert.equal(await rpc(i,'eth_call',[contextRequest('contextual'),first.receipt.blockNumber]),owner);
+          assert.equal(await rpc(i,'eth_call',[contextRequest('contextOptions'),first.receipt.blockNumber]),owner);
+          assert.equal(await rpc(i,'eth_call',[contextRequest('contextual'),'latest']),other);
+          assert.deepEqual(before[reader].entryWords[payer.getAddress()],['0x'+word(payee),other,'0x'+word(2),'0x'+word(90000)]);
+        } else assert.equal(await rpc(i, 'eth_call', [request(payee, other, 1n), first.receipt.blockNumber]), other);
         assert.deepEqual(await rpc(i, 'debug_traceTransaction', [first.hash, { tracer: 'callTracer' }]), first.trace);
         assert.deepEqual(await state(i), before);
         assert.equal((await rpc(i, 'eth_getBlockByNumber', ['latest', false])).stateRoot, head.stateRoot);
@@ -312,3 +389,5 @@ test('typed payable calls: signed value, rollback, import, history and disk reop
   {skip:!process.env.SHELL_NODE_BIN,timeout:360000},()=>runPayableAcceptance());
 test('native gas options: exact operands, limits, rollback, import, history and disk reopen',
   {skip:!process.env.SHELL_NODE_BIN,timeout:360000},()=>runPayableAcceptance(true));
+test('nested native context: full32 mapping entries, AA rollback, history and disk reopen',
+  {skip:!process.env.SHELL_NODE_BIN,timeout:600000},()=>runPayableAcceptance(false,true));

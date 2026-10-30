@@ -348,19 +348,47 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
   let hasPureTypedCall = false;
   const longerNames = new Map<string, { start: number; length: number; alias: string }[]>();
   for (const [path, source] of Object.entries(overloads.sources)) {
-    const read = (node: AstNode) => {
+    const helpers = new Map<string, string>();
+    const helperName = (operation: string, node: AstNode) => {
+      const fileId = node.src!.split(":")[2];
+      const letter = ({caller: "c", origin: "o", coinbase: "b", address: "a", balance: "l", codehash: "h", code: "x"} as Record<string, string>)[operation];
+      const name = `_${["balance", "codehash", "code"].includes(operation) ? "" : "p"}${letter}${fileId}`;
+      helpers.set(operation, name);
+      return name;
+    };
+    const read = (node: AstNode): string => {
       const [start, length] = node.src!.split(":").map(Number);
+      const contexts: { start: number; length: number; text: string }[] = [];
+      visit(node, (child) => {
+        if (!builtin(child)) return;
+        const [offset, size] = child.src!.split(":").map(Number);
+        if (contexts.some((edit) => offset >= edit.start && offset + size <= edit.start + edit.length)) return;
+        contexts.push({start: offset, length: size, text: renderContext(child)});
+      });
+      const edits = [
+        ...overloads.longerNames.get(path)!.filter((edit) => edit.start >= start && edit.start + edit.length <= start + length
+          && !contexts.some((context) => edit.start >= context.start && edit.start + edit.length <= context.start + context.length))
+          .map((edit) => ({...edit, text: edit.alias})),
+        ...contexts,
+      ];
       let content = Buffer.from(source.content).subarray(start, start + length);
-      for (const edit of [...overloads.longerNames.get(path)!].sort((a, b) => b.start - a.start)) {
-        if (edit.start < start || edit.start + edit.length > start + length) continue;
+      for (const edit of edits.sort((a, b) => b.start - a.start)) {
         const offset = edit.start - start;
-        content = Buffer.concat([content.subarray(0, offset), Buffer.from(edit.alias), content.subarray(offset + edit.length)]);
+        content = Buffer.concat([content.subarray(0, offset), Buffer.from(edit.text), content.subarray(offset + edit.length)]);
       }
       return content.toString("utf8");
     };
+    function renderContext(node: AstNode): string {
+      if (nativeHeight === undefined) {
+        throw new Error("PQABI target does not yet support native context without nativeAddressContextHeight matching an activated node profile");
+      }
+      const opcode = builtin(node)!;
+      const name = helperName(opcode, node);
+      const receiver = ["balance", "codehash", "code"].includes(opcode) ? read(node.expression as AstNode) : "";
+      return `${name}(${receiver})`;
+    }
     const replacements: { start: number; length: number; text: string }[] = [];
     const handled = new Set<number>();
-    const helpers = new Map<string, string>();
     const typedDeclarations = new Map<string, string>();
     visit(original.sources[path].ast, (node) => {
       if (node.id !== undefined && handled.has(node.id)) return;
@@ -457,25 +485,9 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
       }
       const opcode = builtin(node);
       if (!opcode) return;
-      if (nativeHeight === undefined) {
-        throw new Error("PQABI target does not yet support native context without nativeAddressContextHeight matching an activated node profile");
-      }
-      const fileId = node.src!.split(":")[2];
-      const helperName = (operation: string) => {
-        const letter = ({caller: "c", origin: "o", coinbase: "b", address: "a", balance: "l", codehash: "h", code: "x"} as Record<string, string>)[operation];
-        const name = `_${["balance", "codehash", "code"].includes(operation) ? "" : "p"}${letter}${fileId}`;
-        helpers.set(operation, name);
-        return name;
-      };
-      const member = ["balance", "codehash", "code"].includes(opcode);
-      const name = helperName(opcode);
       visit(node, (child) => { if (child.id !== undefined) handled.add(child.id); });
       const [start, length] = node.src!.split(":").map(Number);
-      const expression = node.expression as AstNode;
-      const receiverOpcode = member ? builtin(expression) : undefined;
-      const receiver = receiverOpcode ? `${helperName(receiverOpcode)}()`
-        : member ? read(expression) : "";
-      const text = `${name}(${receiver})`;
+      const text = renderContext(node);
       if (Buffer.byteLength(text) > length) throw new Error("unsupported PQABI native context source range");
       replacements.push({ start, length, text: text + " ".repeat(length - Buffer.byteLength(text)) });
     });

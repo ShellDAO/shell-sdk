@@ -242,6 +242,34 @@ test('native gas options preserve CALL STATICCALL DELEGATECALL ABI and reject co
 });
 
 
+test('nested native context survives typed struct receivers, arguments and call options', async () => {
+ const source=`pragma solidity ^0.8.30;
+ interface I {function pay(address owner) external payable returns(address);}
+ contract Reader {
+  struct Entry {address target;address owner;uint256 amount;uint256 budget;}
+  mapping(address=>Entry) entries;
+  function pick(address owner) internal pure returns(address){return owner;}
+  function pick(uint256 owner) internal pure returns(uint256){return owner;}
+  /* full-width caller 💧 */
+  function invoke(address target,bytes memory data) external payable returns(address) {
+   (bool success,bytes memory output)=target.call{gas:entries[msg.sender].budget,value:entries[tx.origin].amount}(data);
+   require(success);
+   return I(entries[pick(msg.sender)].target).pay{value:entries[tx.origin].amount,gas:entries[address(this)].budget}(entries[block.coinbase].owner);
+  }
+ }`;
+ const args={sources:[{path:'Reader.sol',content:source}],contractName:'Reader',evmVersion:'shanghai'};
+ const original=await compileSolidity(args);
+ const native=await compileSolidity({...args,target:'pqvm',nativeAddressContextHeight:2});
+ assert.deepEqual(native.abi,original.abi);
+ await assert.rejects(compileSolidity({...args,target:'pqvm'}),/nativeAddressContextHeight/);
+ for(const context of ['msg.sender','tx.origin','block.coinbase','address(this)']) {
+  const content=source.replaceAll('pick(msg.sender)',context).replaceAll('entries[msg.sender]',`entries[${context}]`);
+  await compileSolidity({...args,sources:[{path:'Reader.sol',content}],target:'pqvm',nativeAddressContextHeight:2});
+ }
+ await assert.rejects(compileSolidity({...args,sources:[{path:'Reader.sol',content:source.replace('I(entries[pick(msg.sender)].target)','I(entries[pick(true)].target)')}],target:'pqvm',nativeAddressContextHeight:2}),/compile failed|compilation failed/i);
+});
+
+
 test('typed uint256 input and address result retain the original interface ABI', async () => {
  const source='pragma solidity ^0.8.20; interface I {function ownerOf(uint256 tokenId) external view returns(address);} contract Reader {function lookup(address target,uint256 tokenId) external view returns(address){return I(target).ownerOf(tokenId);} function last(address target) external view returns(address){return I(target).ownerOf(0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);}}';
  const args={sources:[{path:'Reader.sol',content:source}],contractName:'Reader',evmVersion:'shanghai'};
@@ -565,6 +593,24 @@ test('PQABI longer overload references survive whole native-call rewrites', asyn
   assert.deepEqual((await compileSolidity({...options,target:'pqvm',nativeAddressContextHeight:2})).abi,
     (await compileSolidity(options)).abi);
 });
+
+test('nested context rendering composes with longer overload names and nested balance reads', async () => {
+ const content=`pragma solidity ^0.8.35;
+ interface IPayee {function pay(address owner) external returns(address);}
+ contract Derived {${occupiedNames}
+  struct Entry {address target;address owner;}
+  mapping(address=>Entry) entries;
+  mapping(uint256=>Entry) numeric;
+  function f(address owner) internal pure returns(address){return owner;}
+  function f(uint256 owner) internal pure returns(uint256){return owner+1;}
+  function invoke() external returns(address){return IPayee(entries[f(msg.sender)].target).pay(entries[f(tx.origin)].owner);}
+  function balanceRead() external returns(address){return IPayee(numeric[msg.sender.balance].target).pay(numeric[msg.sender.balance].owner);}
+ }`;
+ const args={sources:[{path:'Derived.sol',content}],contractName:'Derived',evmVersion:'shanghai'};
+ const original=await compileSolidity(args);
+ assert.deepEqual((await compileSolidity({...args,target:'pqvm',nativeAddressContextHeight:2})).abi,original.abi);
+});
+
 
 test('PQABI overloads do not repair invalid original type resolution', async () => {
   const content='pragma solidity ^0.8.35; contract Invalid {function f(uint8 value) public pure returns(uint256){return value;} function f(uint256 value) public pure returns(uint256){return value;} function bad() public pure returns(uint256){return f(50);}}';
