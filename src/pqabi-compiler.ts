@@ -584,7 +584,7 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
 
         if (member?.nodeType === "MemberAccess" && ["call", "staticcall", "delegatecall"].includes(member.memberName ?? "")
           && ["address", "address payable"].includes(target?.typeDescriptions?.typeString ?? "")
-          && (target.nodeType === "Identifier" || internalAddressReceiver(target)
+          && (target.nodeType === "Identifier" || internalAddressReceiver(target) || payableCast(target) || structMember(target)
             || ["caller", "origin", "coinbase", "address"].includes(builtin(target) ?? ""))) {
           if (nativeHeight === undefined) throw new Error("PQABI native call requires nativeAddressContextHeight matching an activated node profile");
           const arguments_ = node.arguments as AstNode[];
@@ -592,13 +592,15 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
           const names = call.nodeType === "FunctionCallOptions" ? call.names as string[] : [];
           const value = options[names.indexOf("value")];
           const callGas = options[names.indexOf("gas")];
-          if (arguments_.length !== 1 || arguments_[0].nodeType !== "Identifier"
-            || !arguments_[0].typeDescriptions?.typeString?.startsWith("bytes ")
+          const data = arguments_[0];
+          const bytesVariable = data?.nodeType === "Identifier" && data.typeDescriptions?.typeString?.startsWith("bytes ");
+          const bytesLiteral = data?.nodeType === "Literal" && ["string", "unicodeString", "hexString"].includes(String(data.kind));
+          if (arguments_.length !== 1 || (!bytesVariable && !bytesLiteral)
             || names.some((name) => !["value", "gas"].includes(name))
             || (value && member.memberName !== "call")
             || options.some((option) => !["Identifier", "Literal"].includes(option.nodeType ?? "")
-              && !integerLimit(option) && !structMember(option))) {
-            throw new Error("PQABI native call currently requires address and bytes variables, with optional simple value/gas expressions or typed struct fields");
+              && !integerLimit(option) && !structMember(option) && !msgValue(option))) {
+            throw new Error("PQABI native call currently requires address and bytes variables or supported payable/struct receivers and literal bytes, with optional simple value/gas expressions");
           }
           const operation = value ? "callvalue" : member.memberName!;
           const letter = value ? "v" : ({call:"k",staticcall:"s",delegatecall:"d"} as Record<string,string>)[operation];

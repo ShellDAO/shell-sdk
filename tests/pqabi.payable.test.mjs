@@ -201,14 +201,16 @@ contract Reader {
 
 // Run after npm run build with SHELL_NODE_BIN pointing to a compatible node.
 // Isolated genesis allocation avoids making a native CREATE derivation claim.
-async function runPayableAcceptance(gasOptions = false, contextOptions = false, staticCalls = false, voidCalls = false, tupleCalls = false, narrowCalls = false, signedCalls = false, bytesCalls = false, selectorCalls = false, interfaceIdCalls = false, noThrowCalls = false, batchCalls = false, stringCalls = false, nestedCalls = false, payableAddressCalls = false) {
+async function runPayableAcceptance(gasOptions = false, contextOptions = false, staticCalls = false, voidCalls = false, tupleCalls = false, narrowCalls = false, signedCalls = false, bytesCalls = false, selectorCalls = false, interfaceIdCalls = false, noThrowCalls = false, batchCalls = false, stringCalls = false, nestedCalls = false, payableAddressCalls = false, withdrawalCalls = false) {
   const binary = process.env.SHELL_NODE_BIN;
+  const withdrawalSource=withdrawalCalls?await readFile(new URL('./fixtures/WithdrawalCalls.sol',import.meta.url),'utf8'):undefined;
+  const originalWithdrawal=withdrawalCalls?await readFile(new URL('./fixtures/WithdrawalContract.sol',import.meta.url),'utf8'):undefined;
   const payableAddressSource=payableAddressCalls?await readFile(new URL('./fixtures/PayableAddress.sol',import.meta.url),'utf8'):undefined;
   const nestedSource=nestedCalls?await readFile(new URL('./fixtures/NestedCalls.sol',import.meta.url),'utf8'):undefined;
   const stringSource=stringCalls?await readFile(new URL('./fixtures/StringMetadata.sol',import.meta.url),'utf8'):undefined;
   const batchSource=batchCalls?await readFile(new URL('./fixtures/BatchCalls.sol',import.meta.url),'utf8'):undefined;
   const querySource=noThrowCalls?await readFile(new URL('./fixtures/ERC165Query.sol',import.meta.url),'utf8'):undefined;
-  const source=payableAddressSource??nestedSource??stringSource??batchSource??(noThrowCalls?baseSource
+  const source=withdrawalSource??payableAddressSource??nestedSource??stringSource??batchSource??(noThrowCalls?baseSource
     .replace('pragma solidity ^0.8.30;','pragma solidity ^0.8.30; import "./ERC165Query.sol"; interface IQuery {function doesContractImplementInterface(address target,bytes4 id) external view returns(bool);}')
     .replace('contract Reader {','contract Reader is ERC165Query {')
     .replace(' mapping(address=>Entry) entries;',` mapping(address=>Entry) entries;
@@ -218,8 +220,8 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
  function recordDetection(address target,bytes4 id) external returns(bool){count++;address self=address(this);bool ok=IQuery(self).doesContractImplementInterface(target,id);last=target;detections[id]=ok;emit Detected(target,id,ok);return ok;}
  function recordedDetection(bytes4 id) external view returns(bool){return detections[id];}
  function denyDetection(address target) external pure {revert DetectionDenied(target);}`):baseSource);
-  const compilerSources=[{path:payableAddressCalls?'PayableAddress.sol':nestedCalls?'NestedCalls.sol':stringCalls?'StringMetadata.sol':batchCalls?'BatchCalls.sol':'Payable.sol',content:source},...(querySource?[{path:'ERC165Query.sol',content:querySource}]:[])];
-  const resumeDirectory = voidCalls || tupleCalls || narrowCalls || signedCalls || bytesCalls || payableAddressCalls ? process.env.SHELL_PQABI_RESUME_DIR : undefined;
+  const compilerSources=[{path:withdrawalCalls?'WithdrawalCalls.sol':payableAddressCalls?'PayableAddress.sol':nestedCalls?'NestedCalls.sol':stringCalls?'StringMetadata.sol':batchCalls?'BatchCalls.sol':'Payable.sol',content:source},...(originalWithdrawal?[{path:'WithdrawalContract.sol',content:originalWithdrawal}]:[]),...(querySource?[{path:'ERC165Query.sol',content:querySource}]:[])];
+  const resumeDirectory = voidCalls || tupleCalls || narrowCalls || signedCalls || bytesCalls || payableAddressCalls || withdrawalCalls ? process.env.SHELL_PQABI_RESUME_DIR : undefined;
   const directory = resumeDirectory ? resolve(resumeDirectory) : await mkdtemp(join(tmpdir(), 'shell-sdk-payable-'));
   const reportSequence=name=>name==='report.json'?0:Number(name.match(/^report-resumed(?:-(\d+))?\.json$/)?.[1]??1);
   const reportFiles=resumeDirectory?(await readdir(directory)).filter(name=>/^report(?:-resumed(?:-\d+)?)?\.json$/.test(name)).sort((a,b)=>reportSequence(b)-reportSequence(a)):[];
@@ -272,7 +274,7 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
   for (const contractName of ['Reader', 'Payee',...(batchCalls?['BatchReceiver']:[])]) {
     const options = { sources: compilerSources, contractName, evmVersion: 'shanghai' };
     const original = await compileSolidity(options);
-    artifacts[contractName] = await compileSolidity({ ...options, target: 'pqvm', nativeAddressContextHeight: voidCalls || tupleCalls || narrowCalls || signedCalls || bytesCalls ? 2 : 0 });
+    artifacts[contractName] = await compileSolidity({ ...options, target: 'pqvm', nativeAddressContextHeight: voidCalls || tupleCalls || narrowCalls || signedCalls || bytesCalls || withdrawalCalls ? 2 : 0 });
     assert.deepEqual(artifacts[contractName].abi, original.abi);
   }
   const ports = [];
@@ -284,13 +286,13 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
   }
   assert.notEqual(...ports);
   const freshReport = { directory, binarySha256: createHash('sha256').update(await readFile(binary)).digest('hex'),
-    artifacts, source, ...(noThrowCalls||batchCalls||stringCalls||nestedCalls||payableAddressCalls?{compilerSources}:{}), opens: [], transactions: [], adaptations: [
-      `Source compiler; isolated Dev chain 1337, native context at height ${voidCalls || tupleCalls || narrowCalls || signedCalls || bytesCalls ? 2 : 0}, fee accounting at genesis.`,
+    artifacts, source, ...(noThrowCalls||batchCalls||stringCalls||nestedCalls||payableAddressCalls||withdrawalCalls?{compilerSources}:{}), opens: [], transactions: [], adaptations: [
+      `Source compiler; isolated Dev chain 1337, native context at height ${voidCalls || tupleCalls || narrowCalls || signedCalls || bytesCalls || withdrawalCalls ? 2 : 0}, fee accounting at genesis.`,
       'Fresh ML-DSA keys; full RocksDB producer and independent non-authority observer.',
       'Runtime allocation is not native CREATE or public tutorial deployment acceptance.' ] };
   if(previousReport) {
     assert.equal(previousReport.directory,directory);assert.equal(previousReport.binarySha256,freshReport.binarySha256);
-    if(noThrowCalls||batchCalls||stringCalls||nestedCalls||payableAddressCalls) assert.deepEqual(previousReport.compilerSources,compilerSources);
+    if(noThrowCalls||batchCalls||stringCalls||nestedCalls||payableAddressCalls||withdrawalCalls) assert.deepEqual(previousReport.compilerSources,compilerSources);
     assert.equal(previousReport.source,source);assert.deepEqual(previousReport.artifacts,JSON.parse(JSON.stringify(artifacts)));
     assert.ok(previousReport.opens.every(entry=>entry.exitCode===0));
   }
@@ -307,7 +309,7 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
   const save = () => writeFile(join(directory, reportName), JSON.stringify(report, null, 2));
   const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
   const provider = createShellProvider({ rpcHttpUrl: `http://127.0.0.1:${ports[0]}` });
-  const traceOptions=(aa=false)=>({tracer:'callTracer',...(batchCalls||stringCalls||nestedCalls?{disableMemory:true,disableStorage:true,...(aa||nestedCalls?{disableStack:true}:{})}:{})});
+  const traceOptions=(aa=false)=>({tracer:'callTracer',...(batchCalls||stringCalls||nestedCalls||withdrawalCalls?{disableMemory:true,disableStorage:true,...(aa||nestedCalls||withdrawalCalls?{disableStack:true}:{})}:{})});
   const nodes = [], dirs = [join(directory, 'leader'), join(directory, 'observer')];
   async function rpc(i, method, params = []) {
     await pause(100);
@@ -368,10 +370,14 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
   };
   const state = async (i, tag = 'latest') => {
     const accounts = {};
-    for (const target of [reader, payee, alias, short, missing, badBool, plain, large, ...(noThrowCalls?[writeTarget]:[]), ...(payableAddressCalls?[owner,other]:[]), payer.getAddress(), miner.getAddress()]) {
+    for (const target of [reader, payee, alias, short, missing, badBool, plain, large, ...(noThrowCalls?[writeTarget]:[]), ...(payableAddressCalls||withdrawalCalls?[owner,other]:[]), payer.getAddress(), miner.getAddress()]) {
       accounts[target] = { balance: await rpc(i, 'eth_getBalance', [target, tag]),
         nonce: await rpc(i, 'eth_getTransactionCount', [target, tag]), slots: [] };
       for (const slot of ['0x0', '0x1']) accounts[target].slots.push(await rpc(i, 'eth_getStorageAt', [target, slot, tag]));
+      if(withdrawalCalls && [reader,short,badBool].includes(target))for(let slot=2;slot<=8;slot++) accounts[target].slots.push(await rpc(i,'eth_getStorageAt',[target,quantity(slot),tag]));
+      if(withdrawalCalls && [payee,alias].includes(target)) {
+        accounts[target].pending={};for(const who of [reader,short,badBool,owner,other,payer.getAddress()])accounts[target].pending[who]=await rpc(i,'eth_getStorageAt',[target,quantity(balanceSlot(who)),tag]);
+      }
       if(batchCalls && [payee,alias].includes(target)) {
         accounts[target].multi={};for(const id of batchIds){accounts[target].multi[id.toString()]={};for(const who of batchOwners)accounts[target].multi[id.toString()][who]=await rpc(i,'eth_getStorageAt',[target,multiSlot(id,who),tag]);}
       }
@@ -437,11 +443,11 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
       return entry;
     }
     const before = await state(0);
-    const innerGas=nestedCalls?900000:500000;
+    const innerGas=nestedCalls||withdrawalCalls?900000:500000;
     const built = aa ? buildBatchTransaction({ chainId: 1337, nonce, gasLimit: Math.max(1200000, calls.length * innerGas + 100000),
       innerCalls: calls.map(call => buildInnerCall(reader, call.data, innerGas, 0n)) }) : null;
     const tx = built?.tx ?? buildTransaction({ chainId: 1337, nonce, to: reader,
-      data: calls[0].data, value, gasLimit: nestedCalls?1600000:600000 });
+      data: calls[0].data, value, gasLimit: nestedCalls||withdrawalCalls?1600000:600000 });
     const signed = await payer.buildSignedTransaction({ tx, ...(built ? { aaBundle: built.aa_bundle } : {}), includePublicKey: true });
     const hash = await provider.sendTransaction(signed);
     const entry = { label, hash, aa, before }; report.transactions.push(entry); await save();
@@ -467,7 +473,7 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
   }
   try {
     const genesis = { chain_id: 1337, network_type: 'Dev', timestamp: Math.floor(Date.now() / 1000) - 120,
-      gas_limit: 30000000, registered_key_algorithm_height: 0, native_address_context_height: voidCalls || tupleCalls || narrowCalls || signedCalls || bytesCalls ? 2 : 0,
+      gas_limit: 30000000, registered_key_algorithm_height: 0, native_address_context_height: voidCalls || tupleCalls || narrowCalls || signedCalls || bytesCalls || withdrawalCalls ? 2 : 0,
       fee_accounting_activation_height: 0, aa_account_manager_height: 0,
       consensus: { engine: 'wpoa', authorities: [miner.getAddress()],
         authority_pubkeys: ['0x' + Buffer.from(miner.getPublicKey()).toString('hex')], weights: [1],
@@ -476,6 +482,12 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
     for (const [account, code] of [[reader, artifacts.Reader.deployedBytecode], [payee, artifacts.Payee.deployedBytecode],
       [alias, artifacts.Payee.deployedBytecode], [short, bytesCalls ? badBytes : signedCalls ? badSigned : narrowCalls ? rawReserves(1n,2n,max32+1n) : tupleCalls ? '0x60635f5560605ff3' : '0x60635f55601f5ff3'], [badBool, narrowCalls ? rawReserves(max112+1n,2n,3n) : tupleCalls ? '0x60635f557f'+owner.slice(2)+'5f527f'+word(maxId)+'6020526002604052600760605260805ff3' : '0x60635f5560025f5260205ff3'], [large, '0x60635f556110005ff3']]) {
       genesis.alloc[account] = { balance: '0x0', nonce: 1, code, storage: {} };
+    }
+    if(withdrawalCalls) {
+      for(const target of [payee,alias])genesis.alloc[target].storage={'0x0000000000000000000000000000000000000000000000000000000000000000':reader};
+      for(const actor of [short,badBool])genesis.alloc[actor].code=artifacts.Reader.deployedBytecode;
+      genesis.alloc[badBool].storage={'0x0000000000000000000000000000000000000000000000000000000000000005':'0x0000000000000000000000000000000000000000000000000000000000000001'};
+      report.adaptations.push('Original WithdrawalContract runtime; constructor-equivalent zero-value richest=Reader genesis state. Constructor execution is compile-only.');
     }
     if(nestedCalls)genesis.alloc[plain]={balance:'0x0',nonce:1,code:'0x60405f5260606020527f'+'ff'.repeat(32)+'6040527f'+'ff'.repeat(32)+'60605260805ff3',storage:{}};
     if(stringCalls) genesis.alloc[plain]={balance:'0x0',nonce:1,code:'0x60205f527f'+'ff'.repeat(32)+'60205260405ff3',storage:{}};
@@ -502,7 +514,7 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
     }
     if(!resumeDirectory) for (const dir of dirs) { await mkdir(dir); await writeFile(join(dir, 'genesis.json'), JSON.stringify(genesis)); }
     else for(const dir of dirs) {
-      const retained=JSON.parse(await readFile(join(dir,'genesis.json'),'utf8'));assert.equal(retained.chain_id,1337);assert.equal(retained.native_address_context_height,voidCalls || tupleCalls || narrowCalls || signedCalls || bytesCalls ? 2 : 0);
+      const retained=JSON.parse(await readFile(join(dir,'genesis.json'),'utf8'));assert.equal(retained.chain_id,1337);assert.equal(retained.native_address_context_height,voidCalls || tupleCalls || narrowCalls || signedCalls || bytesCalls || withdrawalCalls ? 2 : 0);
     }
     await start(1, await peer(await start(0)));
     if(resumeDirectory) {
@@ -528,7 +540,7 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
       assert.equal(data,toFunctionSelector('configure(address,address,address,uint256,uint256)')+args.map(word).join(''));
       return {from:payer.getAddress(),to:reader,gas:'0x927c0',data};
     };
-    const assetRequest = (fn,args) => ({from:payer.getAddress(),to:reader,gas:nestedCalls?'0x186a00':'0x927c0',
+    const assetRequest = (fn,args) => ({from:payer.getAddress(),to:reader,gas:nestedCalls||withdrawalCalls?'0x186a00':'0x927c0',
       data:encodeFunctionData({abi:artifacts.Reader.abi,functionName:fn,args})});
     const boolean = (entry,value) => assert.equal(entry.trace.output,'0x'+word(value?1:0));
     const tupleOutput=(who,size,ok,tag='0x'+word(7))=>who+word(size)+word(ok?1:0)+tag.slice(2);
@@ -555,7 +567,32 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
     const finalGroups=[[8n,9n],[]],finalTexts=['','done'],aliasGroups=[[4n],[5n]],aliasTexts=['量子','tail'];
     const matrixOwners=[[owner,other],[zero]],matrixAmounts=[[7n,11n],[13n]],matrixNotes=['0x0102','0x'+'ab'.repeat(33)];
     const matrixOutput='0x'+dynamicTuple([matrixNumbers(matrixOwners),byteArray(matrixNotes)]);
-    if(nestedCalls) {
+    if(withdrawalCalls) {
+      const call=(fn,args)=>assetRequest(fn,args);
+      const bid=(target,amount)=>call('bid',[target,amount]);
+      const via=(target,actor,amount)=>call('bidVia',[target,actor,amount]);
+      const claim=target=>call('claim',[target]);
+      const claimVia=(target,actor)=>call('claimVia',[target,actor]);
+      const pending=(entry,target,who,value)=>assert.equal(entry.after[target].pending[who],'0x'+word(value));
+      const pre=await send('withdrawal native guard before activation',[via(payee,short,5n)],5n,false);assert.equal(BigInt(pre.receipt.blockNumber),1n);assert.equal((pre.trace.calls??[]).length,0);
+      first=await send('withdrawal original first bid at activation',[via(payee,short,5n)],5n,true);assert.equal(BigInt(first.receipt.blockNumber),2n);pending(first,payee,reader,5);assert.equal(first.after[payee].slots[0],short);
+      const second=await send('withdrawal original higher bid credits prior richest',[bid(payee,7n)],7n,true);pending(second,payee,short,7);assert.equal(second.after[payee].slots[0],reader);
+      const refund=await send('withdrawal clears claim before stateful reentrant receiver',[claim(payee)],0n,true);pending(refund,payee,reader,0);assert.equal(refund.after[reader].slots[2],'0x'+word(5));assert.equal(refund.after[reader].slots[6],'0x'+word(2));assert.equal(refund.after[payee].balance,'0x7');
+      const frames=trace=>[trace,...(trace.calls??[]).flatMap(frames)];
+      const payments=frames(refund.trace).filter(frame=>frame.from===payee&&frame.to===reader);assert.equal(payments.length,2);assert.deepEqual(payments.map(frame=>BigInt(frame.value??0)),[5n,0n]);for(const frame of payments){assert.equal(frame.input,'0x');assert.ok(BigInt(frame.gas)>2300n);}
+      const otherClaim=await send('withdrawal another richest reenters without double refund',[claimVia(payee,short)],0n,true);pending(otherClaim,payee,short,0);assert.equal(otherClaim.after[short].balance,'0x7');assert.equal(otherClaim.after[short].slots[6],'0x'+word(2));
+      await send('withdrawal same-low20 independent auction first bid',[via(alias,badBool,3n)],3n,true);
+      const aliasBid=await send('withdrawal independent auction higher bid',[bid(alias,4n)],4n,true);pending(aliasBid,alias,badBool,4);pending(aliasBid,alias,reader,3);assert.equal(aliasBid.after[payee].balance,'0x0');
+      const rejected=await send('withdrawal rejecting receiver restores claim and events',[claimVia(alias,badBool)],0n,false);assert.equal(rejected.receipt.logs.length,0);pending(rejected,alias,badBool,4);
+      const good=await send('withdrawal poisoned recipient does not block other claim',[claim(alias)],0n,true);pending(good,alias,reader,0);pending(good,alias,badBool,4);assert.equal(good.after[reader].balance,'0x8');
+      await send('withdrawal insufficient bid restores original state',[bid(alias,4n)],4n,false);
+      const failed=await send('withdrawal AA later rejected recipient rolls back earlier bid',[bid(payee,8n),claimVia(alias,badBool)],0n,false,true);assert.equal(failed.receipt.logs.length,0);pending(failed,payee,reader,0);
+      const accepted=await send('withdrawal AA successful bid and original refund persist',[via(payee,short,8n),claim(payee)],0n,true,true);pending(accepted,payee,reader,0);assert.equal(accepted.after[reader].balance,'0x8');assert.equal(accepted.after[reader].slots[2],'0x'+word(16));
+      const no=await send('withdrawal low-level false preserves parent metadata',[call('pay',[badBool,1n])],0n,true);boolean(no,false);assert.equal(no.after[reader].balance,'0x8');assert.equal(BigInt(no.after[reader].slots[0]),BigInt(no.before[reader].slots[0])+1n);assert.equal(no.receipt.logs.length,1);
+      const eoa=await send('withdrawal empty-code EOA receives value',[call('pay',[owner,1n])],0n,true);boolean(eoa,true);assert.equal(eoa.after[owner].balance,'0x1');
+      const aliasEOA=await send('withdrawal same-low20 EOA receives independent value',[call('pay',[other,2n])],0n,true);boolean(aliasEOA,true);assert.equal(aliasEOA.after[other].balance,'0x2');assert.equal(aliasEOA.after[owner].balance,'0x1');
+      report.withdrawalCalls={passed:true,activationHeight:2,originalSourceUnchanged:true,statefulGasForwarding:true,reentrantPayments:[5,0],not_claimed:'CREATE deployment, all receiver expressions or public package availability'};
+    } else if(nestedCalls) {
       const groups=[[1n,2n],[3n]],texts=['one','two','three'];
       const original='0x2289b18c'+[64n,320n,2n,64n,160n,2n,1n,2n,1n,3n,3n,96n,160n,224n,3n].map(word).join('')+'6f6e65'.padEnd(64,'0')+word(3)+'74776f'.padEnd(64,'0')+word(5)+'7468726565'.padEnd(64,'0');
       assert.equal(toFunctionSelector('g(uint256[][],string[])')+nestedOutput(groups,texts).slice(2),original);
@@ -979,7 +1016,12 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
           assert.equal(await rpc(i,'eth_call',[assetRequest('payMetadata',[payee]),'latest']),bytesOutput(tagC,'0x01'));
           report.selectorCalls={passed:true,originalSelectors:expected,originalEipPragmaAdaptation:'^0.4.20 to ^0.8.30',effectfulReceivers:'unqualified'};
         }
-        if(nestedCalls) {
+        if(withdrawalCalls) {
+          for(const[target,balance]of [[reader,5],[short,7],[badBool,0],[payee,0],[alias,4],[owner,1],[other,2]])assert.equal(before[target].balance,quantity(balance));
+          assert.equal(before[payee].slots[0],short);assert.equal(before[payee].slots[1],'0x'+word(8));assert.equal(before[alias].slots[0],reader);assert.equal(before[alias].slots[1],'0x'+word(4));
+          for(const target of [payee,alias])for(const[who,value]of Object.entries(before[target].pending))assert.equal(value,'0x'+word(target===alias&&who===badBool?4:0));
+          assert.equal(before[reader].slots[2],'0x'+word(16));assert.equal(before[reader].slots[6],'0x'+word(4));assert.equal(before[reader].slots[7],payee);assert.equal(before[short].slots[2],'0x'+word(7));assert.equal(before[short].slots[6],'0x'+word(2));assert.equal(before[badBool].slots[2],'0x'+word(0));
+        } else if(nestedCalls) {
           assert.deepEqual(before[reader].slots,['0x'+word(6),alias,keccak256(nestedOutput(aliasGroups,aliasTexts)),'0x'+word(9),keccak256(matrixOutput),'0x'+word(2)]);
           for(const[target,count,g,t,total]of [[payee,3,finalGroups,finalTexts,17],[alias,2,aliasGroups,aliasTexts,9]]) {
             assert.deepEqual(before[target].slots,['0x'+word(count),reader,keccak256(nestedOutput(g,t)),'0x'+word(total),target===payee?keccak256(matrixOutput):'0x'+word(0),'0x'+word(2),'0x'+word(2),'0x'+word(2)]);assert.deepEqual(before[target].nested.groups,groupStorage(g));assert.deepEqual(before[target].nested.texts,labelStorage(t));
@@ -1061,7 +1103,14 @@ async function runPayableAcceptance(gasOptions = false, contextOptions = false, 
         }
         for (const entry of report.transactions) assert.deepEqual(await rpc(i, 'eth_getTransactionReceipt', [entry.hash]), entry.receipt);
         assert.deepEqual(await state(i, first.receipt.blockNumber), first.after);
-        if(nestedCalls) {
+        if(withdrawalCalls) {
+          const second=report.transactions[2];
+          for(const[tag,who,amount]of [[first.receipt.blockNumber,short,5],[second.receipt.blockNumber,reader,7],['latest',short,8]]) {
+            const richest={to:payee,data:toFunctionSelector('richest()')},most={to:payee,data:toFunctionSelector('mostSent()')};
+            assert.equal(await rpc(i,'eth_call',[richest,tag]),who);assert.equal(await rpc(i,'eth_call',[most,tag]),'0x'+word(amount));
+          }
+          assert.equal(await rpc(i,'eth_getStorageAt',[payee,quantity(balanceSlot(reader)),first.receipt.blockNumber]),'0x'+word(5));assert.equal(await rpc(i,'eth_getStorageAt',[payee,quantity(balanceSlot(reader)),'latest']),'0x'+word(0));assert.equal(await rpc(i,'eth_getBalance',[payee,first.receipt.blockNumber]),'0x5');
+        } else if(nestedCalls) {
           assert.equal(await rpc(i,'eth_call',[assetRequest('read',[payee]),first.receipt.blockNumber]),nestedOutput([[1n,2n],[3n]],['one','two','three']));assert.equal(await rpc(i,'eth_call',[assetRequest('read',[payee]),'latest']),nestedOutput(finalGroups,finalTexts));assert.equal(await rpc(i,'eth_call',[assetRequest('read',[alias]),first.receipt.blockNumber]),nestedOutput([],[]));assert.equal(await rpc(i,'eth_call',[assetRequest('read',[alias]),'latest']),nestedOutput(aliasGroups,aliasTexts));
         } else if(stringCalls) {
           const query=assetRequest('read',[payee,7n]);assert.equal(await rpc(i,'eth_call',[query,first.receipt.blockNumber]),stringOutput(uri32));assert.equal(await rpc(i,'eth_call',[query,'latest']),stringOutput(uri31));
@@ -1166,3 +1215,7 @@ test('native nested arrays: original ABI example, persistent groups, rollback, h
 
 test('native payable addresses: qualified values, msg.value, rollback, history and reopen',
   {skip:!process.env.SHELL_NODE_BIN,timeout:600000},()=>runPayableAcceptance(false,false,false,false,false,false,false,false,false,false,false,false,false,false,true));
+
+
+test('native original withdrawal: refunds, reentry, recipient failure, rollback, history and reopen',
+  {skip:!process.env.SHELL_NODE_BIN,timeout:900000},()=>runPayableAcceptance(false,false,false,false,false,false,false,false,false,false,false,false,false,false,false,true));

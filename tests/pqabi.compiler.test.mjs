@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import solc from 'solc';
+import { readFile } from 'node:fs/promises';
 import { compileSolidity } from '../dist/contracts-compiler.js';
 import { encodeFunctionData, decodeFunctionResult } from '../dist/contracts.js';
 
@@ -1120,4 +1121,29 @@ test('native msg.value retains standard scalar opcode in bodies, arguments and c
  contract Reader{event Amount(address indexed owner,uint256 amount);function forward(address target,address payable owner)external payable returns(address payable){emit Amount(owner,msg.value);return I(target).accept{value:msg.value}(owner,msg.value);}
  function amount(address owner)external payable returns(address,uint256){return(owner,msg.value);}}`;const args={sources:[{path:'Reader.sol',content}],contractName:'Reader',evmVersion:'shanghai'};assert.deepEqual((await compileSolidity({...args,target:'pqvm',nativeAddressContextHeight:2})).abi,(await compileSolidity(args)).abi);
  const plain={...args,sources:[{path:'Reader.sol',content:'pragma solidity ^0.8.30;contract Reader{function amount()external payable returns(uint256){return msg.value;}}'}]};assert.equal((await compileSolidity({...plain,target:'pqvm'})).deployedBytecode,(await compileSolidity(plain)).deployedBytecode);
+});
+
+
+test('native withdrawal compiles the original published source without ABI changes', async () => {
+ const source=await readFile(new URL('./fixtures/WithdrawalContract.sol',import.meta.url),'utf8');
+ const options={sources:[{path:'WithdrawalContract.sol',content:source}],contractName:'WithdrawalContract'};
+ const evm=await compileSolidity(options);
+ await assert.rejects(compileSolidity({...options,target:'pqvm'}),/nativeAddressContextHeight/);
+ const native=await compileSolidity({...options,target:'pqvm',nativeAddressContextHeight:2});
+ assert.deepEqual(native.abi,evm.abi);
+});
+
+test('native low-level calls preserve payable receivers, literal data and msg.value', async () => {
+ for(const [receiver,mode,data,options]of [
+  ['payable(msg.sender)','call','""','{value:msg.value}'],
+  ['payable(target)','call','hex"010203"','{value:msg.value}'],
+  ['entry.target','staticcall','"text"',''],
+  ['payable(entry.target)','delegatecall','unicode"退款"',''],
+  ['target','call','hex""',''],
+ ]) {
+  const source=`pragma solidity ^0.8.20; contract LiteralCall { struct Entry {address payable target;} Entry entry; function invoke(address payable target) external payable returns(bool,bytes memory) {return ${receiver}.${mode}${options}(${data});} }`;
+  const input={sources:[{path:'LiteralCall.sol',content:source}],contractName:'LiteralCall'};
+  const evm=await compileSolidity(input);const native=await compileSolidity({...input,target:'pqvm',nativeAddressContextHeight:2});
+  assert.deepEqual(native.abi,evm.abi);
+ }
 });

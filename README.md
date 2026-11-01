@@ -1296,12 +1296,14 @@ delegate calls use the calling contract storage and original caller/value.
 Receivers can be address variables or the context expressions `msg.sender`,
 `tx.origin`, `block.coinbase` and `address(this)`, or a direct internal function
 call that returns an address and takes identifier or literal arguments. That
-receiver is evaluated once.
-These forms require a bytes variable. Gas limits can be supplied with
+receiver is evaluated once. Payable casts of supported address/context/struct
+values and typed address struct fields can also receive low-level calls.
+Payloads can be bytes variables or Solidity string/hex literals, including
+empty data. Gas limits can be supplied with
 `{gas: budget}` on CALL, STATICCALL and DELEGATECALL; CALL also accepts
 `{value: amount, gas: budget}` in either order. Value and gas expressions can be
-identifiers, literals, typed struct fields or integer type limits and are
-evaluated once. The node applies its existing call-gas forwarding rules,
+identifiers, literals, typed struct fields, integer type limits or `msg.value`
+and are evaluated once. The node applies its existing call-gas forwarding rules,
 including the EIP-150 cap. Other receiver expressions remain unsupported.
 
 Typed `I(target).echo(value)` calls also preserve the original selector and
@@ -1436,6 +1438,23 @@ owner words, partial AA/outer/callee rollback, fees/nonces, historical reads and
 database reopen. Solidity `transfer`/`send` and general address conversions
 remain separate unsupported paths. Cast/array combinations beyond the recorded
 runtime cases still need qualification.
+
+
+The original Solidity [withdrawal example](https://docs.soliditylang.org/en/latest/common-patterns.html#withdrawal-from-contracts)
+is retained unchanged in `tests/fixtures/WithdrawalContract.sol`. Source support
+includes `payable(msg.sender).call{value: amount}("")` with the original ABI.
+Run its native acceptance with a compatible node and the explicit profile:
+
+```bash
+SHELL_NODE_BIN=/path/to/shell-node node --test --test-name-pattern 'native original withdrawal' tests/pqabi.payable.test.mjs
+```
+
+The fixture allocates the original runtime with explicit constructor-equivalent
+zero-value genesis state; it does not execute deployment. It exercises higher
+bids, caller-indexed refunds, reentrant stateful receivers, rejected recipients,
+EOA payments, AA rollback, historical reads, independent import and disk reopen.
+Low-level CALL retains the node's existing gas forwarding and false-result
+semantics. Native CREATE and public package availability remain separate checks.
 
 Narrow result lists such
 as `getReserves() returns (uint112, uint112, uint32)` retain their original ABI;
