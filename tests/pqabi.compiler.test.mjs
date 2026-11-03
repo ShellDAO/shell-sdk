@@ -19,7 +19,10 @@ const first = '34'.repeat(12) + '12'.repeat(20);
 const second = '56'.repeat(12) + '12'.repeat(20);
 
 const abiHelpersSource = `pragma solidity ^0.8.35;
-contract AbiReceiver { function echo(address value) external pure returns(address) { return value; } }
+contract AbiReceiver {
+  function echo(address value) external pure returns(address) { return value; }
+  function wrap(bytes memory value) external pure returns(bytes memory) { return value; }
+}
 contract NativeAbiRoundtrip {
   event Encoded(address value);
   function packed(address value) external pure returns(bytes memory) { return abi.encodePacked(value); }
@@ -31,6 +34,7 @@ contract NativeAbiRoundtrip {
   function withSignature(address value) external pure returns(bytes memory) { return abi.encodeWithSignature("echo(address)", value); }
   function withCall(address value) external pure returns(bytes memory) { return abi.encodeCall(AbiReceiver.echo, (value)); }
   function withDecoded(address value) external pure returns(bytes memory) { return abi.encodeCall(AbiReceiver.echo, (abi.decode(abi.encode(value), (address)))); }
+  function nested(address value) external pure returns(bytes memory) { return abi.encodeCall(AbiReceiver.wrap, (abi.encodeCall(AbiReceiver.echo, (value)))); }
   function notify(address value) external returns(bytes memory) {
     bytes memory encoded = abi.encodeCall(AbiReceiver.echo, (value));
     emit Encoded(value);
@@ -68,7 +72,7 @@ test('PQABI encodeCall lowers nested direct references alongside overloads', asy
   assert.deepEqual(native.abi,control.abi);
 });
 
-test('PQABI ABI helpers real VM preserves packed widths and dynamic decoding', {skip: !process.env.SHELL_PQABI_RPC_URL}, async () => {
+async function verifyAbiHelpers(nestedOnly = false) {
   const artifact = await compileSolidity({...abiHelpersOptions,target:'pqvm'});
   const receiver = await compileSolidity({...abiHelpersOptions,contractName:'AbiReceiver',target:'pqvm'});
   const word = value => BigInt(value).toString(16).padStart(64,'0');
@@ -81,13 +85,15 @@ test('PQABI ABI helpers real VM preserves packed widths and dynamic decoding', {
   for (const value of [first,second]) {
     const encoded = word(32)+word(36)+'2ffdbf1a'+value+'0'.repeat(56);
     for (const name of ['withSelector','withSignature','withCall','withDecoded','notify']) cases.push([`${name}(address)`,value,encoded+value,true]);
+    const wrapped = toFunctionSelector('wrap(bytes)').slice(2)+encoded;
+    cases.push(['nested(address)',value,word(32)+word(wrapped.length/2)+wrapped+'0'.repeat(56)+value,'nested']);
   }
   const rpc = async (method,params) => {
     const response = await fetch(process.env.SHELL_PQABI_RPC_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method,params}),signal:AbortSignal.timeout(30000)});
     return response.json();
   };
   const before = await rpc('eth_getBlockByNumber',['latest',false]);
-  for (const [signature,args,expected,invoke] of [...cases,[cases[2][0],cases[2][1].slice(0,-2),null]]) {
+  for (const [signature,args,expected,invoke] of [...cases,[cases[2][0],cases[2][1].slice(0,-2),null]].filter(entry=>nestedOnly ? entry[3] === 'nested' : entry[3] !== 'nested')) {
     const calldata = toFunctionSelector(signature).slice(2)+args;
     // Existing legacy CREATE inside eth_call only allocates an isolated child;
     // it does not claim a native CREATE address formula or commit a contract.
@@ -103,7 +109,7 @@ test('PQABI ABI helpers real VM preserves packed widths and dynamic decoding', {
       returndatacopy(0,0,returndatasize())
       if iszero(success) { revert(0,returndatasize()) }
       let size := returndatasize()
-      ${invoke ? 'if iszero(call(gas(),receiver,0,add(mload(0),32),mload(mload(0)),size,32)) { revert(0,0) } if iszero(eq(returndatasize(),32)) { revert(0,0) } size := add(size,32)' : ''}
+      ${invoke === 'nested' ? 'if iszero(call(gas(),receiver,0,add(mload(0),32),mload(mload(0)),0,0)) { revert(0,0) } returndatacopy(size,0,returndatasize()) let inner := add(size,mload(size)) if iszero(call(gas(),receiver,0,add(inner,32),mload(inner),size,32)) { revert(0,0) } if iszero(eq(returndatasize(),32)) { revert(0,0) } size := add(size,32)' : invoke ? 'if iszero(call(gas(),receiver,0,add(mload(0),32),mload(mload(0)),size,32)) { revert(0,0) } if iszero(eq(returndatasize(),32)) { revert(0,0) } size := add(size,32)' : ''}
       return(0,size)
     } data "child" hex"${artifact.bytecode.slice(2)}" data "receiver" hex"${receiver.bytecode.slice(2)}" data "input" hex"${calldata}" }`;
     const output = JSON.parse(solc.compile(JSON.stringify({language:'Yul',sources:{'Probe.yul':{content:harness}},settings:{evmVersion:'shanghai',outputSelection:{'*':{'*':['evm.bytecode.object']}}}})));
@@ -113,7 +119,10 @@ test('PQABI ABI helpers real VM preserves packed widths and dynamic decoding', {
     else { assert.equal(response.error,undefined,JSON.stringify(response.error)); assert.equal(response.result,'0x'+expected); }
   }
   assert.deepEqual(await rpc('eth_getBlockByNumber',['latest',false]),before);
-});
+}
+
+test('PQABI ABI helpers real VM preserves packed widths and dynamic decoding', {skip: !process.env.SHELL_PQABI_RPC_URL}, () => verifyAbiHelpers());
+test('PQABI nested encodeCall real VM invokes both original selectors', {skip: !process.env.SHELL_PQABI_RPC_URL}, () => verifyAbiHelpers(true));
 
 test('PQABI target retains original ABI types and selector dispatch', async () => {
   const original = await compileSolidity(options);
