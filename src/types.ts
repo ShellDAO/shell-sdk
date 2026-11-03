@@ -664,7 +664,7 @@ export interface ShellFinalityInfo {
 /** Commit certificate returned by `shell_finalityProof`. */
 export interface ShellFinalityProof {
   blockHash: HexString;
-  certificate: Record<AddressLike, HexString> | null;
+  certificate: Record<AddressLike, ShellSignature> | null;
   [key: string]: unknown;
 }
 

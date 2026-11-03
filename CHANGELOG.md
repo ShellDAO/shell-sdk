@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.15.0-rc.1] — Unreleased
+
+### Fixed
+
+- Type `shell_finalityProof` certificate values as `ShellSignature` objects
+  (`sig_type` and raw `data` bytes), preserving nullable missing certificates.
+  The previous hex-string declaration prevented typed consumers from reading
+  genuine node v0.27.13 commit certificates.
+
 ## [0.14.0-rc.3] — 2026-10-23
 
 ### Fixed

@@ -193,6 +193,7 @@ Defined in `src/types.ts`. All types are re-exported from the package root.
 | `SignatureTypeName` | `"ML-DSA-65" \| "Dilithium3" \| "MlDsa65" \| "SphincsSha2256f"` |
 | `ShellTransactionRequest` | Wire format for a Shell transaction |
 | `ShellSignature` | `{ sig_type, data: number[] }` |
+| `ShellFinalityProof` | Block hash and `Record<AddressLike, ShellSignature> \| null` commit certificate |
 | `SignedShellTransaction` | Complete signed transaction ready to broadcast |
 | `ShellAccessListItem` | EIP-2930 access list entry |
 | `ShellKnownRpcTxType` | Literal union of known Shell RPC transaction kinds |
@@ -201,6 +202,40 @@ Defined in `src/types.ts`. All types are re-exported from the package root.
 | `ShellKdfParams` | argon2id parameters inside a keystore |
 | `ShellCipherParams` | xchacha20-poly1305 nonce inside a keystore |
 | `ShellEncryptedKey` | Full encrypted keystore file structure |
+
+### Read a finality certificate
+
+On Unreleased `0.15.0-rc.1` sources, `getFinalityProof` exposes each commit
+certificate value as a `ShellSignature`. The published `0.14.0-rc.3` declaration
+incorrectly described these values as hex strings; the RPC returns objects with
+`sig_type` and `data`. A missing local certificate is `null`.
+
+```typescript
+import { createShellProvider, type SignatureTypeName } from 'shell-sdk';
+
+const provider = createShellProvider({ rpcHttpUrl: 'http://127.0.0.1:8545' });
+
+export async function readCommitSignatures(blockHash: string): Promise<Array<{
+  validator: string;
+  algorithm: SignatureTypeName;
+  bytes: Uint8Array;
+}>> {
+  const proof = await provider.getFinalityProof(blockHash);
+  return Object.entries(proof.certificate ?? {}).map(([validator, signature]) => ({
+    validator,
+    algorithm: signature.sig_type,
+    bytes: Uint8Array.from(signature.data),
+  }));
+}
+```
+
+The example decodes the returned signatures. Verify them with trusted historical
+validator public keys and active weights before making a finality decision.
+
+After building the SDK, run `node --test tests/finality-proof.test.mjs` for the
+strict TypeScript example and response tests. Set `SHELL_NODE_BIN` to a compatible
+RocksDB/libp2p node to include a fresh ML-DSA transaction, independent certificate
+verification and physical database reopen. Node `v0.27.13` is tested.
 
 ---
 
