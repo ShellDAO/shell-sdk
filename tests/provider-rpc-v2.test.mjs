@@ -3,6 +3,17 @@ import test from 'node:test';
 
 import { createShellProvider } from '../dist/index.js';
 
+test('getBlockWitnesses preserves unavailable null without inventing an empty bundle', async () => {
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    assert.equal(body.method, 'shell_getBlockWitnesses');
+    assert.deepEqual(body.params, ['0x1']);
+    return rpc({ jsonrpc: '2.0', id: body.id, result: null });
+  };
+  const provider = createShellProvider({ rpcHttpUrl: 'https://rpc.devnet.shell.local' });
+  assert.equal(await provider.getBlockWitnesses('0x1'), null);
+});
+
 test('getTransactionsByAddressV2 falls back to legacy only for the first page', async () => {
   const calls = [];
   globalThis.fetch = async (_url, init) => {

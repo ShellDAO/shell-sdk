@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.15.0-rc.1] — Unreleased
+
+### Changed
+
+- Correct `getBlockWitnesses()` to return `ShellBlockWitnessesResult | null`.
+  TypeScript callers must check for null before accessing witness fields. The
+  method already passes unavailable RPC results through without fabricating data.
+  This candidate targets the witness lookup corrections in unreleased node
+  0.27.14 source; released 0.27.13 can also return null for unknown blocks.
+
 ## [0.14.0-rc.3] — 2026-10-23
 
 ### Fixed

@@ -43,6 +43,18 @@ test('root type declarations re-export provider public types', async () => {
   assert.match(declarations, /type ShellPublicClient/);
 });
 
+test('witness declarations require an availability check', async () => {
+  const ts = await import('typescript');
+  const { fileURLToPath } = await import('node:url');
+  const program = ts.createProgram([fileURLToPath(new URL('./fixtures/witness-nullability.ts', import.meta.url))], {
+    strict: true, noEmit: true, skipLibCheck: true,
+    target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.NodeNext,
+    moduleResolution: ts.ModuleResolutionKind.NodeNext,
+  });
+  const diagnostics = ts.getPreEmitDiagnostics(program);
+  assert.deepEqual(diagnostics.map((d) => ts.flattenDiagnosticMessageText(d.messageText, '\n')), []);
+});
+
 test('formatShellRpcTxType labels starkReward correctly', () => {
   const { formatShellRpcTxType } = root;
   assert.equal(formatShellRpcTxType({ shellType: 'starkReward' }), 'STARK Reward');

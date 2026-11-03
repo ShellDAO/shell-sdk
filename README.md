@@ -226,6 +226,19 @@ Defined in `src/types.ts`. All types are re-exported from the package root.
 
 Legacy aliases (`bytesToPqAddress`, `pqAddressToBytes`, `normalizePqAddress`, `derivePqAddressFromPublicKey`, `isPqAddress`) remain exported but are deprecated — they now operate on the same 32-byte `0x…` format.
 
+The unreleased 0.15 candidate corrects `getBlockWitnesses()` to include `null`
+in its return type. Check availability before reading witness fields:
+
+```typescript
+import { createShellProvider } from "shell-sdk";
+
+const provider = createShellProvider();
+const witnesses = await provider.getBlockWitnesses("0x1a");
+if (witnesses !== null) {
+  console.log(witnesses.witnessCount);
+}
+```
+
 **Examples:**
 
 ```typescript
@@ -298,6 +311,7 @@ Keep it in a server-side secret store; do not embed it in browser bundles.
 | `proposeSetValidatorStake(address, stake)` | `shell_proposeSetValidatorStake` → governance transaction hash; stake is a canonical hex quantity |
 | `getBlockReceipts(block)` | `eth_getBlockReceipts` → `ShellRpcReceipt[]` |
 | `getNodeInfo()` | `shell_getNodeInfo` → `ShellNodeInfo` (version, block height, peer count) |
+| `getBlockWitnesses(blockNumberOrHash)` | `shell_getBlockWitnesses` → `ShellBlockWitnessesResult \| null` when the block/bundle is unavailable |
 | `getWitness(blockNumberOrHash)` | `shell_getWitness` → `ShellWitnessBundle` or `null` if pruned |
 | `getStorageProfile()` | `shell_getStorageProfile` → canonical `ShellStorageProfile \| undefined` |
 

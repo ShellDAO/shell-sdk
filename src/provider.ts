@@ -664,7 +664,8 @@ export class ShellProvider {
     return this.request("shell_getWitness", [blockNumberOrHash]);
   }
 
-  async getBlockWitnesses(blockNumberOrHash: string): Promise<ShellBlockWitnessesResult> {
+  /** Return retained witnesses, or null when the block/bundle is unavailable. */
+  async getBlockWitnesses(blockNumberOrHash: string): Promise<ShellBlockWitnessesResult | null> {
     return this.request("shell_getBlockWitnesses", [blockNumberOrHash]);
   }
 
