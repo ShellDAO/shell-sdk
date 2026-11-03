@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- Support identifier contract-instance references in PQABI `abi.encodeCall`,
+  including full-width contract parameters, local conversions and internal
+  overload resolution. Original Solidity argument checks remain in effect;
+  receiver expressions with side effects are explicitly rejected.
+
 - Accept `abi.encodeWithSelector`, `abi.encodeWithSignature`, and
   `abi.encodeCall` with a direct contract-type function reference in the PQABI
   compiler. Typed call encoding keeps the original function selector when

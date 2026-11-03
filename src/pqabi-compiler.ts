@@ -179,12 +179,13 @@ function nativeOverloadAliases(
     for (const node of scope) {
       if (node.nodeType !== "FunctionDefinition" || !node.name) continue;
       const before = signature(node);
-      const lowered = before.replace(/\baddress(?: payable)?\b/g, "uint256");
+      const lowered = before.replace(/\baddress(?: payable)?\b/g, "uint256")
+        .replace(/\bcontract [\w$.]+/g, "uint256");
       const group = groups.get(lowered) ?? new Set<string>();
       group.add(before); groups.set(lowered, group);
     }
     for (const group of groups.values()) if (group.size > 1) {
-      for (const before of group) if (/\baddress\b/.test(before)) collapsed.add(before);
+      for (const before of group) if (/\baddress\b|\bcontract /.test(before)) collapsed.add(before);
     }
   }
   const byId = new Map<number, string>();
@@ -342,10 +343,14 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
   };
   const original = compile({ ...input, settings: { ...input.settings, outputSelection: selection } });
   const nativeYulOperations = new Set(["address", "caller", "origin", "coinbase", "balance", "extcodesize", "extcodehash", "extcodecopy", "call", "staticcall", "delegatecall"]);
+  const contractType = (node: AstNode): boolean => node.nodeType === "UserDefinedTypeName"
+    && node.typeDescriptions?.typeString?.startsWith("contract ") === true;
+  const contractCast = (node: AstNode): boolean => node.nodeType === "FunctionCall" && node.kind === "typeConversion"
+    && node.typeDescriptions?.typeString?.startsWith("contract ") === true;
   let hasAddress = false;
   for (const source of Object.values(original.sources) as { ast: unknown }[]) {
     visit(source.ast, (node) => {
-      if ((node.nodeType === "ElementaryTypeName" && node.name === "address") || builtin(node)
+      if ((node.nodeType === "ElementaryTypeName" && node.name === "address") || contractType(node) || builtin(node)
         || (node.nodeType === "YulFunctionCall" && nativeYulOperations.has(String((node.functionName as AstNode)?.name)))) hasAddress = true;
     });
   }
@@ -448,10 +453,11 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
           if (contexts.some(edit => offset >= edit.start && offset + size <= edit.start + edit.length)) return;
         }
         const abiCall = renderAbiCall(child);
+        const cast = contractCast(child) ? `uint256(${read((child.arguments as AstNode[])[0])})` : undefined;
         const addressType = child.nodeType === "ElementaryTypeName" && child.name === "address";
-        if (!abiCall && !addressType && !builtin(child) && !staticBytes4(child)) return;
+        if (!abiCall && !cast && !contractType(child) && !addressType && !builtin(child) && !staticBytes4(child)) return;
         const [offset, size] = child.src!.split(":").map(Number);
-        contexts.push({start: offset, length: size, text: abiCall ?? (addressType ? addressTypeText(child) : renderContext(child))});
+        contexts.push({start: offset, length: size, text: abiCall ?? cast ?? (contractType(child) ? "uint256" : addressType ? addressTypeText(child) : renderContext(child))});
       });
       const edits = [
         ...overloads.longerNames.get(path)!.filter((edit) => edit.start >= start && edit.start + edit.length <= start + length
@@ -477,9 +483,9 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
       const definition = externalFunctions.get(reference?.referencedDeclaration as number);
       const selector = definition?.functionSelector;
       if (reference?.nodeType !== "MemberAccess" || owner?.nodeType !== "Identifier"
-        || !owner.typeDescriptions?.typeString?.startsWith("type(contract ")
+        || !["type(contract ", "contract "].some(prefix => owner.typeDescriptions?.typeString?.startsWith(prefix))
         || typeof selector !== "string" || !/^[0-9a-f]{8}$/.test(selector)) {
-        throw new Error("PQABI encodeCall requires a direct contract-type function reference");
+        throw new Error("PQABI encodeCall requires a contract-type or identifier instance function reference");
       }
       // Original Solidity type checking has already matched the argument tuple
       // to this declaration. Preserve its selector before address lowering and
@@ -520,6 +526,12 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
       if (abiCall) {
         const [start, length] = node.src!.split(":").map(Number);
         abiCalls.push({start, length, alias: abiCall});
+        visit(node, child => { if (child.id !== undefined) handled.add(child.id); });
+        return;
+      }
+      if (contractType(node) || contractCast(node)) {
+        const [start, length] = node.src!.split(":").map(Number);
+        abiCalls.push({start, length, alias: contractType(node) ? "uint256" : `uint256(${read((node.arguments as AstNode[])[0])})`});
         visit(node, child => { if (child.id !== undefined) handled.add(child.id); });
         return;
       }

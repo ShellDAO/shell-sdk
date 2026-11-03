@@ -1183,7 +1183,10 @@ that packed 20-byte addresses. Do not replace bytecode in an existing account.
 Unreleased compiler sources also support `abi.encode`, `abi.encodePacked`,
 `abi.decode`, `abi.encodeWithSelector`, and `abi.encodeWithSignature` with full
 32-byte addresses. `abi.encodeCall` supports direct contract-type function
-references and retains the original selector. Other packed scalar widths and
+references and identifier instance references such as `receiver.echo`, retaining
+the original selector. Contract-typed values also occupy full 32-byte words.
+Receiver expressions with side effects and function-pointer variables remain
+outside this compiler support. Other packed scalar widths and
 dynamic ABI offsets retain Solidity semantics. For example, compile this unchanged
 source with `target: "pqvm"`:
 

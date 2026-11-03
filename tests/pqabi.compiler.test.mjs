@@ -18,6 +18,83 @@ const options = { sources: [{path:'AddressRoundtrip.sol',content:source}], contr
 const first = '34'.repeat(12) + '12'.repeat(20);
 const second = '56'.repeat(12) + '12'.repeat(20);
 
+const instanceSource = `pragma solidity ^0.8.35;
+contract Receiver { function echo(address value) external pure returns(address) { return value; } }
+contract InstanceCodec {
+  function packet(Receiver receiver, address value) external pure returns(bytes memory) {
+    return abi.encodeCall(receiver.echo, (value));
+  }
+  function local(address receiver, address value) external pure returns(bytes memory) {
+    Receiver target = Receiver(receiver);
+    return abi.encodeCall(target.echo, (value));
+  }
+  function identity(Receiver receiver) external pure returns(Receiver) { return receiver; }
+  function picked(Receiver receiver) external pure returns(uint256) { return choose(receiver); }
+  function choose(Receiver) internal pure returns(uint256) { return 1; }
+  function choose(uint256) internal pure returns(uint256) { return 2; }
+}`;
+const instanceOptions = {sources:[{path:'InstanceCodec.sol',content:instanceSource}],contractName:'InstanceCodec',evmVersion:'shanghai'};
+
+test('PQABI encodeCall accepts typed instances without narrowing contract values', async () => {
+  const control = await compileSolidity({...instanceOptions,target:'evm'});
+  const native = await compileSolidity({...instanceOptions,target:'pqvm'});
+  assert.deepEqual(native.abi,control.abi);
+  const shortType = {sources:[{path:'Short.sol',content:'pragma solidity ^0.8.35; contract R {} contract C { function identity(R receiver) external pure returns(R) { return receiver; } }'}],contractName:'C'};
+  assert.deepEqual((await compileSolidity({...shortType,target:'pqvm'})).abi,(await compileSolidity({...shortType,target:'evm'})).abi);
+  await assert.rejects(compileSolidity({...instanceOptions,target:'pqvm',sources:[{path:'InstanceCodec.sol',content:instanceSource.replace('receiver.echo, (value)','receiver.echo, (uint256(1))')}]}),/Invalid.*conversion|Cannot implicitly convert/);
+  const effectful = `pragma solidity ^0.8.35;
+    contract Receiver { function echo(address value) external pure returns(address) { return value; } }
+    contract Effectful {
+      uint256 public calls;
+      function receiver() internal returns(Receiver) { calls++; return Receiver(address(0)); }
+      function packet(address value) external returns(bytes memory) { return abi.encodeCall(receiver().echo,(value)); }
+    }`;
+  await compileSolidity({sources:[{path:'Effectful.sol',content:effectful}],contractName:'Effectful',target:'evm'});
+  await assert.rejects(compileSolidity({sources:[{path:'Effectful.sol',content:effectful}],contractName:'Effectful',target:'pqvm'}),/encodeCall requires/);
+});
+
+test('PQABI instance encodeCall real VM preserves contract identities', {skip: !process.env.SHELL_PQABI_RPC_URL}, async () => {
+  const artifact = await compileSolidity({...instanceOptions,target:'pqvm'});
+  const receiver = await compileSolidity({...instanceOptions,contractName:'Receiver',target:'pqvm'});
+  const word = value => BigInt(value).toString(16).padStart(64,'0');
+  const cases = [];
+  for (const [target,value] of [[first,second],[second,first],[word(0),first]]) {
+    const packet = word(32)+word(36)+'2ffdbf1a'+value+'0'.repeat(56);
+    for (const name of ['packet','local']) cases.push([`${name}(address,address)`,target+value,packet+value,true]);
+  }
+  for (const target of [first,second]) {
+    cases.push(['identity(address)',target,target,false]);
+    cases.push(['picked(address)',target,word(1),false]);
+  }
+  cases.push(['identity(address)',first.slice(0,-2),null,false]);
+  const rpc = async (method,params) => (await fetch(process.env.SHELL_PQABI_RPC_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method,params}),signal:AbortSignal.timeout(30000)})).json();
+  const before = await rpc('eth_getBlockByNumber',['latest',false]);
+  for (const [signature,args,expected,invoke] of cases) {
+    const calldata = toFunctionSelector(signature).slice(2)+args;
+    // Legacy CREATE is confined to this read-only eth_call simulation.
+    const harness = `object "Probe" { code {
+      datacopy(0,dataoffset("child"),datasize("child"))
+      let child := create(0,0,datasize("child"))
+      if iszero(child) { revert(0,0) }
+      datacopy(0,dataoffset("receiver"),datasize("receiver"))
+      let receiver := create(0,0,datasize("receiver"))
+      if iszero(receiver) { revert(0,0) }
+      datacopy(0,dataoffset("input"),datasize("input"))
+      if iszero(call(gas(),child,0,0,datasize("input"),0,0)) { returndatacopy(0,0,returndatasize()) revert(0,returndatasize()) }
+      returndatacopy(0,0,returndatasize())
+      let size := returndatasize()
+      ${invoke ? 'if iszero(call(gas(),receiver,0,add(mload(0),32),mload(mload(0)),size,32)) { revert(0,0) } if iszero(eq(returndatasize(),32)) { revert(0,0) } size := add(size,32)' : ''}
+      return(0,size)
+    } data "child" hex"${artifact.bytecode.slice(2)}" data "receiver" hex"${receiver.bytecode.slice(2)}" data "input" hex"${calldata}" }`;
+    const output = JSON.parse(solc.compile(JSON.stringify({language:'Yul',sources:{'Probe.yul':{content:harness}},settings:{evmVersion:'shanghai',outputSelection:{'*':{'*':['evm.bytecode.object']}}}})));
+    assert.deepEqual(output.errors?.filter(error=>error.severity==='error') ?? [],[]);
+    const response = await rpc('eth_call',[{data:'0x'+output.contracts['Probe.yul'].Probe.evm.bytecode.object,gas:'0x989680'},'latest']);
+    if (expected === null) assert.ok(response.error,'Truncated contract input must reject');
+    else { assert.equal(response.error,undefined,JSON.stringify(response.error)); assert.equal(response.result,'0x'+expected); }
+  }
+  assert.deepEqual(await rpc('eth_getBlockByNumber',['latest',false]),before);
+});
+
 const abiHelpersSource = `pragma solidity ^0.8.35;
 contract AbiReceiver {
   function echo(address value) external pure returns(address) { return value; }
