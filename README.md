@@ -1180,14 +1180,22 @@ and function selectors. The default target remains `evm`. Recompile contracts
 for this target; its storage layout differs from a previously deployed contract
 that packed 20-byte addresses. Do not replace bytecode in an existing account.
 
-Unreleased compiler sources also support `abi.encode`, `abi.encodePacked`, and
-`abi.decode` with full 32-byte addresses. Other packed scalar widths and dynamic
-ABI offsets retain Solidity semantics. For example, compile this unchanged
+Unreleased compiler sources also support `abi.encode`, `abi.encodePacked`,
+`abi.decode`, `abi.encodeWithSelector`, and `abi.encodeWithSignature` with full
+32-byte addresses. `abi.encodeCall` supports direct contract-type function
+references and retains the original selector. Other packed scalar widths and
+dynamic ABI offsets retain Solidity semantics. For example, compile this unchanged
 source with `target: "pqvm"`:
 
 ```solidity
 pragma solidity ^0.8.35;
 contract AddressCodec {
+    function echo(address value) external pure returns (address) {
+        return value;
+    }
+    function packet(address value) external pure returns (bytes memory) {
+        return abi.encodeCall(AddressCodec.echo, (value));
+    }
     function packed(address value) external pure returns (bytes memory) {
         return abi.encodePacked(value);
     }

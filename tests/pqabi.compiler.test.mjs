@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import solc from 'solc';
-import { toFunctionSelector } from 'viem';
+import { keccak256, toFunctionSelector } from 'viem';
 import { readFile } from 'node:fs/promises';
 import { compileSolidity } from '../dist/contracts-compiler.js';
 import { encodeFunctionData, decodeFunctionResult } from '../dist/contracts.js';
@@ -19,11 +19,22 @@ const first = '34'.repeat(12) + '12'.repeat(20);
 const second = '56'.repeat(12) + '12'.repeat(20);
 
 const abiHelpersSource = `pragma solidity ^0.8.35;
+contract AbiReceiver { function echo(address value) external pure returns(address) { return value; } }
 contract NativeAbiRoundtrip {
+  event Encoded(address value);
   function packed(address value) external pure returns(bytes memory) { return abi.encodePacked(value); }
   function mixed(address value, uint8 amount, bytes2 tag) external pure returns(bytes memory) { return abi.encodePacked(value, amount, tag); }
   function roundtrip(address value, uint256[] memory amounts) external pure returns(address, uint256[] memory) {
     return abi.decode(abi.encode(value, amounts), (address, uint256[]));
+  }
+  function withSelector(address value) external pure returns(bytes memory) { return abi.encodeWithSelector(bytes4(0x2ffdbf1a), value); }
+  function withSignature(address value) external pure returns(bytes memory) { return abi.encodeWithSignature("echo(address)", value); }
+  function withCall(address value) external pure returns(bytes memory) { return abi.encodeCall(AbiReceiver.echo, (value)); }
+  function withDecoded(address value) external pure returns(bytes memory) { return abi.encodeCall(AbiReceiver.echo, (abi.decode(abi.encode(value), (address)))); }
+  function notify(address value) external returns(bytes memory) {
+    bytes memory encoded = abi.encodeCall(AbiReceiver.echo, (value));
+    emit Encoded(value);
+    return encoded;
   }
 }`;
 const abiHelpersOptions = {sources:[{path:'NativeAbiRoundtrip.sol',content:abiHelpersSource}],contractName:'NativeAbiRoundtrip',evmVersion:'shanghai'};
@@ -34,10 +45,32 @@ test('PQABI ABI helpers compile unchanged packing and decoding with original typ
   assert.deepEqual(native.abi, control.abi);
   assert.ok(native.deployedBytecode.length > 2);
   assert.notEqual(native.deployedBytecode, control.deployedBytecode);
+  assert.ok(native.deployedBytecode.includes(keccak256(new TextEncoder().encode('Encoded(address)')).slice(2)));
+  await assert.rejects(compileSolidity({...abiHelpersOptions,target:'pqvm',sources:[{path:'NativeAbiRoundtrip.sol',content:abiHelpersSource.replace('abi.encodeCall(AbiReceiver.echo, (value))','abi.encodeCall(AbiReceiver.echo, (uint256(1)))')}]}),/Invalid.*conversion|Cannot implicitly convert/);
+});
+
+test('PQABI encodeCall lowers nested direct references alongside overloads', async () => {
+  const content = `pragma solidity ^0.8.35;
+    contract Receiver {
+      function echo(address value) external pure returns(address) { return value; }
+      function other(address value) external pure returns(address) { return value; }
+      function other(uint256 value) external pure returns(uint256) { return value; }
+      function wrap(bytes memory value) external pure returns(bytes memory) { return value; }
+    }
+    contract Nested {
+      function packet(address value) external pure returns(bytes memory) {
+        return abi.encodeCall(Receiver.wrap,(abi.encodeCall(Receiver.echo,(value))));
+      }
+    }`;
+  const options = {sources:[{path:'Nested.sol',content}],contractName:'Nested'};
+  const control = await compileSolidity({...options,target:'evm'});
+  const native = await compileSolidity({...options,target:'pqvm'});
+  assert.deepEqual(native.abi,control.abi);
 });
 
 test('PQABI ABI helpers real VM preserves packed widths and dynamic decoding', {skip: !process.env.SHELL_PQABI_RPC_URL}, async () => {
   const artifact = await compileSolidity({...abiHelpersOptions,target:'pqvm'});
+  const receiver = await compileSolidity({...abiHelpersOptions,contractName:'AbiReceiver',target:'pqvm'});
   const word = value => BigInt(value).toString(16).padStart(64,'0');
   const values = word(0) + 'f'.repeat(64) + word(19);
   const cases = [
@@ -45,12 +78,16 @@ test('PQABI ABI helpers real VM preserves packed widths and dynamic decoding', {
     ['mixed(address,uint8,bytes2)',first+word(171)+'cdef'+'0'.repeat(60),word(32)+word(35)+first+'abcdef'+'0'.repeat(58)],
     ['roundtrip(address,uint256[])',first+word(64)+word(3)+values,first+word(64)+word(3)+values],
   ];
+  for (const value of [first,second]) {
+    const encoded = word(32)+word(36)+'2ffdbf1a'+value+'0'.repeat(56);
+    for (const name of ['withSelector','withSignature','withCall','withDecoded','notify']) cases.push([`${name}(address)`,value,encoded+value,true]);
+  }
   const rpc = async (method,params) => {
     const response = await fetch(process.env.SHELL_PQABI_RPC_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method,params}),signal:AbortSignal.timeout(30000)});
     return response.json();
   };
   const before = await rpc('eth_getBlockByNumber',['latest',false]);
-  for (const [signature,args,expected] of [...cases,[cases[2][0],cases[2][1].slice(0,-2),null]]) {
+  for (const [signature,args,expected,invoke] of [...cases,[cases[2][0],cases[2][1].slice(0,-2),null]]) {
     const calldata = toFunctionSelector(signature).slice(2)+args;
     // Existing legacy CREATE inside eth_call only allocates an isolated child;
     // it does not claim a native CREATE address formula or commit a contract.
@@ -58,12 +95,17 @@ test('PQABI ABI helpers real VM preserves packed widths and dynamic decoding', {
       datacopy(0,dataoffset("child"),datasize("child"))
       let child := create(0,0,datasize("child"))
       if iszero(child) { revert(0,0) }
+      datacopy(0,dataoffset("receiver"),datasize("receiver"))
+      let receiver := create(0,0,datasize("receiver"))
+      if iszero(receiver) { revert(0,0) }
       datacopy(0,dataoffset("input"),datasize("input"))
       let success := call(gas(),child,0,0,datasize("input"),0,0)
       returndatacopy(0,0,returndatasize())
       if iszero(success) { revert(0,returndatasize()) }
-      return(0,returndatasize())
-    } data "child" hex"${artifact.bytecode.slice(2)}" data "input" hex"${calldata}" }`;
+      let size := returndatasize()
+      ${invoke ? 'if iszero(call(gas(),receiver,0,add(mload(0),32),mload(mload(0)),size,32)) { revert(0,0) } if iszero(eq(returndatasize(),32)) { revert(0,0) } size := add(size,32)' : ''}
+      return(0,size)
+    } data "child" hex"${artifact.bytecode.slice(2)}" data "receiver" hex"${receiver.bytecode.slice(2)}" data "input" hex"${calldata}" }`;
     const output = JSON.parse(solc.compile(JSON.stringify({language:'Yul',sources:{'Probe.yul':{content:harness}},settings:{evmVersion:'shanghai',outputSelection:{'*':{'*':['evm.bytecode.object']}}}})));
     assert.deepEqual(output.errors?.filter(error=>error.severity==='error') ?? [],[]);
     const response = await rpc('eth_call',[{data:'0x'+output.contracts['Probe.yul'].Probe.evm.bytecode.object,gas:'0x989680'},'latest']);

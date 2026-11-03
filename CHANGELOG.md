@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- Accept `abi.encodeWithSelector`, `abi.encodeWithSignature`, and
+  `abi.encodeCall` with a direct contract-type function reference in the PQABI
+  compiler. Typed call encoding keeps the original function selector when
+  address lowering changes the backend signature.
+
 - Allow Solidity `abi.encodePacked` and `abi.decode` in the PQABI compiler
   target. Packed addresses occupy all 32 bytes; other packed scalar widths and
   dynamic ABI offsets remain unchanged. The default EVM target is unaffected.

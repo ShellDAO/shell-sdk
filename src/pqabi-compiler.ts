@@ -443,11 +443,15 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
       const [start, length] = node.src!.split(":").map(Number);
       const contexts: { start: number; length: number; text: string }[] = [];
       visit(node, (child) => {
+        if (child.src) {
+          const [offset, size] = child.src.split(":").map(Number);
+          if (contexts.some(edit => offset >= edit.start && offset + size <= edit.start + edit.length)) return;
+        }
+        const abiCall = renderAbiCall(child);
         const addressType = child.nodeType === "ElementaryTypeName" && child.name === "address";
-        if (!addressType && !builtin(child) && !staticBytes4(child)) return;
+        if (!abiCall && !addressType && !builtin(child) && !staticBytes4(child)) return;
         const [offset, size] = child.src!.split(":").map(Number);
-        if (contexts.some((edit) => offset >= edit.start && offset + size <= edit.start + edit.length)) return;
-        contexts.push({start: offset, length: size, text: addressType ? addressTypeText(child) : renderContext(child)});
+        contexts.push({start: offset, length: size, text: abiCall ?? (addressType ? addressTypeText(child) : renderContext(child))});
       });
       const edits = [
         ...overloads.longerNames.get(path)!.filter((edit) => edit.start >= start && edit.start + edit.length <= start + length
@@ -462,6 +466,27 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
       }
       return content.toString("utf8");
     };
+    function renderAbiCall(node: AstNode): string | undefined {
+      const member = node.expression as AstNode;
+      const receiver = member?.expression as AstNode;
+      if (node.nodeType !== "FunctionCall" || member?.nodeType !== "MemberAccess"
+        || member.memberName !== "encodeCall" || receiver?.nodeType !== "Identifier"
+        || receiver.name !== "abi" || receiver.typeDescriptions?.typeString !== "abi") return undefined;
+      const [reference, tuple] = node.arguments as AstNode[];
+      const owner = reference?.expression as AstNode;
+      const definition = externalFunctions.get(reference?.referencedDeclaration as number);
+      const selector = definition?.functionSelector;
+      if (reference?.nodeType !== "MemberAccess" || owner?.nodeType !== "Identifier"
+        || !owner.typeDescriptions?.typeString?.startsWith("type(contract ")
+        || typeof selector !== "string" || !/^[0-9a-f]{8}$/.test(selector)) {
+        throw new Error("PQABI encodeCall requires a direct contract-type function reference");
+      }
+      // Original Solidity type checking has already matched the argument tuple
+      // to this declaration. Preserve its selector before address lowering and
+      // overload renaming change the backend's function signature.
+      const arguments_ = tuple.nodeType === "TupleExpression" ? tuple.components as AstNode[] : [tuple];
+      return `abi.encodeWithSelector(bytes4(0x${selector})${arguments_.map(argument => ", " + read(argument)).join("")})`;
+    }
     function renderContext(node: AstNode): string {
       const selector = staticBytes4(node);
       if (selector) {
@@ -486,10 +511,18 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
       return `${name}(${receiver})`;
     }
     const replacements: { start: number; length: number; text: string }[] = [];
+    const abiCalls: { start: number; length: number; alias: string }[] = [];
     const handled = new Set<number>();
     const typedDeclarations = new Map<string, string>();
     visit(original.sources[path].ast, (node) => {
       if (node.id !== undefined && handled.has(node.id)) return;
+      const abiCall = renderAbiCall(node);
+      if (abiCall) {
+        const [start, length] = node.src!.split(":").map(Number);
+        abiCalls.push({start, length, alias: abiCall});
+        visit(node, child => { if (child.id !== undefined) handled.add(child.id); });
+        return;
+      }
       if (node.nodeType === "InlineAssembly") {
         if (nativeHeight === undefined) throw new Error("PQABI target does not yet support InlineAssembly without nativeAddressContextHeight matching an activated node profile");
         visit(node, (child) => {
@@ -639,7 +672,7 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
     visit(original.sources[path].ast, (node) => {
       if (node.id !== undefined && handled.has(node.id)) return;
       const abiCodec = node.nodeType === "MemberAccess"
-        && ["encode", "encodePacked", "decode"].includes(node.memberName ?? "")
+        && ["encode", "encodePacked", "decode", "encodeWithSelector", "encodeWithSignature"].includes(node.memberName ?? "")
         && (node.expression as AstNode)?.nodeType === "Identifier"
         && (node.expression as AstNode).name === "abi"
         && (node.expression as AstNode).typeDescriptions?.typeString === "abi";
@@ -657,8 +690,8 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
       }
     });
     // Whole-expression edits already render any renamed references they contain.
-    longerNames.set(path, overloads.longerNames.get(path)!.filter((edit) =>
-      !replacements.some(({ start, length }) => edit.start >= start && edit.start + edit.length <= start + length)));
+    longerNames.set(path, [...overloads.longerNames.get(path)!.filter((edit) =>
+      ![...replacements, ...abiCalls].some(({ start, length }) => edit.start >= start && edit.start + edit.length <= start + length)), ...abiCalls]);
     let content = Buffer.from(source.content);
     for (const { start, length, text } of replacements.sort((a, b) => b.start - a.start)) {
       content = Buffer.concat([content.subarray(0, start), Buffer.from(text), content.subarray(start + length)]);
