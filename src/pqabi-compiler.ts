@@ -638,7 +638,8 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
     });
     visit(original.sources[path].ast, (node) => {
       if (node.id !== undefined && handled.has(node.id)) return;
-      const abiEncode = node.nodeType === "MemberAccess" && node.memberName === "encode"
+      const abiCodec = node.nodeType === "MemberAccess"
+        && ["encode", "encodePacked", "decode"].includes(node.memberName ?? "")
         && (node.expression as AstNode)?.nodeType === "Identifier"
         && (node.expression as AstNode).name === "abi"
         && (node.expression as AstNode).typeDescriptions?.typeString === "abi";
@@ -646,7 +647,7 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
         || node.nodeType === "FunctionTypeName"
         || (node.nodeType === "NewExpression" && (!abiReference(node.typeName as AstNode) || !supportedAbiValue(node.typeName as AstNode)))
         || (node.nodeType === "Identifier" && ["this", "super"].includes(node.name ?? ""))
-        || (node.nodeType === "MemberAccess" && !abiEncode && !msgValue(node) && !integerLimit(node) && !blockTimestamp(node) && !structMember(node)
+        || (node.nodeType === "MemberAccess" && !abiCodec && !msgValue(node) && !integerLimit(node) && !blockTimestamp(node) && !structMember(node)
           && !["length", "push", "pop"].includes(node.memberName ?? ""))) {
         throw new Error(`PQABI target does not yet support ${node.nodeType}${node.memberName ? ` .${node.memberName}` : ""} in ${path}; native context/calls require further compiler support`);
       }

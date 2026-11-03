@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Allow Solidity `abi.encodePacked` and `abi.decode` in the PQABI compiler
+  target. Packed addresses occupy all 32 bytes; other packed scalar widths and
+  dynamic ABI offsets remain unchanged. The default EVM target is unaffected.
+
 ## [0.14.0-rc.3] — 2026-10-23
 
 ### Fixed

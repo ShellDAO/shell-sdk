@@ -1180,6 +1180,25 @@ and function selectors. The default target remains `evm`. Recompile contracts
 for this target; its storage layout differs from a previously deployed contract
 that packed 20-byte addresses. Do not replace bytecode in an existing account.
 
+Unreleased compiler sources also support `abi.encode`, `abi.encodePacked`, and
+`abi.decode` with full 32-byte addresses. Other packed scalar widths and dynamic
+ABI offsets retain Solidity semantics. For example, compile this unchanged
+source with `target: "pqvm"`:
+
+```solidity
+pragma solidity ^0.8.35;
+contract AddressCodec {
+    function packed(address value) external pure returns (bytes memory) {
+        return abi.encodePacked(value);
+    }
+    function roundtrip(address value, uint256[] memory amounts)
+        external pure returns (address, uint256[] memory)
+    {
+        return abi.decode(abi.encode(value, amounts), (address, uint256[]));
+    }
+}
+```
+
 This initial target supports address values, comparisons, arrays, mappings,
 storage and memory struct fields (including nested structs), events, explicit custom-error reverts and `require(bool, CustomError(...))`
 (with Solidity 0.8.26 or newer). Event signature topics and
