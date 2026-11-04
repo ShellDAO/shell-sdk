@@ -359,10 +359,15 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
   const overloads = nativeOverloadAliases(input, original.sources, original.contracts);
 
   const structMembers = new Set<number>();
+  const enumSymbols = new Set<number>();
   for (const source of Object.values(original.sources) as AstSource[]) {
     visit(source.ast, (node) => {
       if (node.nodeType === "StructDefinition") {
         for (const member of node.members as AstNode[]) structMembers.add(member.id!);
+      }
+      if (node.nodeType === "EnumDefinition") {
+        enumSymbols.add(node.id!);
+        for (const member of node.members as AstNode[]) enumSymbols.add(member.id!);
       }
     });
   }
@@ -370,6 +375,9 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
     && typeof node.referencedDeclaration === "number"
     && structMembers.has(node.referencedDeclaration)
     && (node.expression as AstNode)?.typeDescriptions?.typeIdentifier?.startsWith("t_struct$_") === true;
+  const enumMember = (node: AstNode): boolean => node.nodeType === "MemberAccess"
+    && typeof node.referencedDeclaration === "number"
+    && enumSymbols.has(node.referencedDeclaration);
   const payableCast = (node: AstNode): boolean => {
     const type = (node.expression as AstNode)?.typeName as AstNode;
     const args = node.arguments as AstNode[] | undefined;
@@ -692,7 +700,7 @@ export function compilePqabi(input: CompilerInput, contractName: string, nativeH
         || node.nodeType === "FunctionTypeName"
         || (node.nodeType === "NewExpression" && (!abiReference(node.typeName as AstNode) || !supportedAbiValue(node.typeName as AstNode)))
         || (node.nodeType === "Identifier" && ["this", "super"].includes(node.name ?? ""))
-        || (node.nodeType === "MemberAccess" && !abiCodec && !msgValue(node) && !integerLimit(node) && !blockTimestamp(node) && !structMember(node)
+        || (node.nodeType === "MemberAccess" && !abiCodec && !msgValue(node) && !integerLimit(node) && !blockTimestamp(node) && !structMember(node) && !enumMember(node)
           && !["length", "push", "pop"].includes(node.memberName ?? ""))) {
         throw new Error(`PQABI target does not yet support ${node.nodeType}${node.memberName ? ` .${node.memberName}` : ""} in ${path}; native context/calls require further compiler support`);
       }

@@ -1331,3 +1331,31 @@ test('native low-level calls preserve payable receivers, literal data and msg.va
   assert.deepEqual(native.abi,evm.abi);
  }
 });
+
+const enumSource = await readFile(new URL('./fixtures/PhaseBook.sol', import.meta.url), 'utf8');
+
+test('PQABI enum members retain uint8 ABI and original function selectors', async () => {
+  for (const content of [enumSource, enumSource.replace('Phase.Approved', 'PhaseBook.Phase.Approved')]) {
+    const input = {sources: [{path:'PhaseBook.sol',content}],contractName:'PhaseBook',evmVersion:'cancun'};
+    const original = await compileSolidity({...input,target:'evm'});
+    const native = await compileSolidity({...input,target:'pqvm'});
+    assert.deepEqual(native.abi,original.abi);
+    for (const signature of ['approve(address)','set(address,uint8)','phases(address)']) {
+      assert.ok(native.deployedBytecode.includes(toFunctionSelector(signature).slice(2)),signature);
+    }
+    assert.equal(native.abi.find(entry=>entry.name==='set').inputs[1].type,'uint8');
+    assert.equal(native.abi.find(entry=>entry.name==='phases').outputs[0].type,'uint8');
+  }
+});
+
+test('PQABI enum support does not admit arbitrary member access', async () => {
+  const content = `pragma solidity ^0.8.24;
+    contract Guard {
+      enum Phase { Unset, Approved }
+      address public owner;
+      function unsupported() external view returns(uint256) { return block.number; }
+    }`;
+  const input = {sources:[{path:'Guard.sol',content}],contractName:'Guard'};
+  await compileSolidity({...input,target:'evm'});
+  await assert.rejects(compileSolidity({...input,target:'pqvm'}),/MemberAccess .number/);
+});

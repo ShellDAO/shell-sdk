@@ -1619,3 +1619,29 @@ panic `0x32`. The live head and root stay unchanged. This is readonly source
 acceptance; signed stateful execution, persistence and public package delivery
 for these forms remain separate. Successful temporary runtimes are removed
 after the child exits; failures retain their runtime for diagnosis.
+
+
+#### Enum members (unreleased)
+
+The source compiler accepts declared enum members such as `Phase.Approved` and
+qualified names such as `PhaseBook.Phase.Approved` when a contract also uses
+native `address` values. Enum ABI values remain `uint8`, original selectors are
+preserved, and Solidity still rejects values outside the declared enum. Other
+unsupported member accesses remain rejected.
+
+See [PhaseBook.sol](tests/fixtures/PhaseBook.sol) for an address-keyed enum mapping.
+With a built source SDK and a libp2p-enabled `shell-node`, run the opt-in native
+regression using Node.js 20 or later:
+
+```sh
+npm run build
+SHELL_NODE_BIN=/path/to/shell-node node --test tests/pqabi.enum.native.test.mjs
+```
+
+It generates a temporary ML-DSA-65 key and private Dev1337 RocksDB database,
+installs the compiled runtime in genesis, and checks signed state changes,
+full-width owner isolation, invalid-enum rollback, historical reads and physical
+reopen. The test retains its data and reports the directory. This isolates
+compiler/runtime semantics; it does not qualify native CREATE deployment.
+Verified locally with public node 0.27.13 on macOS arm64. The enum compiler fix
+is unreleased source and is not yet available in the published SDK package.

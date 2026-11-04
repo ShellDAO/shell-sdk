@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- Accept typed enum members and qualified enum names in the PQABI target,
+  preserving uint8 ABI values, original selectors and Solidity enum bounds.
+  Real signed mapping/state/reopen acceptance used public node 0.27.13.
+
 - Support identifier contract-instance references in PQABI `abi.encodeCall`,
   including full-width contract parameters, local conversions and internal
   overload resolution. Original Solidity argument checks remain in effect;
