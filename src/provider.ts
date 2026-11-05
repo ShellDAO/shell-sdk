@@ -864,7 +864,8 @@ export function createShellWsClient(options: CreateShellPublicClientOptions = {}
  * @example
  * ```typescript
  * const provider = createShellProvider();
- * const balance  = await provider.getBalance(signer.getAddress());
+ * const address  = signer.getAddress() as `0x${string}`;
+ * const balance  = await provider.client.getBalance({ address });
  * const hash     = await provider.sendTransaction(signedTx);
  * ```
  */
