@@ -60,10 +60,14 @@ export function generateSlhDsaKeyPair(seed?: Uint8Array): SlhDsaKeyPair {
 /**
  * {@link SignerAdapter} for ML-DSA-65 (NIST FIPS 204).
  *
- * This is the primary signing adapter for Shell Chain. It is also used for
- * `"Dilithium3"` keys since `pqcrypto-dilithium` v0.5 (the Rust crate used
- * by shell-chain) implements FIPS 204 ML-DSA-65 — producing byte-identical
- * keys and signatures (pk=1952 bytes, sk=4032 bytes, sig=3309 bytes).
+ * This is the primary signing adapter for Shell Chain. It also supplies the
+ * FIPS 204 signature bytes for the SDK's `"Dilithium3"` algorithm tag (0).
+ * Native verification accepts this adapter as well as the distinct raw
+ * PQClean Dilithium3 transcript in locked `pqcrypto-dilithium` v0.5.0.
+ * Equal public-key and signature sizes (1952 and 3309 bytes) do not make those
+ * transcripts interchangeable: raw PQClean and FIPS use different message
+ * framing and challenge sampling. `ShellSigner` retains the selected tag in
+ * signing-hash and address derivation; this adapter always signs with FIPS 204.
  *
  * @example
  * ```typescript
